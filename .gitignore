@@ -1,21 +1,16 @@
-# dependencies
-node_modules/
+# Local-only folders (not part of the repo)
+generated-projects/
+silpi-ai/
+INTEGRATION.md
+*.zip
 
-# build outputs
-.next/
-out/
-dist/
-build/
-coverage/
-
-# env files
+# Secrets
 .env
 .env.local
 .env*.local
 
-# logs & OS
-*.log
-.DS_Store
-
-# runtime storage
-storage/
+# Dependencies / builds
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
