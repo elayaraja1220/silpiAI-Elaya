@@ -1,0 +1,6 @@
+[
+ {"id":"SIL-1024","name":"Vismayam Commerce","description":"E-commerce storefront with product discovery, cart and customer accounts.","frontend":"Next.js","backend":"PHP / Laravel","database":"MySQL","status":"Ready","updatedAt":"Today"},
+ {"id":"SIL-1023","name":"Newsroom Portal","description":"Editorial dashboard and public news website with video channel integration.","frontend":"Next.js","backend":"Node.js","database":"PostgreSQL","status":"Generating","updatedAt":"12 min ago","progress":68},
+ {"id":"SIL-1022","name":"Inventory Console","description":"Internal inventory and order management application.","frontend":"Angular","backend":".NET","database":"SQL Server","status":"Needs attention","updatedAt":"Yesterday"},
+ {"id":"SIL-1021","name":"Portfolio Website","description":"Responsive portfolio and case-study website.","frontend":"React","backend":"—","database":"—","status":"Draft","updatedAt":"Oct 28"}
+]

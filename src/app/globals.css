@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #0e1118; color: #f5f6fb; font-family: Arial, Helvetica, sans-serif; }
+button, input, textarea, select { font: inherit; }
+::selection { background: rgba(139,124,255,.35); }
+.custom-scrollbar::-webkit-scrollbar { width: 7px; height: 7px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #343b4c; border-radius: 99px; }
+.grid-glow { background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,.045) 1px, transparent 0); background-size: 24px 24px; }
