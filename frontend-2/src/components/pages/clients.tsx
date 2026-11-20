@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Printer, RefreshCw, RotateCcw, XCircle } from "lucide-react";
 
 import { BuildPanel } from "@/components/business/build-panel";
@@ -15,11 +16,10 @@ import { STAGE_LABELS, type Lead, type RequirementInsights, type Stage } from "@
 import { formatRelativeTime } from "@/lib/utils";
 
 type History = { fromStage: Stage | null; toStage: Stage; note: string; at: string }[];
-type Mode = { kind: "list" } | { kind: "new" } | { kind: "detail"; id: string };
 
 /** Clients & quotations: requirement intake, pricing and approval (workflow step 1). */
 export function ClientsPage() {
-  const [mode, setMode] = useState<Mode>({ kind: "list" });
+  const router = useRouter();
   const [leads, setLeads] = useState<Lead[] | null>(null);
   const [error, setError] = useState("");
 
@@ -30,13 +30,6 @@ export function ClientsPage() {
   }, []);
   useEffect(load, [load]);
 
-  if (mode.kind === "new") {
-    return <RequirementWizard onCancel={() => setMode({ kind: "list" })} onCreated={(lead) => { load(); setMode({ kind: "detail", id: lead.id }); }} />;
-  }
-  if (mode.kind === "detail") {
-    return <LeadDetail id={mode.id} onBack={() => { load(); setMode({ kind: "list" }); }} />;
-  }
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -44,7 +37,7 @@ export function ClientsPage() {
           <h2 className="text-sm font-semibold text-slate-100">Client requirements & quotations</h2>
           <p className="mt-1 text-xs text-slate-500">Collect a requirement, get the price with GST, and send the quotation.</p>
         </div>
-        <button onClick={() => setMode({ kind: "new" })} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400">
+        <button onClick={() => router.push("/clients/new")} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400">
           <Plus size={16} /> New requirement
         </button>
       </div>
@@ -78,7 +71,7 @@ export function ClientsPage() {
             </thead>
             <tbody>
               {leads.map((lead) => (
-                <tr key={lead.id} onClick={() => setMode({ kind: "detail", id: lead.id })} className="cursor-pointer border-b border-white/[.04] transition hover:bg-white/[.03]">
+                <tr key={lead.id} onClick={() => router.push(`/clients/${lead.id}`)} className="cursor-pointer border-b border-white/[.04] transition hover:bg-white/[.03]">
                   <td className="px-5 py-3">
                     <p className="font-medium text-slate-100">{lead.requirement.title}</p>
                     <p className="text-xs capitalize text-slate-500">{lead.requirement.scope} · {lead.requirement.projectType.replace("-", " ")}</p>
@@ -96,6 +89,18 @@ export function ClientsPage() {
       )}
     </div>
   );
+}
+
+/** Page: /clients/new */
+export function NewRequirementPage() {
+  const router = useRouter();
+  return <RequirementWizard onCancel={() => router.push("/clients")} onCreated={(lead) => router.push(`/clients/${lead.id}`)} />;
+}
+
+/** Page: /clients/[id] */
+export function LeadDetailPage({ id }: { id: string }) {
+  const router = useRouter();
+  return <LeadDetail id={id} onBack={() => router.push("/clients")} />;
 }
 
 function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
