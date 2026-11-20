@@ -6,7 +6,9 @@ import type { AgentAttachment, AgentEvent } from "@/types";
 
 export type RunStatus = "idle" | "running" | "success" | "failed";
 
-export type RunTotals = { inputTokens: number; outputTokens: number; cacheReadTokens: number; turns: number };
+export type RunTotals = { inputTokens: number; outputTokens: number; cacheReadTokens: number; turns: number; costUsd: number };
+
+const EMPTY_TOTALS: RunTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, turns: 0, costUsd: 0 };
 
 /** Starts a SILPI agent run and collects its streamed NDJSON events. */
 export function useAgentRun() {
@@ -14,7 +16,7 @@ export function useAgentRun() {
   const [status, setStatus] = useState<RunStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Extract<AgentEvent, { type: "done" }> | null>(null);
-  const [totals, setTotals] = useState<RunTotals>({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, turns: 0 });
+  const [totals, setTotals] = useState<RunTotals>(EMPTY_TOTALS);
   const running = useRef(false);
 
   const reset = useCallback(() => {
@@ -22,7 +24,7 @@ export function useAgentRun() {
     setStatus("idle");
     setError(null);
     setResult(null);
-    setTotals({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, turns: 0 });
+    setTotals(EMPTY_TOTALS);
   }, []);
 
   const start = useCallback(
@@ -43,6 +45,7 @@ export function useAgentRun() {
             outputTokens: t.outputTokens + event.outputTokens,
             cacheReadTokens: t.cacheReadTokens + event.cacheReadTokens,
             turns: event.turn,
+            costUsd: event.totalCostUsd,
           }));
         } else if (event.type === "done") {
           setResult(event);

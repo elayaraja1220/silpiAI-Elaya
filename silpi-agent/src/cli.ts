@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
+import Anthropic from "@anthropic-ai/sdk";
 import { Command } from "commander";
 
+import { AnalyzeInputSchema, analyzeRequirement } from "./analyze.js";
+
 import { TaskError, runAgent } from "./agent.js";
+import { dockerAvailable } from "./commands.js";
 import { AGENT_ROOT, config } from "./config.js";
 import { createEmitter } from "./events.js";
 import { TaskSchema, type Task } from "./task.js";
@@ -62,6 +66,37 @@ program
   });
 
 program
+  .command("analyze")
+  .description("Read a client's requirement documents (JSON on stdin) and print a structured draft as JSON")
+  .action(async () => {
+    const print = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(await readStdin());
+    } catch {
+      print({ success: false, error: "stdin must contain one JSON object." });
+      process.exitCode = 2;
+      return;
+    }
+    const parsed = AnalyzeInputSchema.safeParse(raw);
+    if (!parsed.success) {
+      print({ success: false, error: `Invalid input: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}` });
+      process.exitCode = 2;
+      return;
+    }
+    try {
+      const result = await analyzeRequirement(parsed.data);
+      print(result);
+      process.exitCode = result.success ? 0 : 1;
+    } catch (error) {
+      // API errors carry no document content; the key is never printed.
+      const message = error instanceof Anthropic.APIError ? `AI service error (${error.status ?? "network"}): ${error.message}` : String(error);
+      print({ success: false, error: message });
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command("create")
   .description("Create a new project")
   .argument("<name>", "project folder name")
@@ -99,6 +134,15 @@ program
   });
 
 program
+  .command("resume")
+  .description("Continue a run that stopped early (crash, budget, turn limit, API error)")
+  .argument("<name>", "project folder name")
+  .option("--json", "NDJSON output", false)
+  .action(async (name: string, o: { json: boolean }) => {
+    await execute({ mode: "resume", name }, o.json);
+  });
+
+program
   .command("doctor")
   .description("Check the agent's configuration")
   .action(() => {
@@ -106,9 +150,19 @@ program
       ["Node.js >= 20.11", Number(process.versions.node.split(".")[0]) >= 20, process.versions.node],
       ["ANTHROPIC_API_KEY set", Boolean(process.env.ANTHROPIC_API_KEY), process.env.ANTHROPIC_API_KEY ? "yes (hidden)" : "add it to silpi-agent/.env"],
     ];
+    if (config.sandbox === "docker") {
+      const up = dockerAvailable();
+      checks.push(["Docker running (SILPI_SANDBOX=docker)", up, up ? config.dockerImage : "start Docker Desktop or unset SILPI_SANDBOX"]);
+    }
     console.log(`INFO  Output folder: ${config.outputDir}${existsSync(config.outputDir) ? "" : " (will be created on first run)"}`);
     for (const [label, ok, detail] of checks) console.log(`${ok ? "OK  " : "FAIL"}  ${label}: ${detail}`);
     console.log(`      Model: ${config.model} (effort ${config.effort}), agent folder: ${AGENT_ROOT}`);
+    console.log(`      Budget: $${config.maxCostUsd} per run, ${config.maxTurns} turns max, ${config.maxConcurrentRuns} runs at once`);
+    console.log(
+      config.sandbox === "docker"
+        ? `      Sandbox: docker (${config.dockerImage}) - commands run in a container that only sees the project folder`
+        : "WARN  Sandbox: local - commands run directly on this machine. Set SILPI_SANDBOX=docker before serving untrusted users.",
+    );
     process.exitCode = checks.every(([, ok]) => ok) ? 0 : 1;
   });
 

@@ -11,3 +11,13 @@ button, input, textarea, select { font: inherit; }
 .custom-scrollbar::-webkit-scrollbar { width: 7px; height: 7px; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #343b4c; border-radius: 99px; }
 .grid-glow { background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,.045) 1px, transparent 0); background-size: 24px 24px; }
+
+/* Print / Save as PDF: only the quotation document is printed. */
+@media print {
+  @page { margin: 12mm; }
+  body { background: #fff !important; }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; inset: 0 auto auto 0; width: 100%; box-shadow: none !important; border-radius: 0 !important; padding: 0 !important; }
+  .no-print { display: none !important; }
+}

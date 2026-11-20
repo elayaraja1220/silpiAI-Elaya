@@ -473,6 +473,7 @@ Example: Build an e-commerce platform with customer login, product catalog, cart
             error={run.error}
             result={run.result}
             totals={run.totals}
+            onResume={(project) => void run.start(`/api/projects/${encodeURIComponent(project)}/resume`, {})}
           />
         </div>
 

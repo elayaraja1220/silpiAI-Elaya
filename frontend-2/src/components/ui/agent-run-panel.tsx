@@ -7,7 +7,9 @@ import {
   CheckCircle2,
   FileCode2,
   FolderOpen,
+  Globe,
   Loader2,
+  RotateCcw,
   Search,
   TerminalSquare,
   Trash2,
@@ -23,6 +25,8 @@ type AgentRunPanelProps = {
   error: string | null;
   result: Extract<AgentEvent, { type: "done" }> | null;
   totals: RunTotals;
+  /** Shown as a "Resume" button when a run stopped early and can continue. */
+  onResume?: (project: string) => void;
 };
 
 const TOOL_ICONS: Record<string, typeof Bot> = {
@@ -41,7 +45,10 @@ type Row =
   | { kind: "step"; tool: string; label: string; state: "running" | "ok" | "failed"; detail?: string }
   | { kind: "message"; text: string }
   | { kind: "status"; text: string }
+  | { kind: "smoke"; event: Extract<AgentEvent, { type: "smoke" }> }
   | { kind: "error"; text: string };
+
+const formatUsd = (n: number) => `$${n.toFixed(2)}`;
 
 /** Pair each action with its result so a step shows as one row. */
 function toRows(events: AgentEvent[]): Row[] {
@@ -61,6 +68,8 @@ function toRows(events: AgentEvent[]): Row[] {
       rows.push({ kind: "message", text: event.text });
     } else if (event.type === "status") {
       rows.push({ kind: "status", text: event.message });
+    } else if (event.type === "smoke") {
+      rows.push({ kind: "smoke", event });
     } else if (event.type === "error") {
       rows.push({ kind: "error", text: event.message });
     }
@@ -68,8 +77,9 @@ function toRows(events: AgentEvent[]): Row[] {
   return rows;
 }
 
-export function AgentRunPanel({ events, status, error, result, totals }: AgentRunPanelProps) {
+export function AgentRunPanel({ events, status, error, result, totals, onResume }: AgentRunPanelProps) {
   const rows = useMemo(() => toRows(events), [events]);
+  const start = useMemo(() => events.find((e): e is Extract<AgentEvent, { type: "start" }> => e.type === "start") ?? null, [events]);
   const filesWritten = useMemo(
     () => new Set(events.flatMap((e) => (e.type === "result" && e.ok && (e.tool === "write_file" || e.tool === "edit_file") ? [e.label] : []))).size,
     [events],
@@ -90,7 +100,9 @@ export function AgentRunPanel({ events, status, error, result, totals }: AgentRu
       ? { icon: <Loader2 size={16} className="animate-spin text-violet-300" />, title: "SILPI is working...", tone: "border-violet-400/20" }
       : status === "success"
         ? { icon: <CheckCircle2 size={16} className="text-emerald-300" />, title: "Finished successfully", tone: "border-emerald-400/25" }
-        : { icon: <XCircle size={16} className="text-rose-300" />, title: result ? "Finished with problems" : "Run failed", tone: "border-rose-400/25" };
+        : result?.resumable
+          ? { icon: <AlertTriangle size={16} className="text-amber-300" />, title: "Stopped before finishing - you can resume", tone: "border-amber-400/25" }
+          : { icon: <XCircle size={16} className="text-rose-300" />, title: result ? "Finished with problems" : "Run failed", tone: "border-rose-400/25" };
 
   return (
     <section className={`overflow-hidden rounded-xl border bg-[#151923] ${header.tone}`} aria-live="polite">
@@ -107,6 +119,24 @@ export function AgentRunPanel({ events, status, error, result, totals }: AgentRu
           <span title="Input tokens (incl. cache writes) / output tokens / cache reads">
             {formatTokens(totals.inputTokens)} in · {formatTokens(totals.outputTokens)} out · {formatTokens(totals.cacheReadTokens)} cached
           </span>
+          <span
+            title="Estimated Anthropic API cost of this run at list prices. The run stops automatically at the budget."
+            className={start && totals.costUsd >= start.budgetUsd * 0.8 ? "text-amber-300" : "text-slate-400"}
+          >
+            {formatUsd(totals.costUsd)}
+            {start ? ` of ${formatUsd(start.budgetUsd)} budget` : ""}
+          </span>
+          {start && (
+            <span
+              title={
+                start.sandbox === "docker"
+                  ? "Commands run in a Docker container that only sees the project folder."
+                  : "Commands run directly on this machine, limited by SILPI's command and script guard."
+              }
+            >
+              {start.sandbox === "docker" ? "Docker sandbox" : "Local machine"}
+            </span>
+          )}
         </div>
       </div>
 
@@ -133,6 +163,35 @@ export function AgentRunPanel({ events, status, error, result, totals }: AgentRu
               <p key={i} className="text-slate-500">
                 {row.text}
               </p>
+            );
+          }
+          if (row.kind === "smoke") {
+            const s = row.event;
+            if (!s.ran) {
+              return (
+                <p key={i} className="text-slate-500">
+                  <Globe size={12} className="mr-1.5 inline" />
+                  App start check skipped: {s.note}
+                </p>
+              );
+            }
+            return (
+              <div key={i} className={`rounded-md px-2 py-1.5 ${s.ok ? "bg-emerald-400/[.06]" : "bg-amber-400/10"}`}>
+                <p className={s.ok ? "text-emerald-300" : "text-amber-200"}>
+                  <Globe size={12} className="mr-1.5 inline" />
+                  App start check {s.ok ? "passed" : "failed"}
+                </p>
+                {s.targets.map((t) => (
+                  <div key={`${t.folder}-${t.script}`} className="ml-5 mt-1">
+                    <p className="text-slate-400">
+                      {t.folder || "root"}: npm run {t.script} - {t.ok ? `HTTP ${t.status}` : "did not start"}
+                    </p>
+                    {!t.ok && (
+                      <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2 text-[10px] text-slate-500">{t.detail}</pre>
+                    )}
+                  </div>
+                ))}
+              </div>
             );
           }
           if (row.kind === "error") {
@@ -182,11 +241,34 @@ export function AgentRunPanel({ events, status, error, result, totals }: AgentRu
               ) : (
                 "not run"
               )}{" "}
-              · {result.filesChanged.length} files changed
+              · App start:{" "}
+              {result.appStarted === true ? (
+                <span className="text-emerald-300">started and served pages</span>
+              ) : result.appStarted === false ? (
+                <span className="text-amber-300">did not start</span>
+              ) : (
+                "not checked"
+              )}{" "}
+              · {result.filesChanged.length} files changed · API cost {formatUsd(result.costUsd)}
             </p>
           )}
           {result?.path && <p className="break-all font-mono text-[10px] text-emerald-300/90">{result.path}</p>}
           {error && !result && <p className="text-rose-300">{error}</p>}
+          {result?.resumable && onResume && start && (
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => onResume(start.project)}
+                className="inline-flex items-center gap-2 rounded-lg bg-amber-400/90 px-3.5 py-2 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-300"
+              >
+                <RotateCcw size={13} />
+                Resume where it stopped
+              </button>
+              <span className="text-[10px] text-slate-500">
+                Continues from the saved conversation with a fresh {formatUsd(start.budgetUsd)} budget. Files already written are kept.
+              </span>
+            </div>
+          )}
         </div>
       )}
     </section>

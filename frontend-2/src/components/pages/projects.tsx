@@ -58,6 +58,19 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
     void reload();
   };
 
+  const resumeRun = async (name: string) => {
+    await run.start(`/api/projects/${encodeURIComponent(name)}/resume`, {});
+    void reload();
+  };
+
+  const resumeProject = (project: Project) => {
+    if (editRunning) return;
+    setEditing(project);
+    setInstruction("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    void resumeRun(project.name);
+  };
+
   const copyPath = async (project: Project) => {
     if (!project.path) return;
     try {
@@ -197,6 +210,7 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
             error={run.error}
             result={run.result}
             totals={run.totals}
+            onResume={(project) => void resumeRun(project)}
           />
         </section>
       )}
@@ -342,9 +356,23 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
               <div className="mt-4 flex items-center justify-between gap-2 border-t border-white/[.06] pt-3 text-[10px] text-slate-600">
                 <span className="min-w-0 truncate" title={project.path}>
                   Updated {formatRelativeTime(project.updatedAt)}
+                  {project.costUsd ? (
+                    <span title="Total Anthropic API cost of all SILPI runs on this project"> · ${project.costUsd.toFixed(2)}</span>
+                  ) : null}
                 </span>
 
                 <div className="flex shrink-0 items-center gap-3">
+                {project.resumable && (
+                  <button
+                    type="button"
+                    onClick={() => resumeProject(project)}
+                    disabled={editRunning}
+                    title="The last run stopped before finishing. Continue it from where it stopped."
+                    className="font-medium text-amber-300 transition hover:text-amber-200 disabled:cursor-not-allowed disabled:text-slate-600"
+                  >
+                    Resume
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => openEditor(project)}

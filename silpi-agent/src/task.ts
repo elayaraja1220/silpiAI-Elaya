@@ -42,11 +42,16 @@ export const TaskSchema = z.discriminatedUnion("mode", [
     instruction: z.string().trim().min(1).max(20_000),
     attachments: z.array(Attachment).max(10).default([]),
   }),
+  z.object({
+    mode: z.literal("resume"),
+    name: projectName,
+  }),
 ]);
 
 export type Task = z.infer<typeof TaskSchema>;
 export type CreateTask = Extract<Task, { mode: "create" }>;
 export type EditTask = Extract<Task, { mode: "edit" }>;
+export type ResumeTask = Extract<Task, { mode: "resume" }>;
 export type TaskAttachment = z.infer<typeof Attachment>;
 
 /** Stored in <project>/.silpi/meta.json so later edits and the frontend know the stack. */
@@ -57,12 +62,14 @@ export type ProjectMeta = {
   designUrl?: string;
   createdAt: string;
   history: Array<{
-    mode: "create" | "edit";
+    mode: "create" | "edit" | "resume";
     request: string;
     at: string;
     success: boolean;
     buildPassed: boolean | null;
     filesChanged: number;
     turns: number;
+    costUsd?: number;
+    appStarted?: boolean | null;
   }>;
 };

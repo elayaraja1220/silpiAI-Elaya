@@ -10,6 +10,8 @@ export const SYSTEM_PROMPT = `You are SILPI, a senior full-stack engineer and pr
 - You work inside one project folder. Every path you pass to a tool is relative to that folder's root. You cannot see or change anything outside it.
 - Tools: list_files, read_file, search_files, write_file, edit_file, delete_file and run_command. run_command accepts a fixed allowlist (package installs, builds, type checks, linters, tests). It has no shell, so no pipes, quotes, "&&" or redirects. Dev servers (npm run dev / start) are refused because they never exit; verify with build, typecheck, lint and test instead.
 - Node.js and npm are available. Other toolchains (PHP/Composer, Python, Go, .NET, Maven) may or may not be installed: if a command reports the program is missing, write the code carefully, say in your final summary that it could not be verified, and move on.
+- package.json scripts that you run through npm may only call build tools directly (next, vite, tsc, eslint, jest, vitest, prisma, node <file>, ...), optionally chained with &&. Scripts using other programs or shell syntax are refused.
+- After your final message, SILPI starts the app with its start script (or preview, or dev) on a free port and checks that it answers HTTP. Make every server read its port from the PORT environment variable (falling back to a default), and make sure "npm run start" works after "npm run build". If the check fails you will get the output and must fix it.
 - Writing real secret files such as .env or .env.local is blocked. Put configuration in .env.example with placeholder values and read it from environment variables in code.
 
 ## How to work
@@ -60,6 +62,19 @@ export function buildCreatePrompt(task: CreateTask, attachmentNames: string[]): 
   }
   lines.push("", "The project folder is empty. Start by planning, then build, install, verify and fix until it passes.");
   return lines.join("\n");
+}
+
+export function buildResumePrompt(stoppedReason: string | undefined, tree: string): string {
+  return [
+    `The previous run on this project stopped before finishing${stoppedReason ? ` (${stoppedReason})` : ""}.`,
+    "Some tool calls from the end of that run may not have run. Files you wrote earlier are still on disk.",
+    "",
+    "## Current files (top levels)",
+    tree,
+    "",
+    "Check the current state of the files you were working on, then continue the task from where it stopped.",
+    "Finish the remaining work, re-run install and the build until they pass, and send your final message.",
+  ].join("\n");
 }
 
 export function buildEditPrompt(task: EditTask, meta: ProjectMeta | null, tree: string, attachmentNames: string[]): string {

@@ -123,7 +123,7 @@ function detectStack(
 
 type SilpiMeta = {
   stack?: { frontend?: string[]; backend?: string[]; database?: string[] };
-  history?: Array<{ at?: string; success?: boolean; buildPassed?: boolean | null }>;
+  history?: Array<{ at?: string; success?: boolean; buildPassed?: boolean | null; appStarted?: boolean | null; costUsd?: number }>;
 };
 
 /** True while a silpi-agent process holds the project's lock file. */
@@ -143,7 +143,7 @@ async function isGenerating(projectDir: string): Promise<boolean> {
 
 async function readProject(outputRoot: string, name: string): Promise<Project> {
   const projectDir = path.join(outputRoot, name);
-  const [info, summary, hasReport, hasIndexHtml, collected, meta, generating] = await Promise.all([
+  const [info, summary, hasReport, hasIndexHtml, collected, meta, generating, hasSession] = await Promise.all([
     stat(projectDir),
     readReportSummary(projectDir),
     exists(path.join(projectDir, REPORT_FILE)),
@@ -151,6 +151,7 @@ async function readProject(outputRoot: string, name: string): Promise<Project> {
     collectDependencies(projectDir),
     readJson<SilpiMeta>(path.join(projectDir, ".silpi", "meta.json")),
     isGenerating(projectDir),
+    exists(path.join(projectDir, ".silpi", "session.json")),
   ]);
 
   const detected = detectStack(
@@ -169,7 +170,12 @@ async function readProject(outputRoot: string, name: string): Promise<Project> {
 
   const hasSource = collected.deps.size > 0 || collected.hasComposer || hasIndexHtml;
   const lastRun = meta?.history?.at(-1);
-  const healthy = hasReport && hasSource && (lastRun ? lastRun.success !== false && lastRun.buildPassed !== false : true);
+  const healthy =
+    hasReport &&
+    hasSource &&
+    !hasSession &&
+    (lastRun ? lastRun.success !== false && lastRun.buildPassed !== false && lastRun.appStarted !== false : true);
+  const costUsd = (meta?.history ?? []).reduce((sum, run) => sum + (run.costUsd ?? 0), 0);
 
   return {
     id: name,
@@ -179,6 +185,8 @@ async function readProject(outputRoot: string, name: string): Promise<Project> {
     status: generating ? "Generating" : healthy ? "Ready" : "Needs attention",
     updatedAt: (lastRun?.at && !generating ? new Date(lastRun.at) : info.mtime).toISOString(),
     path: projectDir,
+    resumable: hasSession && !generating,
+    costUsd: Number(costUsd.toFixed(2)),
   };
 }
 

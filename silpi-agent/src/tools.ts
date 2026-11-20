@@ -107,6 +107,8 @@ export const toolDefinitions: Anthropic.Beta.BetaTool[] = [
       "npx prisma generate|validate|format | composer install|update|require|dump-autoload|validate | php -l <file> |",
       "python -m py_compile|compileall|pytest | go build|vet|test|mod tidy | dotnet restore|build|test | mvn compile|package|test|verify.",
       "No shell features (pipes, &&, redirects, quotes). Dev servers (npm run dev/start) are not allowed because they never exit.",
+      "package.json scripts run through npm may only call build tools directly (next, vite, tsc, eslint, jest, vitest, prisma, node <file>, ...), optionally chained with &&.",
+      "After you finish, SILPI starts the app (npm run start, preview or dev) to check it serves HTTP, and reports back if it does not.",
     ].join(" "),
     input_schema: {
       type: "object",
@@ -317,7 +319,7 @@ async function run(root: string, name: ToolName, input: Record<string, unknown>,
       const parsed = parseCommand(input.command as string);
       if (!parsed.ok) return { content: parsed.error, isError: true };
       const cwd = resolveInside(root, (input.cwd as string | undefined) ?? "");
-      const result = await runCommand(parsed.command, cwd);
+      const result = await runCommand(parsed.command, cwd, root);
       const passed = result.exitCode === 0 && !result.timedOut;
       if (parsed.command.isBuildCheck) {
         // Any failing check marks the run as failing until a later check passes.
