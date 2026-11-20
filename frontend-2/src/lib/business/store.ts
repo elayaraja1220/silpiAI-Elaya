@@ -5,6 +5,8 @@ import { buildQuote } from "./pricing";
 import { buildProposals, compareProposals, defaultTier, toSummary } from "./proposals";
 import { DEFAULT_RATE_CARD } from "./rate-card";
 import { checkBudget } from "./budget";
+import { applyCostPatch, emptyCostConfig, parseCostConfig } from "./cost-config";
+import type { CostConfig, CostConfigPatch } from "./cost-types";
 import { buildCatalog, mergeTechOverrides, parseTechOverrides, type TechEntry, type TechOverrides } from "./tech-catalog";
 import { parseRateCard, ValidationError } from "./validate";
 import { paymentStatus } from "./payment-status";
@@ -46,6 +48,31 @@ export function saveRateCard(card: RateCard): void {
   getDb()
     .prepare("INSERT INTO settings (key, value) VALUES ('rate_card', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
     .run(JSON.stringify(card));
+}
+
+// ---- Cost configuration -------------------------------------------------------
+
+/**
+ * The studio's own cost rates (internal hourly cost, AI prices, infrastructure...). Saved apart from the
+ * rate card and the quotations. Empty until filled in: there are no built-in rates, so nothing is invented.
+ */
+export function getCostConfig(): CostConfig {
+  const row = getDb().prepare("SELECT value FROM settings WHERE key = 'cost_config'").get() as { value: string } | undefined;
+  if (!row) return emptyCostConfig();
+  try {
+    return parseCostConfig(JSON.parse(row.value));
+  } catch {
+    return emptyCostConfig();
+  }
+}
+
+/** Merges a validated change into the saved configuration; values that are not in the change are kept. */
+export function saveCostConfig(patch: CostConfigPatch): CostConfig {
+  const merged = applyCostPatch(getCostConfig(), patch);
+  getDb()
+    .prepare("INSERT INTO settings (key, value) VALUES ('cost_config', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(JSON.stringify(merged));
+  return merged;
 }
 
 // ---- Technology catalog -----------------------------------------------------
