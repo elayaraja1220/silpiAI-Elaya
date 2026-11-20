@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 
 import { handle, notFound } from "@/lib/business/http";
-import { getLead, setStage, stageHistory } from "@/lib/business/store";
+import { removeLeadFiles } from "@/lib/business/asset-store";
+import { deleteLead, getLead, setStage, stageHistory } from "@/lib/business/store";
 import { STAGES, type Stage } from "@/lib/business/types";
 import { ValidationError } from "@/lib/business/validate";
 
@@ -28,4 +29,11 @@ export async function PATCH(request: NextRequest, context: Context) {
     const note = typeof body.note === "string" ? body.note.trim().slice(0, 300) : "";
     return { lead: setStage(id, body.stage as Stage, note), history: stageHistory(id) };
   });
+}
+
+/** DELETE /api/business/leads/:id - permanently removes the lead and its quotations. */
+export async function DELETE(_request: NextRequest, context: Context) {
+  const { id } = await context.params;
+  if (!getLead(id)) return notFound();
+  return handle("LEAD DELETE", () => { deleteLead(id); removeLeadFiles(id); return { deleted: true }; });
 }

@@ -13,7 +13,7 @@ import type {
 import { analyseBudget } from "./cost-viability";
 import { resolveNeeds, type RecommendedOption } from "./tech-recommend";
 import type { Level, Scale } from "./tech-catalog";
-import { activeClientIds, withDependencies } from "./tech-preference";
+import { activeClientIds, selectedStackIds, withDependencies } from "./tech-preference";
 import type { Quote, RateCard, Requirement } from "./types";
 
 /**
@@ -78,6 +78,9 @@ function technologyFor(input: CostEstimateInput): TechnologyContext {
   if (input.stackIds?.length) {
     stackIds = input.stackIds;
     source = "given";
+  } else if (input.requirement?.selectedStack?.ids.length) {
+    stackIds = selectedStackIds(input.requirement);
+    source = "selected";
   } else if (input.recommendation?.ids.length) {
     stackIds = input.recommendation.ids;
     source = "recommendation";

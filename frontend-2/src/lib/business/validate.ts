@@ -15,9 +15,9 @@ import {
   type RateCard,
   type Requirement,
 } from "./types";
-import { INDIAN_STATES } from "./rate-card";
+import { HANDOVER_LABEL, INDIAN_STATES } from "./rate-card";
 import { autoComplexity, billablePages, splitPages } from "./scope";
-import { parseClientTechInput } from "./tech-preference";
+import { parseClientTechInput, parseSelectedStack } from "./tech-preference";
 
 /** Thrown for bad input; API routes turn it into a 400. */
 export class ValidationError extends Error {}
@@ -115,6 +115,7 @@ export function parseRequirement(input: unknown, rates: RateCard): Requirement {
     budgetStrict: r.budgetStrict === true,
     premiumCare: r.premiumCare === true,
     ...(parseClientTechInput(r.clientTech) ? { clientTech: parseClientTechInput(r.clientTech) } : {}),
+    ...(parseSelectedStack(r.selectedStack) ? { selectedStack: parseSelectedStack(r.selectedStack) } : {}),
     stack: oneOf(r.stack, STACKS, "custom"),
     tech: Object.fromEntries(
       (["frontend", "backend", "database"] as const).flatMap((layer) => {
@@ -220,8 +221,29 @@ export function parseRateCard(input: unknown, fallback: RateCard): RateCard {
     packages: Object.fromEntries(
       Object.entries(fallback.packages).map(([tier, base]) => {
         const o = obj(obj(card.packages)[tier]);
-        const extras = Array.isArray(o.extras) ? o.extras.map((e) => str(e, 160)).filter(Boolean).slice(0, 20) : base.extras;
-        return [tier, { revisions: scalar(o.revisions, base.revisions), supportDays: scalar(o.supportDays, base.supportDays), extras }];
+        // Wording used by older saved cards: the handover was renamed, and the rest is now its own comparison row.
+        const legacy: Record<string, string | null> = { "Website handover with login details": HANDOVER_LABEL, "Training on updating content": null, "Speed and security check before launch": null, "Priority support": null };
+        const extras = Array.isArray(o.extras)
+          ? [...new Set(o.extras.map((e) => str(e, 160)).filter(Boolean).map((e) => (e in legacy ? legacy[e] : e)).filter((e): e is string => !!e))].slice(0, 20)
+          : base.extras;
+        const text = (value: unknown, fallbackText: string | undefined) => (typeof value === "string" ? str(value, 200) || undefined : fallbackText);
+        const priority = o.prioritySupport;
+        // A reply time is only promised when a sensible number was set; anything else means "no promise".
+        const hours = obj(priority).responseHours;
+        const prioritySupport =
+          priority === null ? null : priority === undefined ? base.prioritySupport : { responseHours: typeof hours === "number" && Number.isFinite(hours) && hours >= 1 && hours <= 720 ? Math.round(hours) : null };
+        return [
+          tier,
+          {
+            revisions: scalar(o.revisions, base.revisions),
+            supportDays: scalar(o.supportDays, base.supportDays),
+            extras,
+            handover: text(o.handover, base.handover),
+            documentation: text(o.documentation, base.documentation),
+            security: text(o.security, base.security),
+            ...(prioritySupport !== undefined ? { prioritySupport } : {}),
+          },
+        ];
       }),
     ) as RateCard["packages"],
   };

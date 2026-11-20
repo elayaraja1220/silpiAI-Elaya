@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Printer, RefreshCw, RotateCcw, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Printer, RefreshCw, RotateCcw, Trash2, XCircle } from "lucide-react";
 
-import { BuildPanel } from "@/components/business/build-panel";
+import { DeleteLeadDialog } from "@/components/business/delete-lead-dialog";
+import { AssetsPanel } from "@/components/business/assets-panel";
+import { ExecutionPanel } from "@/components/business/execution-panel";
 import { BudgetSummary } from "@/components/business/budget-summary";
 import { AccuracyCard, HoursPanel } from "@/components/business/hours-panel";
+import { LeadCostPanel } from "@/components/business/cost-panel";
+import { RunningServicesEditor } from "@/components/business/running-services-editor";
 import { PaymentPanel, ProposalsPanel, SharePanel } from "@/components/business/proposals-panel";
 import { QuotationDocument } from "@/components/business/quotation-document";
 import { RequirementWizard } from "@/components/business/requirement-wizard";
@@ -30,6 +34,8 @@ export function ClientsPage() {
   }, []);
   useEffect(load, [load]);
 
+  const [toDelete, setToDelete] = useState<Lead | null>(null);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -38,7 +44,7 @@ export function ClientsPage() {
           <p className="mt-1 text-xs text-slate-500">Collect a requirement, get the price with GST, and send the quotation.</p>
         </div>
         <button onClick={() => router.push("/clients/new")} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400">
-          <Plus size={16} /> New requirement
+          <Plus size={16} /> Get your quotation
         </button>
       </div>
 
@@ -67,6 +73,7 @@ export function ClientsPage() {
                 <th className="px-5 py-3 text-right font-medium">Total</th>
                 <th className="px-5 py-3 font-medium">Stage</th>
                 <th className="px-5 py-3 font-medium">Updated</th>
+                <th className="px-3 py-3"><span className="sr-only">Delete</span></th>
               </tr>
             </thead>
             <tbody>
@@ -81,12 +88,17 @@ export function ClientsPage() {
                   <td className="px-5 py-3 text-right tabular-nums text-slate-200">{lead.quotation ? formatINR(lead.quotation.grandTotal) : "—"}</td>
                   <td className="px-5 py-3"><StageBadge stage={lead.stage} /></td>
                   <td className="px-5 py-3 text-xs text-slate-500">{formatRelativeTime(lead.updatedAt)}</td>
+                  <td className="px-3 py-3 text-right">
+                    <button type="button" aria-label={`Delete ${lead.requirement.title}`} onClick={(e) => { e.stopPropagation(); setToDelete(lead); }} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-300"><Trash2 size={15} /></button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Card>
       )}
+
+      {toDelete && <DeleteLeadDialog lead={toDelete} onClose={() => setToDelete(null)} onDeleted={load} onError={setError} />}
     </div>
   );
 }
@@ -104,6 +116,7 @@ export function LeadDetailPage({ id }: { id: string }) {
 }
 
 function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
+  const router = useRouter();
   const [lead, setLead] = useState<Lead | null>(null);
   const [history, setHistory] = useState<History>([]);
   const [discount, setDiscount] = useState("");
@@ -167,10 +180,15 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
         <div className="min-w-0 space-y-5">
-          {["approved", "advance_paid", "in_development"].includes(lead.stage) && <BuildPanel lead={lead} onChanged={apply} />}
+          {/* Originals first: the project is generated from the client's own content. */}
+          {lead.quotation && ["approved", "advance_paid", "in_development", "testing", "demo_ready", "final_paid", "delivered"].includes(lead.stage) && <AssetsPanel leadId={lead.id} />}
+          {["approved", "advance_paid", "in_development", "testing", "demo_ready"].includes(lead.stage) && <ExecutionPanel lead={lead} onChanged={apply} />}
           {lead.quotation && ["approved", "advance_paid", "in_development", "testing", "demo_ready", "final_paid", "delivered"].includes(lead.stage) && <HoursPanel lead={lead} onChanged={apply} />}
           {lead.quotation?.budgetCheck && lead.quotation.budgetCheck.status !== "none" && <BudgetSummary check={lead.quotation.budgetCheck} />}
           {lead.quotation && <ProposalsPanel lead={lead} editable={editable} onChanged={apply} />}
+          {/* Internal only: kept out of the printed or saved quotation */}
+          {lead.quotation && <div className="no-print"><LeadCostPanel lead={lead} onConfigure={() => router.push("/pricing")} /></div>}
+          {lead.quotation && <div className="no-print"><RunningServicesEditor key={lead.quotation.id} leadId={lead.id} /></div>}
           {lead.quotation ? <QuotationDocument quotation={lead.quotation} requirement={lead.requirement} /> : <Card className="text-sm text-slate-400">No quotation yet.</Card>}
         </div>
 

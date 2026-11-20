@@ -6,7 +6,9 @@ import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, HelpCircle, 
 import { buildQuote, formatINR, needsBackend, sectionsOf } from "@/lib/business/pricing";
 import { checkBudget } from "@/lib/business/budget";
 import { buildProposals, defaultTier } from "@/lib/business/proposals";
+import type { CostConfig } from "@/lib/business/cost-types";
 import type { TechEntry } from "@/lib/business/tech-catalog";
+import { recommendTechnology } from "@/lib/business/tech-recommend";
 import { parseClientTech } from "@/lib/business/tech-preference";
 import {
   billablePages,
@@ -46,10 +48,10 @@ import { cn } from "@/lib/utils";
 import { BudgetSummary } from "./budget-summary";
 import { DocumentAnalyzer, type AnalysisOutcome } from "./document-analyzer";
 import { PackageDetails } from "./package-details";
-import { QuoteTotals } from "./quotation-document";
 import { ScopeSummary } from "./scope-summary";
-import { TechnologyCheck } from "./technology-check";
-import { Card, Choice, Field, Input, Select, Textarea, jsonFetch } from "./ui";
+import { WizardCostPanel } from "./cost-panel";
+import { TechnologyRecommendations } from "./technology-recommendations";
+import { Card, Choice, Field, Input, Section, Select, Textarea, jsonFetch } from "./ui";
 
 const STEPS = ["Requirement", "Pages & features", "Package", "Client & services", "Review"] as const;
 const PACKAGE_STEP = 2;
@@ -181,6 +183,7 @@ function stepError(step: number, client: Client, req: Requirement): string {
 export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: Lead) => void; onCancel: () => void }) {
   const [rates, setRates] = useState<RateCard | null>(null);
   const [catalog, setCatalog] = useState<TechEntry[] | null>(null);
+  const [costConfig, setCostConfig] = useState<CostConfig | null>(null);
   const [existing, setExisting] = useState<string[]>([]);
   const [step, setStep] = useState(0);
   const [client, setClient] = useState<Client>(emptyClient);
@@ -200,6 +203,9 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
       .catch((e: Error) => setError(e.message));
     jsonFetch<{ catalog: TechEntry[] }>("/api/business/tech-catalog")
       .then((r) => setCatalog(r.catalog))
+      .catch(() => {});
+    jsonFetch<{ config: CostConfig }>("/api/business/cost-config")
+      .then((r) => setCostConfig(r.config))
       .catch(() => {});
     // Existing generated projects, offered for module / version work.
     fetch("/api/projects")
@@ -239,6 +245,14 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
     () => (rates && estimate && budget > 0 ? checkBudget(shown?.requirement ?? priced, estimate, client, rates, proposals ?? undefined) : null),
     [rates, estimate, budget, shown, priced, client, proposals],
   );
+  const techRecommendation = useMemo(() => {
+    if (!catalog || !rates || !shown) return undefined;
+    try {
+      return recommendTechnology(shown.requirement, budget, catalog, rates).options[0];
+    } catch {
+      return undefined;
+    }
+  }, [catalog, rates, shown, budget]);
   const toPhase2 = (m: ModuleId) => setReq((r) => moveToPhase2(r, m));
   const fromPhase2 = (m: ModuleId) => setReq((r) => restoreFromPhase2(r, m));
   // The client agreed to the scope their budget covers: planned pages stay, the rest wait in Phase 2.
@@ -412,11 +426,11 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                 onClick={() => i < step && setStep(i)}
                 disabled={i > step}
                 className={cn(
-                  "flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition",
-                  i === step ? "border-violet-400/60 bg-violet-500/15 text-white" : i < step ? "border-white/10 text-slate-300 hover:bg-white/5" : "border-white/[.06] text-slate-600",
+                  "flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-medium transition",
+                  i === step ? "border-violet-400/60 bg-violet-500/20 text-white shadow-[0_0_20px_-4px_rgba(139,92,246,.6)]" : i < step ? "border-white/10 bg-white/[.03] text-slate-300 hover:bg-white/[.07]" : "border-white/[.06] text-slate-600",
                 )}
               >
-                <span className={cn("flex h-4 w-4 items-center justify-center rounded-full text-[9px]", i < step ? "bg-emerald-500/80 text-white" : "bg-white/10")}>
+                <span className={cn("flex h-5 w-5 items-center justify-center rounded-full text-[10px]", i < step ? "bg-emerald-500 text-white" : i === step ? "bg-violet-500 text-white" : "bg-white/10")}>
                   {i < step ? <Check size={10} /> : i + 1}
                 </span>
                 {label}
@@ -448,86 +462,98 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
           {/* 2. Pages & features */}
           {step === 1 && (
             <>
-              <Field
-                label={`Pages: ${billableCount} billed${req.pages.length > billableCount ? ` + ${req.pages.length - billableCount} supporting` : ""}`}
-                hint={`Each page: ${rates.page.baseHours} h + ${rates.page.sectionHours} h per section (hero, gallery, form...) at ${formatINR(rates.hourlyRate)}/hour, adjusted for complexity. Supporting pages (404, thank-you) and the shared header, footer and navigation are included in the set-up.`}
+              <Section
+                title="Pages"
+                hint={`Each page: ${rates.page.baseHours} h + ${rates.page.sectionHours} h per section at ${formatINR(rates.hourlyRate)}/hour, adjusted for complexity. Supporting pages (404, thank-you) and the shared header, footer and navigation are included in the set-up.`}
+                aside={
+                  <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-200">
+                    {billableCount} billed{req.pages.length > billableCount ? ` + ${req.pages.length - billableCount} supporting` : ""}
+                  </span>
+                }
               >
-                <div className="space-y-1.5 rounded-lg border border-white/[.08] bg-white/[.02] p-2">
+                <div className="space-y-2">
                   {req.pages.map((p) => {
                     const kind = pageKind(req, p);
                     return (
-                    <div key={p} className={cn("grid grid-cols-[minmax(0,1fr)_88px_24px] items-center gap-2 sm:grid-cols-[minmax(120px,200px)_minmax(0,1fr)_88px_24px]", kind === "supporting" && "opacity-70")}>
-                      <span className="flex min-w-0 items-center gap-1.5 text-sm text-violet-200">
-                        <span className="truncate">{p}</span>
-                        <button
-                          type="button"
-                          onClick={() => setKind(p, kind === "main" ? "supporting" : "main")}
-                          title={kind === "main" ? "Billed page. Click to mark as a supporting page (not billed)." : "Supporting page, included in the set-up. Click to bill it as a full page."}
-                          className={cn("shrink-0 rounded px-1 text-[9px] uppercase tracking-wider", kind === "main" ? "bg-violet-500/20 text-violet-200" : "bg-white/[.06] text-slate-400")}
-                        >
-                          {kind === "main" ? "page" : "supporting"}
-                        </button>
-                        {isLegalPage(p) && <span className="shrink-0 rounded bg-white/[.06] px-1 text-[9px] uppercase tracking-wider text-slate-400">legal</span>}
-                      </span>
-                      <input
-                        value={req.pageDetails?.[p]?.purpose ?? ""}
-                        onChange={(e) => setDetail(p, { purpose: e.target.value.slice(0, 200) })}
-                        placeholder="Short details: what this page shows"
-                        className="order-last col-span-3 rounded-md border border-white/[.06] bg-transparent px-2 py-1 text-xs text-slate-300 outline-none placeholder:text-slate-600 focus:border-violet-400/50 sm:order-none sm:col-span-1"
-                      />
-                      <label className="flex items-center gap-1 text-[11px] text-slate-500">
+                      <div key={p} className={cn("rounded-xl border border-white/[.07] bg-white/[.025] p-3 transition hover:border-white/[.14]", kind === "supporting" && "opacity-70")}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold text-slate-100">{p}</span>
+                          <button
+                            type="button"
+                            onClick={() => setKind(p, kind === "main" ? "supporting" : "main")}
+                            title={kind === "main" ? "Billed page. Click to mark as a supporting page (not billed)." : "Supporting page, included in the set-up. Click to bill it as a full page."}
+                            className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider", kind === "main" ? "bg-violet-500/20 text-violet-200" : "bg-white/[.07] text-slate-400")}
+                          >
+                            {kind === "main" ? "Billed" : "Supporting"}
+                          </button>
+                          {isLegalPage(p) && <span className="rounded-full bg-white/[.07] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-400">Legal</span>}
+                          <span className="ml-auto flex items-center gap-2">
+                            <label className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                              Sections
+                              <input
+                                type="number"
+                                min={1}
+                                max={30}
+                                value={sectionsOf(req, p, rates)}
+                                onChange={(e) => setDetail(p, { sections: Math.max(1, Math.min(30, Math.round(Number(e.target.value)) || 1)) })}
+                                className="w-14 rounded-lg border border-white/[.08] bg-white/[.04] px-2 py-1 text-center text-xs text-slate-100 outline-none focus:border-violet-400/60"
+                              />
+                            </label>
+                            <button type="button" aria-label={`Remove ${p}`} onClick={() => setR("pages", req.pages.filter((x) => x !== p))} className="rounded-md p-1 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-300"><X size={14} /></button>
+                          </span>
+                        </div>
                         <input
-                          type="number"
-                          min={1}
-                          max={30}
-                          value={sectionsOf(req, p, rates)}
-                          onChange={(e) => setDetail(p, { sections: Math.max(1, Math.min(30, Math.round(Number(e.target.value)) || 1)) })}
-                          className="w-12 rounded-md border border-white/[.06] bg-transparent px-1.5 py-1 text-xs text-slate-200 outline-none"
+                          value={req.pageDetails?.[p]?.purpose ?? ""}
+                          onChange={(e) => setDetail(p, { purpose: e.target.value.slice(0, 200) })}
+                          placeholder="What this page shows"
+                          className="mt-2 w-full rounded-lg border border-transparent bg-transparent px-0 py-1 text-xs text-slate-400 outline-none placeholder:text-slate-600 focus:border-white/10 focus:bg-white/[.03] focus:px-2"
                         />
-                        sec
-                      </label>
-                      <button type="button" aria-label={`Remove ${p}`} onClick={() => setR("pages", req.pages.filter((x) => x !== p))} className="text-slate-500 hover:text-white"><X size={13} /></button>
-                    </div>
+                      </div>
                     );
                   })}
-                  <input value={pageDraft} onChange={(e) => setPageDraft(e.target.value)} onKeyDown={onPageKey} onBlur={() => addPage(pageDraft)} placeholder="Type a page and press Enter" className="w-full bg-transparent px-1 py-1 text-sm outline-none placeholder:text-slate-600" />
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-white/[.12] px-3 py-2.5 transition focus-within:border-violet-400/50">
+                    <Plus size={14} className="text-slate-500" />
+                    <input value={pageDraft} onChange={(e) => setPageDraft(e.target.value)} onKeyDown={onPageKey} onBlur={() => addPage(pageDraft)} placeholder="Add a page: type a name and press Enter" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-600" />
+                  </div>
                 </div>
-              </Field>
-              {pageNote && <p className="text-[11px] text-sky-200">{pageNote}</p>}
-              {(req.deferredPages?.length ?? 0) > 0 && (
-                <Field label="Phase 2 pages (kept on record, not priced now)">
-                  <ul className="flex flex-wrap gap-1.5">
-                    {req.deferredPages!.map((p) => (
-                      <li key={p} className="flex items-center gap-1.5 rounded-md border border-amber-400/20 bg-amber-500/[.06] px-2 py-1 text-[11px] text-amber-100">
-                        {p}
-                        <button type="button" onClick={() => setReq((r) => restorePage(r, p))} className="text-amber-300 hover:text-white">Add back</button>
-                      </li>
-                    ))}
-                  </ul>
-                </Field>
-              )}
-              <div className="flex flex-wrap gap-1.5">
-                {PAGE_SUGGESTIONS.filter((p) => !req.pages.some((x) => x.toLowerCase() === p.toLowerCase())).map((p) => (
-                  <button key={p} type="button" onClick={() => addPage(p)} className="flex items-center gap-1 rounded-md border border-white/[.08] px-2 py-1 text-[11px] text-slate-400 hover:text-white">
-                    <Plus size={11} /> {p}
-                  </button>
-                ))}
-              </div>
-              {optionalPages.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-                  <span>Optional pages (add only if the client asks):</span>
-                  {optionalPages.map((p) => (
-                    <button key={p} type="button" onClick={() => addPage(p)} className="flex items-center gap-1 rounded-md border border-dashed border-white/[.12] px-2 py-1 text-slate-400 hover:text-white">
+                {pageNote && <p className="text-[11px] text-sky-200">{pageNote}</p>}
+                {(req.deferredPages?.length ?? 0) > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-slate-400">Phase 2 pages (kept on record, not priced now)</p>
+                    <ul className="flex flex-wrap gap-1.5">
+                      {req.deferredPages!.map((p) => (
+                        <li key={p} className="flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-500/[.06] px-3 py-1 text-[11px] text-amber-100">
+                          {p}
+                          <button type="button" onClick={() => setReq((r) => restorePage(r, p))} className="font-medium text-amber-300 hover:text-white">Add back</button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[11px] text-slate-500">Quick add</span>
+                  {PAGE_SUGGESTIONS.filter((p) => !req.pages.some((x) => x.toLowerCase() === p.toLowerCase())).map((p) => (
+                    <button key={p} type="button" onClick={() => addPage(p)} className="flex items-center gap-1 rounded-full border border-white/[.08] bg-white/[.02] px-2.5 py-1 text-[11px] text-slate-300 transition hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-white">
                       <Plus size={11} /> {p}
                     </button>
                   ))}
+                  {optionalPages.map((p) => (
+                    <button key={p} type="button" title="Add only if the client asks" onClick={() => addPage(p)} className="flex items-center gap-1 rounded-full border border-dashed border-white/[.15] px-2.5 py-1 text-[11px] text-slate-400 transition hover:text-white">
+                      <Plus size={11} /> {p} <span className="text-slate-600">· optional</span>
+                    </button>
+                  ))}
                 </div>
-              )}
-              <p className="text-[11px] text-slate-500">
-                Shared components (not pages): {(req.sharedComponents?.length ? req.sharedComponents : ["Header", "Footer", "Navigation"]).join(", ")}.
-              </p>
-              <Field label="Modules / features" hint="Only selected features are priced. Optional features can be moved to Phase 2 below.">
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                <p className="text-[11px] text-slate-500">
+                  Shared components (not pages): {(req.sharedComponents?.length ? req.sharedComponents : ["Header", "Footer", "Navigation"]).join(", ")}.
+                </p>
+              </Section>
+
+              <Section
+                title="Modules & features"
+                hint="Only selected features are priced. Optional features can be moved to Phase 2."
+                aside={req.modules.length > 0 ? <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">{req.modules.length} selected</span> : undefined}
+              >
+                <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                   {MODULES.map((m) => (
                     <Choice
                       key={m}
@@ -538,69 +564,63 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                     />
                   ))}
                 </div>
-              </Field>
-              {req.modules.length > 0 && (
-                <Field label="Selected features" hint="Must-have features stay in every package and can never move to Phase 2.">
-                  <ul className="divide-y divide-white/[.05] rounded-lg border border-white/[.08]">
-                    {req.modules.map((m) => {
-                      const must = req.mustHave?.includes(m) ?? false;
-                      return (
-                        <li key={m} className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 text-xs">
-                          <span className="text-slate-200">{rates.modules[m].label} <span className="text-slate-500">· {rates.modules[m].hours} h</span></span>
-                          <span className="flex items-center gap-1.5">
-                            <span className={cn("rounded px-1.5 py-0.5 text-[10px]", must ? "bg-amber-500/15 text-amber-200" : "bg-white/[.05] text-slate-400")}>{must ? "Must-have" : "Optional"}</span>
-                            {!must && (
-                              <button type="button" onClick={() => toPhase2(m)} className="rounded-md border border-white/[.1] px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-white/5">Move to Phase 2</button>
-                            )}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </Field>
-              )}
-              {(req.deferredModules?.length ?? 0) > 0 && (
-                <Field label="Phase 2 features (kept on record, not priced now)">
-                  <ul className="flex flex-wrap gap-1.5">
-                    {req.deferredModules!.map((m) => (
-                      <li key={m} className="flex items-center gap-1.5 rounded-md border border-amber-400/20 bg-amber-500/[.06] px-2 py-1 text-[11px] text-amber-100">
-                        {rates.modules[m]?.label ?? m}
-                        <button type="button" onClick={() => fromPhase2(m)} className="text-amber-300 hover:text-white">Add back</button>
-                      </li>
-                    ))}
-                  </ul>
-                </Field>
-              )}
-              {req.modules.length > 0 && (
-                <Field label="Must-have features" hint="Always included in the Standard and Premium packages. Basic keeps only what the site cannot work without. Tap to mark.">
-                  <div className="flex flex-wrap gap-1.5">
-                    {req.modules.map((m) => {
-                      const on = req.mustHave?.includes(m) ?? false;
-                      return (
-                        <button
-                          key={m}
-                          type="button"
-                          aria-pressed={on}
-                          onClick={() => setR("mustHave", on ? (req.mustHave ?? []).filter((x) => x !== m) : [...(req.mustHave ?? []), m])}
-                          className={cn("flex items-center gap-1 rounded-md border px-2 py-1 text-[11px]", on ? "border-amber-400/50 bg-amber-500/10 text-amber-100" : "border-white/[.08] text-slate-400 hover:text-white")}
-                        >
-                          <Star size={11} className={on ? "fill-amber-300 text-amber-300" : ""} /> {rates.modules[m].label}
-                        </button>
-                      );
-                    })}
+                {req.modules.length > 0 && (
+                  <div className="rounded-xl border border-white/[.07] bg-white/[.02]">
+                    <p className="border-b border-white/[.06] px-4 py-2.5 text-xs text-slate-400">
+                      Must-have features stay in every package and never move to Phase 2. Basic keeps only what the site cannot work without.
+                    </p>
+                    <ul className="divide-y divide-white/[.05]">
+                      {req.modules.map((m) => {
+                        const must = req.mustHave?.includes(m) ?? false;
+                        return (
+                          <li key={m} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs">
+                            <span className="text-slate-200">{rates.modules[m].label} <span className="text-slate-500">· {rates.modules[m].hours} h</span></span>
+                            <span className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                aria-pressed={must}
+                                onClick={() => setR("mustHave", must ? (req.mustHave ?? []).filter((x) => x !== m) : [...(req.mustHave ?? []), m])}
+                                className={cn("flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition", must ? "border-amber-400/50 bg-amber-500/10 text-amber-100" : "border-white/[.08] text-slate-400 hover:text-white")}
+                              >
+                                <Star size={11} className={must ? "fill-amber-300 text-amber-300" : ""} /> {must ? "Must-have" : "Optional"}
+                              </button>
+                              {!must && (
+                                <button type="button" onClick={() => toPhase2(m)} className="rounded-full border border-white/[.1] px-2.5 py-1 text-[11px] text-slate-300 transition hover:bg-white/5">Move to Phase 2</button>
+                              )}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </div>
-                </Field>
-              )}
-              <Field label="Design">
-                <div className="grid gap-2 sm:grid-cols-3">
+                )}
+                {(req.deferredModules?.length ?? 0) > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs text-slate-400">Phase 2 features (kept on record, not priced now)</p>
+                    <ul className="flex flex-wrap gap-1.5">
+                      {req.deferredModules!.map((m) => (
+                        <li key={m} className="flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-500/[.06] px-3 py-1 text-[11px] text-amber-100">
+                          {rates.modules[m]?.label ?? m}
+                          <button type="button" onClick={() => fromPhase2(m)} className="font-medium text-amber-300 hover:text-white">Add back</button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </Section>
+
+              <Section title="Design">
+                <div className="grid gap-2.5 sm:grid-cols-3">
                   {DESIGN_SOURCES.map((d) => (
                     <Choice key={d} active={req.design === d} onClick={() => setR("design", d)} title={rates.design[d].label} detail={rates.design[d].hours ? `${rates.design[d].hours} h · ${rates.design[d].detail}` : rates.design[d].detail} />
                   ))}
                 </div>
-              </Field>
-              <details className="rounded-xl border border-white/[.08] bg-white/[.02] px-4 py-3" open={Object.keys(req.tech ?? {}).length > 0}>
-                <summary className="cursor-pointer text-sm font-medium text-slate-100">
-                  Technology <span className="text-xs font-normal text-slate-400">(optional, for technical clients)</span>
+              </Section>
+
+              <details className="group rounded-xl border border-white/[.08] bg-white/[.02] px-4 py-3 open:bg-white/[.03]" open={Object.keys(req.tech ?? {}).length > 0}>
+                <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-slate-100">
+                  <span>Technology <span className="text-xs font-normal text-slate-500">(optional, for technical clients)</span></span>
+                  <span className="text-xs text-slate-500 transition group-open:rotate-90">▸</span>
                 </summary>
                 <p className="mt-2 text-[11px] text-slate-400">
                   Leave every choice on &quot;SILPI chooses&quot; if the client does not mind. A different technology changes the development hours, and the estimate updates straight away.
@@ -632,9 +652,10 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   })}
                 </div>
               </details>
-              <Field label="References" hint="Sites the client likes, brand colours, logo notes.">
-                <Textarea value={req.references} onChange={(e) => setR("references", e.target.value)} className="min-h-16" />
-              </Field>
+
+              <Section title="References" hint="Sites the client likes, brand colours, logo notes.">
+                <Textarea value={req.references} onChange={(e) => setR("references", e.target.value)} className="min-h-24" />
+              </Section>
             </>
           )}
 
@@ -652,13 +673,15 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   </div>
                 )}
                 {budgetCheck && <BudgetSummary check={budgetCheck} onMoveToPhase2={toPhase2} onApplyPlan={applyPlan} onChangeDesign={(x) => setR("design", x)} />}
-                <TechnologyCheck
+                <TechnologyRecommendations
                   requirement={priced}
                   budget={budget}
                   rates={rates}
                   catalog={catalog}
+                  onUse={(ids) => setReq((r) => ({ ...r, selectedStack: { ids } }))}
                   onConfirm={(ids) => setReq((r) => (r.clientTech ? { ...r, clientTech: { ...r.clientTech, confirmedIds: ids } } : r))}
                   onUndo={() => setReq((r) => (r.clientTech ? { ...r, clientTech: { stated: r.clientTech.stated, ids: r.clientTech.ids } } : r))}
+                  onClearSelection={() => setReq((r) => { const { selectedStack: _s, ...rest } = r; return rest; })}
                 />
                 <PackageDetails proposals={proposals} rates={rates} selected={shownTier} suggested={suggested} budget={budget} onSelect={setTier} />
               </>
@@ -671,7 +694,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
           {step === 3 && (
             <>
               {shown && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-400/30 bg-violet-500/10 px-4 py-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-400/30 bg-gradient-to-r from-violet-500/20 to-indigo-500/[.06] px-5 py-4 text-sm">
                   <span>
                     <span className="font-semibold text-white">{shown.title} package</span>
                     <span className="block text-xs text-slate-400">{shown.pages.length} pages · {shown.requirement.modules.length} features · {shown.quote.totalHours} h · about {shown.estimatedWeeks} weeks</span>
@@ -682,8 +705,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   </span>
                 </div>
               )}
-              <div>
-                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[.15em] text-slate-500">Client details</p>
+              <Section title="Client details" hint="Used on the quotation. The state decides CGST + SGST or IGST.">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Client name *"><Input value={client.name} onChange={(e) => setC("name", e.target.value)} placeholder="Full name" /></Field>
                   <Field label="Company"><Input value={client.company} onChange={(e) => setC("company", e.target.value)} placeholder="Business name (optional)" /></Field>
@@ -703,13 +725,26 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                 {shown && req.deadlineWeeks > 0 && req.deadlineWeeks < shown.estimatedWeeks && (
                   <p className="mt-2 text-xs text-amber-300">The deadline is shorter than the {shown.estimatedWeeks} weeks this package needs. Agree the date with the client.</p>
                 )}
-              </div>
+              </Section>
             </>
           )}
 
           {/* 5. Review: everything, including every page name */}
           {step === 4 && shown && (
             <div className="space-y-5 text-sm">
+              <details className="rounded-xl border border-amber-400/20 bg-amber-500/[.03] p-4" open>
+                <summary className="cursor-pointer text-xs font-semibold text-amber-100">Costs, profitability and running costs <span className="font-normal text-amber-200/70">(internal view, never shown to the client)</span></summary>
+                <div className="mt-3">
+                  <WizardCostPanel
+                    quote={shown.quote}
+                    requirement={shown.requirement}
+                    rates={rates}
+                    config={costConfig}
+                    recommendation={techRecommendation}
+                    onConfigure={() => window.open("/pricing", "_blank")}
+                  />
+                </div>
+              </details>
               <div className="grid gap-4 sm:grid-cols-2">
                 <ReviewBlock title="Client">
                   <p className="text-slate-200">{client.name}{client.company ? ` · ${client.company}` : ""}</p>
@@ -725,7 +760,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                 </ReviewBlock>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-400/30 bg-violet-500/10 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-400/30 bg-gradient-to-r from-violet-500/20 to-indigo-500/[.06] px-5 py-4">
                 <span>
                   <span className="font-semibold text-white">{shown.title} package</span>
                   <span className="block text-xs text-slate-400">{shown.quote.totalHours} h · about {shown.estimatedWeeks} weeks{shown.terms ? ` · ${shown.terms.revisions} revisions · ${shown.terms.supportDays} days support` : ""}</span>
@@ -771,9 +806,9 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
 
           {/* Package choice, before the package details page: click one to see its details. */}
           {proposals && step < PACKAGE_STEP && (
-            <div className="space-y-2 border-t border-white/[.06] pt-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-500">Choose a package</p>
-              <div className="grid gap-2 sm:grid-cols-3">
+            <div className="space-y-3 border-t border-white/[.06] pt-6">
+              <h3 className="text-[15px] font-semibold tracking-tight text-slate-100">Choose a package</h3>
+              <div className="grid gap-3 sm:grid-cols-3">
                 {proposals.map((p) => {
                   const active = p.tier === shownTier;
                   return (
@@ -782,15 +817,15 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                       type="button"
                       onClick={() => openPackage(p.tier)}
                       className={cn(
-                        "flex flex-col gap-1 rounded-xl border px-3 py-2.5 text-left text-xs transition",
-                        active ? "border-violet-400/60 bg-violet-500/15" : "border-white/[.08] bg-white/[.03] hover:border-white/20",
+                        "flex flex-col gap-1 rounded-2xl border px-4 py-3.5 text-left text-xs transition hover:-translate-y-0.5",
+                        active ? "border-violet-400/60 bg-gradient-to-b from-violet-500/20 to-violet-500/[.06] shadow-[0_0_24px_-8px_rgba(139,92,246,.7)]" : "border-white/[.08] bg-white/[.03] hover:border-white/20",
                       )}
                     >
                       <span className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold text-slate-100">{p.title}</span>
                         {p.tier === suggested && <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/20 px-1.5 text-[9px] font-semibold text-emerald-300"><Sparkles size={9} /> suggested</span>}
                       </span>
-                      <span className={cn("text-base font-semibold tabular-nums", budget > 0 ? (p.grandTotal <= budget ? "text-emerald-300" : "text-rose-300") : "text-white")}>{formatINR(p.grandTotal)}</span>
+                      <span className={cn("mt-1 text-xl font-semibold tracking-tight tabular-nums", budget > 0 ? (p.grandTotal <= budget ? "text-emerald-300" : "text-rose-300") : "text-white")}>{formatINR(p.grandTotal)}</span>
                       <span className="text-[11px] text-slate-500">{p.pages.length} page{p.pages.length === 1 ? "" : "s"} · {p.requirement.modules.length} features · {p.estimatedWeeks} wk</span>
                       <span className="mt-1 flex items-center gap-1 text-[11px] text-violet-300">See details <ArrowRight size={11} /></span>
                     </button>
@@ -803,15 +838,15 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
           {error && <p className="rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{error}</p>}
 
           <div className="flex flex-wrap justify-between gap-3 border-t border-white/[.06] pt-4">
-            <button type="button" onClick={step === 0 ? onCancel : () => { setError(""); setStep(step - 1); }} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 hover:text-white">
+            <button type="button" onClick={step === 0 ? onCancel : () => { setError(""); setStep(step - 1); }} className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white">
               <ArrowLeft size={15} /> {step === 0 ? "Cancel" : "Back"}
             </button>
             {step < STEPS.length - 1 ? (
-              <button type="button" onClick={next} disabled={step === PACKAGE_STEP && !proposals} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400 disabled:opacity-50">
+              <button type="button" onClick={next} disabled={step === PACKAGE_STEP && !proposals} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition hover:brightness-110 disabled:opacity-50">
                 {step === PACKAGE_STEP ? <>Finalise {shown?.title ?? ""} package <Check size={15} /></> : step === 1 ? <>See packages <ArrowRight size={15} /></> : <>Next <ArrowRight size={15} /></>}
               </button>
             ) : (
-              <button type="button" onClick={submit} disabled={saving} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400 disabled:opacity-60">
+              <button type="button" onClick={submit} disabled={saving} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition hover:brightness-110 disabled:opacity-60">
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Save & create quotation
               </button>
             )}
@@ -821,29 +856,56 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
 
       {/* Live estimate */}
       <aside className="xl:sticky xl:top-24 xl:self-start">
-        <Card>
-          <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-500">
-            Estimate{shown && <span className="normal-case tracking-normal text-violet-300"> · {shown.title} package</span>}
-          </p>
+        <Card className="overflow-hidden p-0">
+          <div className="bg-gradient-to-br from-violet-600/30 via-indigo-600/15 to-transparent px-6 pb-5 pt-6">
+            <p className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">
+              <span>Estimate</span>
+              {shown && <span className="rounded-full bg-violet-500/20 px-2.5 py-0.5 normal-case tracking-normal text-violet-200">{shown.title}</span>}
+            </p>
+            <p className="mt-3 text-[34px] font-semibold leading-none tracking-tight tabular-nums text-white">{formatINR(estimate ? estimate.grandTotal : 0)}</p>
+            <p className="mt-1.5 text-xs text-slate-400">Grand total incl. GST</p>
+          </div>
+          <div className="px-6 pb-6 pt-4">
           {estimate ? (
-            <div className="mt-3 space-y-4 text-slate-300">
-              <QuoteTotals quote={estimate} />
-              <div className="space-y-1 border-t border-white/[.06] pt-3 text-xs">
+            <div className="space-y-4 text-slate-300">
+              <dl className="space-y-1.5 text-[13px]">
+                <div className="flex justify-between gap-4"><dt className="text-slate-400">Development subtotal</dt><dd className="tabular-nums text-slate-100">{formatINR(estimate.subtotal)}</dd></div>
+                {estimate.discount > 0 && <div className="flex justify-between gap-4"><dt className="text-slate-400">Discount</dt><dd className="tabular-nums text-emerald-300">-{formatINR(estimate.discount)}</dd></div>}
+                <div className="flex justify-between gap-4"><dt className="text-slate-400">Taxable value</dt><dd className="tabular-nums text-slate-100">{formatINR(estimate.taxable)}</dd></div>
+                {estimate.gst.mode === "intra" && (
+                  <>
+                    <div className="flex justify-between gap-4"><dt className="text-slate-400">CGST @ {estimate.gst.rate / 2}%</dt><dd className="tabular-nums">{formatINR(estimate.gst.cgst)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="text-slate-400">SGST @ {estimate.gst.rate / 2}%</dt><dd className="tabular-nums">{formatINR(estimate.gst.sgst)}</dd></div>
+                  </>
+                )}
+                {estimate.gst.mode === "inter" && <div className="flex justify-between gap-4"><dt className="text-slate-400">IGST @ {estimate.gst.rate}%</dt><dd className="tabular-nums">{formatINR(estimate.gst.igst)}</dd></div>}
+                {estimate.gst.mode === "export" && <p className="text-xs text-slate-500">GST: export of services (zero-rated, under LUT)</p>}
+                {estimate.roundOff !== 0 && <div className="flex justify-between gap-4"><dt className="text-slate-400">Round off</dt><dd className="tabular-nums">{formatINR(estimate.roundOff)}</dd></div>}
+              </dl>
+              <div className="grid grid-cols-2 gap-2">
                 {estimate.schedule.map((s) => (
-                  <div key={s.label} className="flex justify-between gap-3"><span className="text-slate-500">{s.percent}% {s.label.split(" - ")[0].toLowerCase()}</span><span className="tabular-nums">{formatINR(s.amount)}</span></div>
+                  <div key={s.label} className="rounded-xl border border-white/[.06] bg-white/[.03] px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-500">{s.percent}% {s.label.split(" - ")[0].toLowerCase()}</p>
+                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-100">{formatINR(s.amount)}</p>
+                  </div>
                 ))}
               </div>
-              <p className="text-xs text-slate-500">
-                {estimate.pageCount ? `${estimate.pageCount.billable} page${estimate.pageCount.billable === 1 ? "" : "s"}${estimate.pageCount.supporting ? ` + ${estimate.pageCount.supporting} supporting` : ""} · ` : ""}
-                {estimate.totalHours} development hours · about {estimate.estimatedWeeks} week{estimate.estimatedWeeks === 1 ? "" : "s"} of work
-              </p>
+              <div className="flex flex-wrap gap-1.5 text-[11px]">
+                {estimate.pageCount && <span className="rounded-full bg-white/[.06] px-2.5 py-1 text-slate-300">{estimate.pageCount.billable} page{estimate.pageCount.billable === 1 ? "" : "s"}{estimate.pageCount.supporting ? ` + ${estimate.pageCount.supporting} supporting` : ""}</span>}
+                <span className="rounded-full bg-white/[.06] px-2.5 py-1 text-slate-300">{estimate.totalHours} dev hours</span>
+                <span className="rounded-full bg-white/[.06] px-2.5 py-1 text-slate-300">about {estimate.estimatedWeeks} week{estimate.estimatedWeeks === 1 ? "" : "s"}</span>
+              </div>
+              <div className="space-y-1 rounded-xl border border-dashed border-white/10 px-3 py-2.5 text-xs text-slate-400">
+                <div className="flex justify-between gap-3"><span>Domain name</span><span className="text-slate-500">Not included</span></div>
+                <div className="flex justify-between gap-3"><span>Hosting</span><span className="text-slate-500">Not included</span></div>
+                <p className="pt-1 text-[11px] text-slate-500">Buy separately, for example from Hostinger or GoDaddy.</p>
+              </div>
               {estimate.deferred && <p className="text-[11px] text-amber-200/80">Phase 2 (not priced): {estimate.deferred.modules.join(", ")}</p>}
             </div>
           ) : (
-            <div className="mt-3 space-y-1 text-sm text-slate-500">
+            <div className="space-y-1 text-sm text-slate-500">
               <div className="flex justify-between"><span>Subtotal</span><span className="tabular-nums">{formatINR(0)}</span></div>
               <div className="flex justify-between"><span>GST</span><span className="tabular-nums">{formatINR(0)}</span></div>
-              <div className="mt-1 flex justify-between border-t border-slate-400/30 pt-2 text-base font-semibold"><span>Grand total</span><span className="tabular-nums">{formatINR(0)}</span></div>
               <div className="space-y-0.5 pt-2 text-xs">
                 <div className="flex justify-between gap-3"><span>Domain name</span><span>Not included</span></div>
                 <div className="flex justify-between gap-3"><span>Hosting</span><span>Not included</span></div>
@@ -857,6 +919,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
               <BudgetSummary check={budgetCheck} onMoveToPhase2={toPhase2} onApplyPlan={applyPlan} onChangeDesign={(x) => setR("design", x)} compact />
             </div>
           )}
+          </div>
         </Card>
       </aside>
     </div>
@@ -865,8 +928,8 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
 
 function ReviewBlock({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-white/[.06] bg-white/[.02] p-4 text-xs text-slate-400">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.15em] text-slate-500">{title}</p>
+    <section className="rounded-2xl border border-white/[.07] bg-white/[.025] p-5 text-xs leading-5 text-slate-400">
+      <p className="mb-3 text-[11px] font-semibold uppercase tracking-[.15em] text-violet-300/80">{title}</p>
       {children}
     </section>
   );

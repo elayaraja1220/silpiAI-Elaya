@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { quotationDocx, quotationPdf } from "./documents";
+import { publicRunningFor } from "./running-store";
 import { getRateCard } from "./store";
 import type { Lead } from "./types";
 
@@ -11,9 +12,11 @@ export async function quotationDownload(lead: Lead, format: string | null): Prom
   // Payment details can be added after the quotation was issued: use the current ones.
   const current = getRateCard().business;
   const q = { ...saved, business: { ...saved.business, upiId: current.upiId, bankDetails: current.bankDetails } };
+  // Only the client-safe running services, whoever downloads the file.
+  const running = publicRunningFor(lead.id);
   const safeName = `${q.number}-${(q.client.company || q.client.name).replace(/[^\w-]+/g, "-").slice(0, 40)}`;
   if (format === "docx") {
-    const body = await quotationDocx(q, lead.requirement);
+    const body = await quotationDocx(q, lead.requirement, running);
     return new NextResponse(new Uint8Array(body), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -23,7 +26,7 @@ export async function quotationDownload(lead: Lead, format: string | null): Prom
     });
   }
   if (format === "pdf") {
-    const body = await quotationPdf(q, lead.requirement);
+    const body = await quotationPdf(q, lead.requirement, running);
     return new NextResponse(new Uint8Array(body), {
       headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${safeName}.pdf"`, "Cache-Control": "no-store" },
     });

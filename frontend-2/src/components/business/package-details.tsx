@@ -3,16 +3,16 @@
 import { Check, Clock, Code2, FileText, LifeBuoy, Minus, Search, Sparkles } from "lucide-react";
 
 import { formatINR, sectionsOf } from "@/lib/business/pricing";
-import { compareProposals, type Proposal } from "@/lib/business/proposals";
+import { compareProposals, describePriority, type Proposal } from "@/lib/business/proposals";
 import type { RateCard, Tier } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
 
 import { ComparisonTable } from "./comparison-table";
 
 const ACCENT: Record<Tier, string> = {
-  basic: "border-sky-400/50 bg-sky-500/10",
-  standard: "border-violet-400/60 bg-violet-500/15",
-  premium: "border-amber-400/50 bg-amber-500/10",
+  basic: "border-sky-400/50 bg-gradient-to-b from-sky-500/15 to-sky-500/[.04] shadow-[0_0_28px_-10px_rgba(56,189,248,.6)]",
+  standard: "border-violet-400/60 bg-gradient-to-b from-violet-500/20 to-violet-500/[.05] shadow-[0_0_28px_-10px_rgba(139,92,246,.7)]",
+  premium: "border-amber-400/50 bg-gradient-to-b from-amber-500/15 to-amber-500/[.04] shadow-[0_0_28px_-10px_rgba(251,191,36,.5)]",
 };
 
 /**
@@ -51,7 +51,7 @@ export function PackageDetails({
               type="button"
               aria-pressed={active}
               onClick={() => onSelect(x.tier)}
-              className={cn("relative rounded-xl border p-4 text-left transition", active ? ACCENT[x.tier] : "border-white/[.08] bg-white/[.02] hover:border-white/20")}
+              className={cn("relative rounded-2xl border p-5 text-left transition hover:-translate-y-0.5", active ? ACCENT[x.tier] : "border-white/[.08] bg-white/[.02] hover:border-white/20")}
             >
               {x.tier === suggested && (
                 <span className="absolute -top-2.5 right-3 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white">
@@ -60,7 +60,7 @@ export function PackageDetails({
               )}
               <p className="text-sm font-semibold text-white">{x.title}</p>
               <p className="mt-0.5 text-[11px] text-slate-400">{x.tagline}</p>
-              <p className="mt-3 text-xl font-semibold tabular-nums text-white">{formatINR(x.grandTotal)}</p>
+              <p className="mt-4 text-2xl font-semibold tracking-tight tabular-nums text-white">{formatINR(x.grandTotal)}</p>
               <p className="text-[11px] text-slate-500">incl. GST · {x.quote.totalHours} h · about {x.estimatedWeeks} wk</p>
               {fits !== undefined && (
                 <p className={cn("mt-2 text-[11px] font-medium", fits ? "text-emerald-300" : "text-rose-300")}>
@@ -76,7 +76,7 @@ export function PackageDetails({
       </div>
 
       {/* Details of the selected package */}
-      <div className={cn("space-y-5 rounded-xl border p-5", ACCENT[p.tier])}>
+      <div className={cn("space-y-5 rounded-2xl border p-6", ACCENT[p.tier])}>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">Package details</p>
@@ -155,6 +155,12 @@ export function PackageDetails({
               <ul className="mt-1 space-y-0.5">
                 {p.terms.extras.map((e) => <li key={e} className="flex items-center gap-1.5"><Check size={12} className="text-emerald-300" /> {e}</li>)}
               </ul>
+              {p.terms.handover && <p className="mt-1 text-slate-400">{p.terms.handover}</p>}
+              <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                {p.terms.documentation && <><dt className="text-slate-500">Documentation &amp; training</dt><dd>{p.terms.documentation}</dd></>}
+                {p.terms.security && <><dt className="text-slate-500">Security &amp; testing</dt><dd>{p.terms.security}</dd></>}
+                {p.terms.prioritySupport && <><dt className="text-slate-500">Priority support</dt><dd>{describePriority(p.terms.prioritySupport)}</dd></>}
+              </dl>
             </Block>
           )}
 
@@ -179,8 +185,8 @@ export function PackageDetails({
 
 function Block({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-white/[.06] bg-black/10 p-3 text-xs text-slate-300">
-      <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{icon} {title}</p>
+    <section className="rounded-xl border border-white/[.06] bg-black/20 p-4 text-xs leading-5 text-slate-300">
+      <p className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-300"><span className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/[.07] text-violet-300">{icon}</span> {title}</p>
       {children}
     </section>
   );

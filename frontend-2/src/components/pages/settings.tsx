@@ -10,6 +10,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+import { ExecutionSettingsSection } from "@/components/business/execution-settings";
+
 export function SettingsPage() {
   const [provider, setProvider] = useState("Gemini");
   const [endpoint, setEndpoint] = useState("http://localhost:4000/api");
@@ -28,6 +30,8 @@ export function SettingsPage() {
           Configure the services that power your development workspace.
         </p>
       </div>
+
+      <ExecutionSettingsSection />
 
       {/* AI Provider */}
       <section className="rounded-xl border border-white/[.07] bg-[#151923] p-5">

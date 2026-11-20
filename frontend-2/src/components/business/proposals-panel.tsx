@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, CheckCircle2, Copy, FileDown, Link2, Loader2, Mail, MessageCircle, MessageSquareWarning, Minus } from "lucide-react";
+import { Check, CheckCircle2, Copy, FileDown, Hammer, Link2, Loader2, Mail, MessageCircle, MessageSquareWarning, Minus } from "lucide-react";
 
 import { ComparisonTable } from "@/components/business/comparison-table";
+import { DEV_START_HEADER } from "@/lib/dev-flags"; // TEMP DEV
+import { JOBS_CHANGED } from "@/components/business/execution-panel";
 import { Card, jsonFetch } from "@/components/business/ui";
 import { formatINR } from "@/lib/business/pricing";
 import type { Proposal } from "@/lib/business/proposals";
@@ -249,6 +251,34 @@ export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: {
     }
   };
 
+  // Development shortcut: start the work now, without the advance. Local Claude Code only (the API always needs its own cost approval).
+  const [skipBusy, setSkipBusy] = useState(false);
+  const [skipError, setSkipError] = useState("");
+  const [skipChecked, setSkipChecked] = useState(false);
+  const startWithoutPayment = async () => {
+    setSkipBusy(true);
+    setSkipError("");
+    const post = async (url: string, body: object) => {
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", [DEV_START_HEADER]: "1" }, body: JSON.stringify(body) });
+      const data = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string };
+      if (!res.ok || data.success === false) throw new Error(data.error || "Could not start.");
+    };
+    try {
+      await post(`/api/execution/leads/${lead.id}/prepare`, { scopeConfirmed: true });
+      const jobs = (await (await fetch(`/api/execution/leads/${lead.id}`, { headers: { [DEV_START_HEADER]: "1" } })).json()) as { jobs?: { id: string; state: string }[] };
+      const job = jobs.jobs?.find((j) => j.state === "prepared");
+      if (!job) throw new Error("A run for this project already exists. Use the Generate the project panel.");
+      await post(`/api/execution/jobs/${job.id}/start`, { mode: "local", withoutAdvance: true, reason: "Development: started without advance payment" });
+      const fresh = await jsonFetch<{ lead: Lead; history: History }>(`/api/business/leads/${lead.id}`);
+      onChanged(fresh);
+      window.dispatchEvent(new Event(JOBS_CHANGED));
+    } catch (e) {
+      setSkipError((e as Error).message);
+    } finally {
+      setSkipBusy(false);
+    }
+  };
+
   const waiting = (kind === "advance" && remaining > 0 && ["approved", "in_development", "testing"].includes(lead.stage)) || lead.stage === "demo_ready";
   const field = "w-full rounded-lg border border-white/[.08] bg-white/[.03] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-violet-400/60";
 
@@ -283,6 +313,24 @@ export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: {
             {busy ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Record {kind} received
           </button>
           <p className="text-[11px] text-slate-500">Check the money is in your bank account before recording it.</p>
+        </div>
+      )}
+      {waiting && kind === "advance" && lead.stage === "approved" && (
+        <div className="space-y-2 border-t border-white/[.06] pt-3" data-testid="without-payment">
+          {/* TEMP DEV: remove this checkbox block (and src/lib/dev-start.ts) once everything works and payments are enforced. */}
+          <label className="flex cursor-pointer items-start gap-2.5 text-xs text-slate-200">
+            <input type="checkbox" checked={skipChecked} onChange={(e) => setSkipChecked(e.target.checked)} disabled={skipBusy} className="mt-0.5 h-4 w-4 accent-violet-500" data-testid="without-payment-checkbox" />
+            <span>
+              <span className="font-semibold">Start without payment</span>
+              <span className="mt-0.5 block text-[11px] text-slate-500">For development: generate the project now, without the advance. Runs on Local Claude Code, confirms the approved scope, and is recorded in the history.</span>
+            </span>
+          </label>
+          {skipChecked && (
+            <button type="button" onClick={startWithoutPayment} disabled={skipBusy} className="flex w-full items-center justify-center gap-2 rounded-lg border border-violet-400/50 bg-violet-500/15 px-3 py-2 text-sm font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-50" data-testid="start-without-payment">
+              {skipBusy ? <Loader2 size={15} className="animate-spin" /> : <Hammer size={15} />} Start generating the project
+            </button>
+          )}
+          {skipError && <p className="text-xs text-rose-300" data-testid="without-payment-error">{skipError}</p>}
         </div>
       )}
       {lead.stage === "advance_paid" && <p className="text-xs text-emerald-300">Advance received in full. Ready to start the work.</p>}

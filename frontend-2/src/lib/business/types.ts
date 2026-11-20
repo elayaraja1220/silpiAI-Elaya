@@ -127,6 +127,9 @@ export type RequirementInsights = {
  */
 export type ClientTech = { stated: string[]; ids: string[]; confirmedIds?: string[] };
 
+/** A stack the team picked from the recommendations (catalog ids). Kept apart from what the client asked for. */
+export type SelectedStack = { ids: string[] };
+
 export type Requirement = {
   title: string;
   summary: string;
@@ -162,6 +165,8 @@ export type Requirement = {
   tech?: Partial<Record<TechLayer, string>>;
   /** Technology the client explicitly requested (never replaced silently; see ClientTech). */
   clientTech?: ClientTech;
+  /** The stack chosen from the recommendations. Used for layers the client did not specify. */
+  selectedStack?: SelectedStack;
   /** Premium package only: adds the priced "Premium care" line (speed & security check, priority support). */
   premiumCare?: boolean;
   /** Header, footer, navigation and other shared parts: part of the set-up, never billed as pages. */
@@ -316,8 +321,21 @@ export type Quote = {
   services?: SeparateServices;
 };
 
-/** Revisions, free support and extras that come with a package. */
-export type PackageTerms = { revisions: number; supportDays: number; extras: string[] };
+/** What a package promises: revisions, free support and what it delivers. */
+export type PackageTerms = {
+  revisions: number;
+  supportDays: number;
+  /** Inclusions shown as a tick in the comparison (the same wording in every package that has them). */
+  extras: string[];
+  /** What the handover covers, shown with the package details. */
+  handover?: string;
+  /** Documentation and training: the wording differs by package. */
+  documentation?: string;
+  /** Security and testing before launch: the wording differs by package. */
+  security?: string;
+  /** Priority support. A reply time is promised only when `responseHours` is set. Absent or null = not included. */
+  prioritySupport?: { responseHours: number | null } | null;
+};
 
 export const TIERS = ["basic", "standard", "premium"] as const;
 export type Tier = (typeof TIERS)[number];

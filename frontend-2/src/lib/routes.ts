@@ -1,10 +1,9 @@
 /** One URL per screen. Used by the sidebar, the page header and in-page links. */
-export type ViewId = "dashboard" | "clients" | "create" | "projects" | "existing" | "activity" | "pricing" | "settings";
+export type ViewId = "dashboard" | "clients" | "projects" | "existing" | "activity" | "pricing" | "settings";
 
 export const ROUTES: Record<ViewId, string> = {
   dashboard: "/",
   clients: "/clients",
-  create: "/create",
   projects: "/projects",
   existing: "/existing",
   activity: "/activity",
@@ -15,7 +14,6 @@ export const ROUTES: Record<ViewId, string> = {
 export const TITLES: Record<ViewId, string> = {
   dashboard: "Overview",
   clients: "Clients & quotes",
-  create: "Create a project",
   projects: "My projects",
   existing: "Existing projects",
   activity: "Agent activity",
@@ -25,7 +23,7 @@ export const TITLES: Record<ViewId, string> = {
 
 /** Which screen a URL belongs to, and a more specific title for sub-pages. */
 export function viewForPath(pathname: string): { view: ViewId; title: string } {
-  if (pathname === "/clients/new") return { view: "clients", title: "New requirement" };
+  if (pathname === "/clients/new") return { view: "clients", title: "Get your quotation" };
   if (pathname.startsWith("/clients/")) return { view: "clients", title: "Quotation" };
   const match = (Object.keys(ROUTES) as ViewId[]).find((v) => v !== "dashboard" && (pathname === ROUTES[v] || pathname.startsWith(`${ROUTES[v]}/`)));
   const view = match ?? "dashboard";

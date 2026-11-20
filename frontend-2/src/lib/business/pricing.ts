@@ -1,6 +1,6 @@
 import { billablePages, supportingPages } from "./scope";
 import { seoAdvice } from "./seo";
-import { clientLayerIds, frontendLabel, listLabels, unmatchedNames } from "./tech-preference";
+import { clientLayerIds, frontendLabel, listLabels, stylingFor, unmatchedNames } from "./tech-preference";
 import { separateServices } from "./services";
 import type { Client, LineItem, Quote, RateCard, Requirement, StackChoice, StackSuggestion } from "./types";
 
@@ -89,10 +89,13 @@ export function suggestStack(req: Requirement, rates: RateCard): StackSuggestion
   let styling = "Tailwind CSS";
   if (clientFront.length) {
     frontend = frontendLabel(clientFront);
-    styling = clientFront.includes("bootstrap") ? "Bootstrap" : clientFront.some((id) => id === "html" || id === "css") ? "CSS" : styling;
+    styling = stylingFor(clientFront, styling);
   }
   if (backendNeeded && clientBack.length) backend = listLabels(clientBack);
   if (backendNeeded && clientData.length) database = listLabels(clientData);
+  if (!req.clientTech && (clientFront.length || clientBack.length || clientData.length)) {
+    notes.push(`Technology selected for this project: ${listLabels([...clientFront, ...clientBack, ...clientData], ", ")}.`);
+  }
   if (req.clientTech && req.scope !== "module" && req.scope !== "version") {
     const asked = req.clientTech.stated.join(", ");
     if (req.clientTech.confirmedIds?.length) {
@@ -181,7 +184,7 @@ export function buildQuote(req: Requirement, client: Pick<Client, "state">, rate
   }
 
   if (req.premiumCare && rates.premiumCareHours > 0) {
-    work("development", "Premium care", rates.premiumCareHours / factor, "Speed and security check before launch, priority support and a longer free support period.");
+    work("development", "Premium care", rates.premiumCareHours / factor, "Comprehensive security and performance review, extended client training and priority support.");
   }
 
   const design = rates.design[req.design];

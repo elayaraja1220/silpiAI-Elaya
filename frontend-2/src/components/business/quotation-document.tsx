@@ -1,7 +1,10 @@
 import { formatINR } from "@/lib/business/pricing";
 import { seoAdvice } from "@/lib/business/seo";
 
+import type { PublicRunningServices } from "@/lib/business/running-services";
+
 import { ComparisonTable } from "./comparison-table";
+import { RunningServicesSection } from "./running-services-view";
 import { ServicesSummary } from "./services-summary";
 import type { Quote, Quotation, Requirement } from "@/lib/business/types";
 
@@ -48,7 +51,7 @@ export function QuoteTotals({ quote }: { quote: Quote }) {
  * Printable quotation. Light colours on purpose: it is what the client sees
  * and what "Print / Save as PDF" produces.
  */
-export function QuotationDocument({ quotation, requirement: requested }: { quotation: Quotation; requirement: Requirement }) {
+export function QuotationDocument({ quotation, requirement: requested, running }: { quotation: Quotation; requirement: Requirement; running?: PublicRunningServices | null }) {
   const { business, client } = quotation;
   // The priced scope is the chosen proposal; older quotations only have the request.
   const requirement = quotation.requirement ?? requested;
@@ -193,6 +196,8 @@ export function QuotationDocument({ quotation, requirement: requested }: { quota
         </section>
       )}
 
+      {running && running.services.length > 0 && <RunningServicesSection running={running} />}
+
       <section className="mt-8 rounded-xl bg-slate-50 p-4 text-sm">
         <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">Development payment schedule</p>
         {quotation.schedule.map((step) => (
@@ -204,7 +209,11 @@ export function QuotationDocument({ quotation, requirement: requested }: { quota
         <ul className="mt-4 list-disc space-y-1 pl-4 text-xs text-slate-500">
           <li>Work starts once the advance is received. Every page is tested automatically and shown in a demo before the balance is due.</li>
           <li>Source code, build files and hosting set-up are handed over after full payment.</li>
-          <li>Domain registration and hosting are not part of this quotation. The client buys them directly from a provider (for example Hostinger or GoDaddy) in the client&apos;s own name, at the provider&apos;s rates; both renew yearly. We help connect the domain and deploy the website.</li>
+          {running && running.services.length > 0 ? (
+            <li>Domain, hosting and the other running services are not part of the development total. See &ldquo;Running services&rdquo; above for who provides and pays for each one.</li>
+          ) : (
+            <li>Domain registration and hosting are not part of this quotation. The client buys them directly from a provider (for example Hostinger or GoDaddy) in the client&apos;s own name, at the provider&apos;s rates; both renew yearly. We help connect the domain and deploy the website.</li>
+          )}
         </ul>
       </section>
     </article>

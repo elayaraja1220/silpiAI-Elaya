@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, FileDown, Loader2, MessageSquare } from "lucide-react";
 
+import { ClientAssets } from "@/components/business/client-assets";
 import { QuotationDocument } from "@/components/business/quotation-document";
 import type { ClientView } from "@/lib/business/client-view";
 import { upiLink } from "@/lib/business/payment-status";
@@ -131,6 +132,7 @@ export function ClientQuotation({ token }: { token: string }) {
             </div>
           </section>
         )}
+        {approved && <ClientAssets token={token} />}
         {!approved && view.expired && (
           <p className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">This quotation has expired. Please contact us for an updated one.</p>
         )}
@@ -200,7 +202,7 @@ export function ClientQuotation({ token }: { token: string }) {
           </section>
         )}
 
-        <QuotationDocument quotation={q} requirement={q.requirement!} />
+        <QuotationDocument quotation={q} requirement={q.requirement!} running={view.running} />
         <p className="pb-6 text-center text-xs text-slate-400">This page is private to you. Please do not share the link.</p>
       </div>
     </main>

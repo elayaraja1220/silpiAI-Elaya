@@ -1,5 +1,5 @@
 import { DEFAULT_TECH_CATALOG, findTech, type CatalogLayer, type TechEntry } from "./tech-catalog";
-import type { ClientTech, Requirement } from "./types";
+import type { ClientTech, Requirement, SelectedStack } from "./types";
 
 /**
  * Technology the client asked for (pure helpers).
@@ -71,13 +71,53 @@ export function withDependencies(ids: readonly string[], catalog: readonly TechE
   return [...out];
 }
 
-/** The client's active technologies for one layer of this requirement. Module and version work keeps the existing stack. */
-export function clientLayerIds(req: Pick<Requirement, "clientTech" | "scope">, layer: CatalogLayer): string[] {
+/**
+ * The technologies in use for one layer of this requirement: what the client asked for (or confirmed instead);
+ * for a layer the client did not specify, the stack the team selected. Module and version work keeps the existing stack.
+ */
+export function clientLayerIds(req: Pick<Requirement, "clientTech" | "scope" | "selectedStack">, layer: CatalogLayer): string[] {
   if (req.scope === "module" || req.scope === "version") return [];
   const order = (id: string) => DEFAULT_TECH_CATALOG.findIndex((t) => t.id === id);
-  return activeClientIds(req.clientTech)
-    .filter((id) => findTech(DEFAULT_TECH_CATALOG, id)?.layer === layer)
-    .sort((a, b) => order(a) - order(b));
+  const inLayer = (ids: readonly string[]) => ids.filter((id) => findTech(DEFAULT_TECH_CATALOG, id)?.layer === layer).sort((a, b) => order(a) - order(b));
+  const asked = inLayer(activeClientIds(req.clientTech));
+  return asked.length ? asked : inLayer(req.selectedStack?.ids ?? []);
+}
+
+/** Every technology in use: the client's request (with what it needs) plus the selected stack's other layers. */
+export function selectedStackIds(req: Pick<Requirement, "clientTech" | "scope" | "selectedStack">): string[] {
+  if (req.scope === "module" || req.scope === "version") return [];
+  const layers = ["frontend", "backend", "database", "hosting"] as const;
+  const picked = layers.flatMap((layer) => clientLayerIds(req, layer));
+  const requested = withDependencies(activeClientIds(req.clientTech));
+  return [...new Set([...requested, ...picked])];
+}
+
+/** Styling shown for a frontend: Bootstrap, plain CSS for HTML/CSS sites, otherwise our usual Tailwind CSS. */
+export function stylingFor(frontendIds: readonly string[], fallback = "Tailwind CSS"): string {
+  if (frontendIds.includes("bootstrap")) return "Bootstrap";
+  return frontendIds.some((id) => id === "html" || id === "css") ? "CSS" : fallback;
+}
+
+/** Reads a selected stack submitted to the server: known catalog ids only. */
+export function parseSelectedStack(value: unknown): SelectedStack | undefined {
+  if (!isObj(value) || !Array.isArray(value.ids)) return undefined;
+  const known = new Set(DEFAULT_TECH_CATALOG.map((t) => t.id));
+  const ids = [...new Set(value.ids.filter((x): x is string => typeof x === "string" && known.has(x)))].slice(0, 12);
+  return ids.length ? { ids } : undefined;
+}
+
+/** The technology lists the AI builder receives, from the approved stack (null when no stack was chosen or asked for). */
+export function builderTechnology(req: Pick<Requirement, "clientTech" | "scope" | "selectedStack">): { frontend: string[]; backend: string[]; database: string[]; styling: string[] } | null {
+  const front = clientLayerIds(req, "frontend");
+  const back = clientLayerIds(req, "backend");
+  const data = clientLayerIds(req, "database");
+  if (!front.length && !back.length && !data.length) return null;
+  return {
+    frontend: front.map(labelOf),
+    backend: back.map(labelOf),
+    database: data.map(labelOf),
+    styling: front.length ? [stylingFor(front, "")].filter(Boolean) : [],
+  };
 }
 
 const labelOf = (id: string) => findTech(DEFAULT_TECH_CATALOG, id)?.label ?? id;

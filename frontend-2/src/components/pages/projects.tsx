@@ -27,11 +27,7 @@ import { useProjects } from "@/lib/use-projects";
 
 type ViewMode = "grid" | "list";
 
-type ProjectsPageProps = {
-  onNavigate?: (view: "create") => void;
-};
-
-export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
+export function ProjectsPage() {
   const { projects, outputRoot, error, loading, reload } = useProjects();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
@@ -139,15 +135,6 @@ export function ProjectsPage({ onNavigate }: ProjectsPageProps) {
             className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/[.08] text-slate-400 transition hover:bg-white/[.05] hover:text-white disabled:opacity-50"
           >
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onNavigate?.("create")}
-            className="inline-flex items-center gap-2 rounded-lg bg-violet-500 px-3.5 py-2.5 text-xs font-semibold text-white transition hover:bg-violet-400"
-          >
-            <Plus size={14} />
-            New project
           </button>
         </div>
       </div>

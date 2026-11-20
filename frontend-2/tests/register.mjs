@@ -9,7 +9,7 @@ const src = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "sr
 
 registerHooks({
   resolve(specifier, context, next) {
-    let target = specifier;
+    let target = specifier === "next/server" ? "next/server.js" : specifier;
     if (specifier.startsWith("@/")) target = pathToFileURL(path.join(src, specifier.slice(2))).href;
     const relative = target.startsWith("./") || target.startsWith("../") || target.startsWith("file:");
     if (relative && !path.extname(target) && context.parentURL) {

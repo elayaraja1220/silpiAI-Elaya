@@ -1,4 +1,5 @@
 import { sectionsOf } from "./pricing";
+import { builderTechnology } from "./tech-preference";
 import { billablePages, scopeSummary, supportingPages } from "./scope";
 import { DEFAULT_RATE_CARD } from "./rate-card";
 import type { Lead, RateCard } from "./types";
@@ -45,7 +46,11 @@ export function buildBrief(lead: Lead, rates: RateCard = DEFAULT_RATE_CARD) {
     `${rates.design[req.design]?.label ?? req.design}. ${rates.design[req.design]?.detail ?? ""}`,
     ...(req.references ? [`References and brand notes: ${req.references}`] : []),
     "",
-    req.clientTech ? "## Technology (requested by the client: use exactly this, do not substitute another)" : "## Technology",
+    req.clientTech
+      ? "## Technology (requested by the client: use exactly this, do not substitute another)"
+      : req.selectedStack
+        ? "## Technology (approved for this project: use exactly this, do not substitute another)"
+        : "## Technology",
     `- Approach: ${q.stack.approach ?? "Custom code"}`,
     `- Frontend: ${q.stack.frontend}`,
     `- Backend: ${q.stack.backend}`,
@@ -70,12 +75,15 @@ export function buildBrief(lead: Lead, rates: RateCard = DEFAULT_RATE_CARD) {
   const description = lines.join("\n").slice(0, 29_000);
   // "Next.js (React), exported as a static site" -> "Next.js (React)"; "None (static site)" -> nothing.
   const split = (s: string) => (s && !/^none/i.test(s) ? [s.split(",")[0].trim().slice(0, 60)] : []);
+  // The approved stack (the client's own choice, or the one selected from the recommendations) is passed
+  // to the builder as it is, technology by technology. Otherwise the quotation's stack text is used.
+  const approved = builderTechnology(req);
   return {
     description,
-    frontend: split(q.stack.frontend),
-    backend: split(q.stack.backend),
-    database: split(q.stack.database),
-    styling: split(q.stack.styling),
+    frontend: approved?.frontend.length ? approved.frontend : split(q.stack.frontend),
+    backend: approved?.backend.length ? approved.backend : split(q.stack.backend),
+    database: approved?.database.length ? approved.database : split(q.stack.database),
+    styling: approved?.styling.length ? approved.styling : split(q.stack.styling),
   };
 }
 

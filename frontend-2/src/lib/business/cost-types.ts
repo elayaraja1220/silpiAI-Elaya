@@ -57,6 +57,19 @@ export type InfraBasis = (typeof INFRA_BASES)[number];
 /** A studio-side resource: development server, build and test infrastructure, storage. */
 export type InfraRate = { key: string; name: string; basis: InfraBasis; amount: number | null };
 
+/** The studio's reference for a kind of running cost. The amount may stay unknown. Always in rupees. */
+export type RunningCostDefault = {
+  provider?: string;
+  kind: "one-time" | "recurring";
+  amount: number | null;
+  amountType?: "fixed" | "percent-of-transaction";
+  frequency?: Frequency;
+  necessity: "mandatory" | "optional";
+  payer: "client" | "studio";
+  status: "actual" | "estimated";
+  note?: string;
+};
+
 export type CostConfig = {
   /** Internal cost per hour for each role. Not the client billing rate. */
   roleRates: Record<Role, number | null>;
@@ -73,6 +86,8 @@ export type CostConfig = {
   /** null = never configured; [] = configured as "none". */
   infra: InfraRate[] | null;
   minMarginPercent: number | null;
+  /** Reference prices for the running costs suggested on a quotation, by kind of cost. Empty = every amount unknown. */
+  runningCosts: Partial<Record<RecurringCategory, RunningCostDefault>>;
 };
 
 /** A change to the configuration. null removes a value; absent leaves it alone. */
@@ -86,6 +101,7 @@ export type CostConfigPatch = {
   aiPricing?: Record<string, AiModelPrice | null>;
   infra?: InfraRate[] | null;
   minMarginPercent?: number | null;
+  runningCosts?: Partial<Record<RecurringCategory, RunningCostDefault | null>>;
 };
 
 // ---- Inputs ------------------------------------------------------------------------
@@ -257,7 +273,7 @@ export type BudgetViability = {
 
 export type TechnologyContext = {
   stackIds: string[];
-  source: "given" | "recommendation" | "client" | "none";
+  source: "given" | "selected" | "recommendation" | "client" | "none";
   scale: Scale;
   security: SecurityLevel;
   maintenance?: Level;

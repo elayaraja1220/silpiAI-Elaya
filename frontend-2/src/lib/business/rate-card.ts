@@ -1,5 +1,9 @@
 import type { RateCard } from "./types";
 
+/** The handover is the same in every package: source code, deployment details and access information. */
+export const HANDOVER_LABEL = "Website handover & source code";
+const HANDOVER_DETAIL = "Includes the source code, the deployment details and the access information needed to run and update the site.";
+
 /**
  * Sample rates in INR. Placeholders to get started: edit them in
  * Business & pricing to match your business. Development is priced in hours
@@ -128,14 +132,33 @@ export const DEFAULT_RATE_CARD: RateCard = {
     vps: { label: "VPS hosting", provider: "DigitalOcean / similar", serverType: "Virtual private server, 2 vCPU", storage: "80 GB SSD", bandwidth: "4 TB/month", setup: 1500, price: 14999, renew: 14999 },
     cloud: { label: "Managed cloud hosting", provider: "AWS Lightsail / similar", serverType: "Managed cloud, auto backups", storage: "160 GB SSD", bandwidth: "5 TB/month", setup: 2500, price: 24999, renew: 24999 },
   },
-  // Each package includes everything in the one below it.
+  // What one developer can reliably deliver. Each package includes everything in the one below it.
   packages: {
-    basic: { revisions: 1, supportDays: 15, extras: ["Mobile-friendly pages", "Website handover with login details"] },
-    standard: { revisions: 2, supportDays: 30, extras: ["Mobile-friendly pages", "Website handover with login details", "Training on updating content"] },
+    basic: {
+      revisions: 1,
+      supportDays: 7,
+      extras: ["Mobile-friendly pages", HANDOVER_LABEL],
+      handover: HANDOVER_DETAIL,
+      documentation: "Basic handover documentation or usage guide",
+      security: "Essential security checks and basic testing before launch",
+    },
+    standard: {
+      revisions: 2,
+      supportDays: 15,
+      extras: ["Mobile-friendly pages", HANDOVER_LABEL],
+      handover: HANDOVER_DETAIL,
+      documentation: "Documentation plus one client training session",
+      security: "Essential security checks, responsive testing and basic performance checks",
+    },
     premium: {
       revisions: 3,
-      supportDays: 60,
-      extras: ["Mobile-friendly pages", "Website handover with login details", "Training on updating content", "Speed and security check before launch", "Priority support"],
+      supportDays: 30,
+      extras: ["Mobile-friendly pages", HANDOVER_LABEL],
+      handover: HANDOVER_DETAIL,
+      documentation: "Documentation plus extended client training",
+      security: "More comprehensive security and performance review",
+      // No reply time is promised until one is set in Business & pricing.
+      prioritySupport: { responseHours: null },
     },
   },
 };

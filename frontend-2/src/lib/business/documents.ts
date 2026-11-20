@@ -1,3 +1,4 @@
+import { publicServiceLine, type PublicRunningServices } from "./running-services";
 import {
   AlignmentType,
   BorderStyle,
@@ -34,7 +35,7 @@ type Block =
 const date = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
 /** Common outline of the quotation document. */
-function outline(q: Quotation, fallback: Requirement): { title: string; meta: string[]; from: string[]; to: string[]; blocks: Block[] } {
+function outline(q: Quotation, fallback: Requirement, running?: PublicRunningServices | null): { title: string; meta: string[]; from: string[]; to: string[]; blocks: Block[] } {
   const req = q.requirement ?? fallback;
   const money = formatINR;
   const blocks: Block[] = [];
@@ -127,6 +128,13 @@ function outline(q: Quotation, fallback: Requirement): { title: string; meta: st
     }
   }
 
+  // Running services the admin approved for the client: billed separately, never part of the development total.
+  if (running && running.services.length) {
+    blocks.push({ kind: "heading", text: "Running services (billed separately from development)" });
+    blocks.push({ kind: "bullets", items: running.services.map((s) => publicServiceLine(s, money)) });
+    blocks.push({ kind: "text", muted: true, text: running.note });
+  }
+
   blocks.push({ kind: "heading", text: "Technology" });
   blocks.push({
     kind: "bullets",
@@ -189,13 +197,18 @@ const MUTED = rgb(0.42, 0.45, 0.52);
 const ACCENT = rgb(0.43, 0.33, 0.9);
 const LINE = rgb(0.86, 0.88, 0.92);
 
-export async function quotationPdf(q: Quotation, fallback: Requirement): Promise<Uint8Array> {
+/** The document's content as plain blocks (what both the PDF and the Word file are drawn from). */
+export function quotationOutline(q: Quotation, fallback: Requirement, running?: PublicRunningServices | null) {
+  return outline(q, fallback, running);
+}
+
+export async function quotationPdf(q: Quotation, fallback: Requirement, running?: PublicRunningServices | null): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(`Quotation ${q.number}`);
   doc.setAuthor(q.business.name);
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const o = outline(q, fallback);
+  const o = outline(q, fallback, running);
 
   // The built-in PDF fonts cannot draw ₹ or non-Latin scripts: replace them.
   const okChar = new Map<string, boolean>();
@@ -345,8 +358,8 @@ export async function quotationPdf(q: Quotation, fallback: Requirement): Promise
 
 // ---- Word ----------------------------------------------------------------
 
-export async function quotationDocx(q: Quotation, fallback: Requirement): Promise<Buffer> {
-  const o = outline(q, fallback);
+export async function quotationDocx(q: Quotation, fallback: Requirement, running?: PublicRunningServices | null): Promise<Buffer> {
+  const o = outline(q, fallback, running);
   const run = (text: string, opts: { bold?: boolean; size?: number; color?: string } = {}) =>
     new TextRun({ text, bold: opts.bold, size: opts.size ?? 19, color: opts.color, font: "Calibri" });
   const para = (text: string, opts: { bold?: boolean; size?: number; color?: string; align?: (typeof AlignmentType)[keyof typeof AlignmentType]; after?: number } = {}) =>

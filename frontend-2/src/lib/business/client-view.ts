@@ -1,4 +1,5 @@
 import { paymentStatus } from "./payment-status";
+import type { PublicRunningServices } from "./running-services";
 import type { Lead, Quotation, RateCard, Requirement } from "./types";
 
 /**
@@ -13,12 +14,14 @@ export type ClientView = {
   quotation: Quotation;
   requirement: Pick<Requirement, "title" | "summary" | "pages">;
   response?: Lead["clientResponse"];
+  /** Running services the admin approved for the client (already reduced to client-safe fields). Absent when none. */
+  running?: PublicRunningServices;
   /** Shown once approved: what to pay and how. */
   payment?: { advanceDue: number; advancePaid: number; advanceRemaining: number; upiId: string; bankDetails: string; payee: string; reference: string };
 };
 
 /** `business`: current business details, so a UPI ID added later still shows. */
-export function clientView(lead: Lead, business: RateCard["business"]): ClientView | null {
+export function clientView(lead: Lead, business: RateCard["business"], running?: PublicRunningServices | null): ClientView | null {
   const q = lead.quotation;
   if (!q) return null;
   const scope = q.requirement ?? lead.requirement;
@@ -33,6 +36,7 @@ export function clientView(lead: Lead, business: RateCard["business"]): ClientVi
     quotation: { ...q, budgetCheck: undefined, requirement: publicScope as Requirement, proposals: q.proposals?.map(({ budgetNote: _n, ...p }) => p) },
     requirement: { title: scope.title, summary: scope.summary, pages: scope.pages },
     response: lead.clientResponse,
+    ...(running && running.services.length ? { running } : {}),
     payment: ["approved", "advance_paid", "in_development", "testing", "demo_ready"].includes(lead.stage)
       ? (() => {
           const s = paymentStatus(q, lead.payments);

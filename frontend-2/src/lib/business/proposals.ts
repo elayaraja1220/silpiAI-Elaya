@@ -65,7 +65,7 @@ export function buildProposals(request: Requirement, client: Pick<Client, "state
   const summarise = (tier: Tier, title: string, tagline: string, req: Requirement, leftOut: string[]): Proposal => {
     const quote = buildQuote(req, client, rates);
     // Domain and hosting are separate services, the same for every package.
-    const features = [...req.modules.map(label), rates.design[req.design].label, ...(req.premiumCare ? ["Premium care: speed & security check, priority support"] : [])];
+    const features = [...req.modules.map(label), rates.design[req.design].label, ...(req.premiumCare ? ["Premium care: comprehensive security and performance review, extended training, priority support"] : [])];
     const fitsBudget = budget ? quote.grandTotal <= budget : undefined;
     return {
       tier,
@@ -87,7 +87,7 @@ export function buildProposals(request: Requirement, client: Pick<Client, "state
   const notIncluded = (req: Requirement) => (req.excludedModules ?? []).map((m) => `${label(m)} (available in a higher package)`);
 
   // ---- Premium: the complete request ---------------------------------------
-  // Premium also pays for its extras (speed & security check, priority support) as a separate line.
+  // Premium also pays for its extras (comprehensive security and performance review, extended training, priority support) as a separate line.
   const premium = summarise("premium", "Premium", "Everything you asked for, plus premium care.", { ...full, premiumCare: true }, []);
 
   // ---- Standard: essentials + recommended + must-haves ------------------------
@@ -153,6 +153,11 @@ export function buildProposals(request: Requirement, client: Pick<Client, "state
   return [basicProposal, standard, premium];
 }
 
+/** Priority support in words. A reply time is mentioned only when one has been configured. */
+export function describePriority(priority: { responseHours: number | null }): string {
+  return priority.responseHours ? `Priority queue, first reply within ${priority.responseHours} working hours` : "Priority queue (no fixed response time)";
+}
+
 /**
  * Feature-by-feature comparison of the three packages (✓ / ✗ or a value),
  * shown to the team, on the client page and in the PDF / Word quotation.
@@ -176,10 +181,14 @@ export function compareProposals(proposals: Proposal[], rates: RateCard): Compar
     { label: "Delivery", values: by((p) => `about ${p.estimatedWeeks} week${p.estimatedWeeks === 1 ? "" : "s"}`) },
   ];
   if (proposals.every((p) => p.terms)) {
+    const some = (field: "documentation" | "security") => proposals.some((p) => p.terms![field]);
+    if (some("documentation")) rows.push({ label: "Documentation & training", values: by((p) => p.terms!.documentation ?? false) });
+    if (some("security")) rows.push({ label: "Security & testing before launch", values: by((p) => p.terms!.security ?? false) });
     rows.push(
       { label: "Revision rounds", values: by((p) => String(p.terms!.revisions)) },
       { label: "Free support after launch", values: by((p) => `${p.terms!.supportDays} days`) },
     );
+    if (proposals.some((p) => p.terms!.prioritySupport)) rows.push({ label: "Priority support", values: by((p) => (p.terms!.prioritySupport ? describePriority(p.terms!.prioritySupport) : false)) });
     const extras = [...new Set(proposals.flatMap((p) => p.terms!.extras))];
     for (const e of extras) rows.push({ label: e, values: by((p) => p.terms!.extras.includes(e)) });
   }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { allowResponse, clientView } from "@/lib/business/client-view";
 import { handle } from "@/lib/business/http";
+import { publicRunningFor } from "@/lib/business/running-store";
 import { getLeadByToken, getRateCard, respondAsClient } from "@/lib/business/store";
 import { TIERS, type Tier } from "@/lib/business/types";
 import { ValidationError } from "@/lib/business/validate";
@@ -16,7 +17,7 @@ const gone = () => NextResponse.json({ success: false, error: "This quotation li
 export async function GET(_request: NextRequest, context: Context) {
   const { token } = await context.params;
   const lead = getLeadByToken(token);
-  const view = lead && clientView(lead, getRateCard().business);
+  const view = lead && clientView(lead, getRateCard().business, publicRunningFor(lead.id));
   if (!view) return gone();
   return handle("CLIENT VIEW", () => ({ view }));
 }
@@ -42,6 +43,6 @@ export async function POST(request: NextRequest, context: Context) {
     if (action === "changes_requested" && message.length < 5) throw new ValidationError("Tell us what you would like to change.");
     const tier = TIERS.includes(body.tier as Tier) ? (body.tier as Tier) : undefined;
     const lead = respondAsClient(token, { action, tier, name, message });
-    return { view: clientView(lead, getRateCard().business) };
+    return { view: clientView(lead, getRateCard().business, publicRunningFor(lead.id)) };
   });
 }

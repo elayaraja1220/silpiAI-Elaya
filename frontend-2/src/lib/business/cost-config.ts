@@ -1,6 +1,8 @@
 import {
+  FREQUENCIES,
   INFRA_BASES,
   LINE_KINDS,
+  RECURRING_CATEGORIES,
   ROLES,
   SECURITY_LEVELS,
   type Allocation,
@@ -10,6 +12,7 @@ import {
   type InfraRate,
   type LineKind,
   type Role,
+  type RunningCostDefault,
 } from "./cost-types";
 import { DEFAULT_TECH_CATALOG, SCALES } from "./tech-catalog";
 
@@ -33,6 +36,7 @@ export function emptyCostConfig(): CostConfig {
     aiPricing: {},
     infra: null,
     minMarginPercent: null,
+    runningCosts: {},
   };
 }
 
@@ -96,8 +100,35 @@ const INFRA: Check<InfraRate[] | null> = (v) => {
   return ok(out);
 };
 
+const RUNNING_DEFAULT: Check<RunningCostDefault | null> = (v) => {
+  if (v === null) return ok(null);
+  if (!isObj(v)) return bad;
+  const kind = v.kind;
+  const necessity = v.necessity;
+  const payer = v.payer;
+  const status = v.status;
+  if (kind !== "one-time" && kind !== "recurring") return bad;
+  if (necessity !== "mandatory" && necessity !== "optional") return bad;
+  if (payer !== "client" && payer !== "studio") return bad;
+  if (status !== "actual" && status !== "estimated") return bad;
+  const amount = orNull(numberIn(0, 100_000_000))(v.amount === undefined ? null : v.amount);
+  if (!amount.ok) return bad;
+  if (v.amountType !== undefined && v.amountType !== "fixed" && v.amountType !== "percent-of-transaction") return bad;
+  if (v.frequency !== undefined && !(FREQUENCIES as readonly string[]).includes(v.frequency as string)) return bad;
+  if (v.provider !== undefined && (typeof v.provider !== "string" || v.provider.length > 80)) return bad;
+  if (v.note !== undefined && (typeof v.note !== "string" || v.note.length > 200)) return bad;
+  // A known recurring amount needs to say how often it is charged (a percentage of sales does not).
+  if (kind === "recurring" && amount.value !== null && v.amountType !== "percent-of-transaction" && v.frequency === undefined) return bad;
+  const out: RunningCostDefault = { kind, amount: amount.value, necessity, payer, status };
+  if (typeof v.provider === "string" && v.provider.trim()) out.provider = v.provider.trim();
+  if (v.amountType !== undefined) out.amountType = v.amountType as RunningCostDefault["amountType"];
+  if (v.frequency !== undefined) out.frequency = v.frequency as RunningCostDefault["frequency"];
+  if (typeof v.note === "string" && v.note.trim()) out.note = v.note.trim();
+  return ok(out);
+};
+
 const KNOWN_TECH = new Set(DEFAULT_TECH_CATALOG.map((t) => t.id));
-const TOP_LEVEL = ["roleRates", "allocation", "techFactors", "uplifts", "usdToInr", "fxRates", "aiPricing", "infra", "minMarginPercent"];
+const TOP_LEVEL = ["roleRates", "allocation", "techFactors", "uplifts", "usdToInr", "fxRates", "aiPricing", "infra", "minMarginPercent", "runningCosts"];
 
 /** Reads a (partial) configuration. Valid entries go into `patch`; everything else is listed in `problems`. */
 export function readCostPatch(input: unknown): { patch: CostConfigPatch; problems: string[] } {
@@ -125,6 +156,9 @@ export function readCostPatch(input: unknown): { patch: CostConfigPatch; problem
   if ("allocation" in input) patch.allocation = section("allocation", input.allocation, (k) => (LINE_KINDS as readonly string[]).includes(k), ALLOCATION, "must be null or role percentages from 0 to 300.") as CostConfigPatch["allocation"];
   if ("techFactors" in input) patch.techFactors = section("techFactors", input.techFactors, (k) => KNOWN_TECH.has(k), orNull(FACTOR), "must be a factor from 0.1 to 5, or null.");
   if ("fxRates" in input) patch.fxRates = section("fxRates", input.fxRates, (k) => /^[A-Z]{3}$/.test(k) && k !== "INR", orNull(numberIn(0.0001, 1_000_000, 4)), "must be a positive rate, or null.");
+  if ("runningCosts" in input) {
+    patch.runningCosts = section("runningCosts", input.runningCosts, (k) => (RECURRING_CATEGORIES as readonly string[]).includes(k), RUNNING_DEFAULT, "needs a kind, necessity, payer, status and a valid amount (a known recurring amount also needs a frequency), or null.") as CostConfigPatch["runningCosts"];
+  }
   if ("aiPricing" in input) {
     const count = isObj(input.aiPricing) ? Object.keys(input.aiPricing).length : 0;
     if (count > MAX_AI_MODELS) problems.push(`aiPricing can hold at most ${MAX_AI_MODELS} models.`);
@@ -170,6 +204,7 @@ export function applyCostPatch(config: CostConfig, patch: CostConfigPatch): Cost
     uplifts: { scale: { ...config.uplifts.scale }, security: { ...config.uplifts.security } },
     fxRates: { ...config.fxRates },
     aiPricing: { ...config.aiPricing },
+    runningCosts: { ...config.runningCosts },
   };
   for (const [role, v] of Object.entries(patch.roleRates ?? {})) next.roleRates[role as Role] = v ?? null;
   for (const [kind, v] of Object.entries(patch.allocation ?? {})) next.allocation[kind as LineKind] = v ?? null;
@@ -179,6 +214,7 @@ export function applyCostPatch(config: CostConfig, patch: CostConfigPatch): Cost
       else target[k] = v;
     }
   };
+  merge(next.runningCosts as Record<string, RunningCostDefault>, patch.runningCosts as Record<string, RunningCostDefault | null> | undefined);
   merge(next.techFactors, patch.techFactors);
   merge(next.fxRates, patch.fxRates);
   merge(next.aiPricing, patch.aiPricing);

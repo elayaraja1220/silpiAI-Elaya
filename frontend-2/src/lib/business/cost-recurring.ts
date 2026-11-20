@@ -79,7 +79,7 @@ export function projectDeliveryCosts(recurring: RecurringCost): { id: string; se
  * The running costs this project is likely to have, with every amount left
  * unknown for the team to fill in. No provider prices are built in.
  */
-export function suggestRecurringItems(stackIds: string[], req?: Pick<Requirement, "modules">): RecurringCostItem[] {
+export function suggestRecurringItems(stackIds: string[], req?: Pick<Requirement, "modules">, defaults: CostConfig["runningCosts"] = {}): RecurringCostItem[] {
   const base = { currency: "INR", payer: "client" as const, status: "estimated" as const, amount: null };
   const items: RecurringCostItem[] = [
     { ...base, id: "domain", service: "Domain name renewal", category: "domain-renewal", kind: "recurring", necessity: "mandatory", note: "Price depends on the registrar and the extension." },
@@ -97,5 +97,21 @@ export function suggestRecurringItems(stackIds: string[], req?: Pick<Requirement
   if (modules.includes("notifications")) items.push({ ...base, id: "email-service", service: "Email / SMS service", category: "email-service", kind: "recurring", necessity: "optional" });
   if (modules.includes("api-integration")) items.push({ ...base, id: "paid-api", service: "Third-party API", category: "paid-api", kind: "recurring", necessity: "optional" });
   items.push({ ...base, id: "maintenance", service: "Maintenance and support after launch", category: "maintenance-support", kind: "recurring", necessity: "optional", note: "Agreed separately from the development quotation." });
-  return items;
+  // The studio's own reference for each kind of cost fills in what it knows; everything else stays unknown.
+  return items.map((item) => {
+    const ref = item.category === "other" ? undefined : defaults[item.category];
+    if (!ref) return item;
+    return {
+      ...item,
+      kind: ref.kind,
+      amount: ref.amount,
+      necessity: ref.necessity,
+      payer: ref.payer,
+      status: ref.status,
+      ...(ref.provider ? { provider: ref.provider } : {}),
+      ...(ref.amountType ? { amountType: ref.amountType } : {}),
+      ...(ref.frequency ? { frequency: ref.frequency } : {}),
+      ...(ref.note ? { note: ref.note } : {}),
+    };
+  });
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Building2, Check, Globe, Layers, Loader2, Package, Percent, Plus, Save, Server, Trash2, Undo2, Wrench } from "lucide-react";
 
+import { CostSettings } from "@/components/business/cost-settings";
 import { Card, Field, Input, Select, jsonFetch } from "@/components/business/ui";
 import { formatINR } from "@/lib/business/pricing";
 import { INDIAN_STATES } from "@/lib/business/rate-card";
@@ -311,7 +312,7 @@ export function PricingSettingsPage() {
       </div>
 
       {card.packages && (
-        <Section icon={<Package size={16} className="text-violet-300" />} title="Package terms" hint="Revisions, free support and extras promised with each package. Shown on the package details page and the quotation.">
+        <Section icon={<Package size={16} className="text-violet-300" />} title="Package terms" hint="What each package promises: revisions, free support, handover, documentation, security checks and priority support. Only promise what one person can deliver. Shown on the package details page and the quotation.">
           <div className="grid gap-4 lg:grid-cols-3">
             {(["basic", "standard", "premium"] as const).map((tier) => {
               const p = card.packages[tier];
@@ -322,6 +323,31 @@ export function PricingSettingsPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <Field label="Revision rounds"><NumInput value={p.revisions} onChange={(n) => set({ revisions: Math.round(n) })} /></Field>
                     <Field label="Free support"><NumInput value={p.supportDays} onChange={(n) => set({ supportDays: Math.round(n) })} suffix="days" /></Field>
+                  </div>
+                  <Field label="Documentation & training">
+                    <Input value={p.documentation ?? ""} onChange={(e) => set({ documentation: e.target.value })} />
+                  </Field>
+                  <Field label="Security & testing before launch">
+                    <Input value={p.security ?? ""} onChange={(e) => set({ security: e.target.value })} />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Priority support">
+                      <Select value={p.prioritySupport ? "yes" : "no"} onChange={(e) => set({ prioritySupport: e.target.value === "yes" ? { responseHours: p.prioritySupport?.responseHours ?? null } : null })}>
+                        <option value="no">Not included</option>
+                        <option value="yes">Included</option>
+                      </Select>
+                    </Field>
+                    <Field label="Reply time" hint="Empty = no promise.">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={720}
+                        disabled={!p.prioritySupport}
+                        placeholder="working hours"
+                        value={p.prioritySupport?.responseHours ?? ""}
+                        onChange={(e) => set({ prioritySupport: { responseHours: e.target.value === "" ? null : Math.max(1, Math.round(Number(e.target.value) || 1)) } })}
+                      />
+                    </Field>
                   </div>
                   <Field label="Extras" hint="One per line.">
                     <textarea
@@ -337,6 +363,8 @@ export function PricingSettingsPage() {
           </div>
         </Section>
       )}
+
+      <CostSettings />
 
       {(dirty || error || done) && (
         <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-[#171b26]/95 px-4 py-3 shadow-2xl backdrop-blur">

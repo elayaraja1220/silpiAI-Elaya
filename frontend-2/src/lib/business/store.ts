@@ -151,10 +151,12 @@ export function getLead(id: string): Lead | null {
 
 function nextQuoteNumber(): string {
   const year = new Date().getFullYear();
+  // The highest number so far + 1 (not a count): deleting a quotation must never make the next number collide with an existing one.
+  const prefix = `SQ-${year}-`;
   const row = getDb()
-    .prepare("SELECT COUNT(*) AS n FROM quotations WHERE number LIKE ?")
-    .get(`SQ-${year}-%`) as { n: number };
-  return `SQ-${year}-${String(Number(row.n) + 1).padStart(4, "0")}`;
+    .prepare("SELECT COALESCE(MAX(CAST(SUBSTR(number, ?) AS INTEGER)), 0) AS n FROM quotations WHERE number LIKE ?")
+    .get(prefix.length + 1, `${prefix}%`) as { n: number };
+  return `${prefix}${String(Number(row.n) + 1).padStart(4, "0")}`;
 }
 
 function recordStage(leadId: string, from: Stage | null, to: Stage, note = ""): void {
@@ -397,8 +399,34 @@ export function addWorkEntry(id: string, e: { item: string; hours: number; note:
   return getLead(id)!;
 }
 
+/** Permanently removes a lead and everything under it (quotations, payments, hours, jobs). Generated project folders are untouched. */
+export function deleteLead(id: string): void {
+  getDb().prepare("DELETE FROM leads WHERE id = ?").run(id);
+}
+
 export function deleteWorkEntry(id: string, entryId: string): Lead {
   getDb().prepare("DELETE FROM work_log WHERE id = ? AND lead_id = ?").run(entryId, id);
+  return getLead(id)!;
+}
+
+/**
+ * Marks a generated project ready for delivery ("Demo ready"). Only from development, and only after
+ * the developer has reviewed and approved the generated project (see execution/jobs).
+ */
+export function markReadyForDelivery(id: string, note: string): Lead {
+  transaction((db) => {
+    const lead = getLead(id);
+    if (!lead) throw new StageError("Project not found.");
+    if (lead.stage !== "in_development" && lead.stage !== "testing") {
+      throw new StageError("Only a project in development can be marked ready for delivery.");
+    }
+    const approved = db
+      .prepare("SELECT 1 AS ok FROM exec_jobs WHERE lead_id = ? AND state = 'completed' AND json_extract(review, '$.status') = 'approved' LIMIT 1")
+      .get(id) as { ok: number } | undefined;
+    if (!approved) throw new StageError("Review and approve the generated project first.");
+    db.prepare("UPDATE leads SET stage = 'demo_ready', updated_at = ? WHERE id = ?").run(now(), id);
+    recordStage(id, lead.stage, "demo_ready", note);
+  });
   return getLead(id)!;
 }
 
