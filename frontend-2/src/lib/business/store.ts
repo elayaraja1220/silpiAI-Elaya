@@ -5,6 +5,7 @@ import { buildQuote } from "./pricing";
 import { buildProposals, compareProposals, defaultTier, toSummary } from "./proposals";
 import { DEFAULT_RATE_CARD } from "./rate-card";
 import { checkBudget } from "./budget";
+import { buildCatalog, mergeTechOverrides, parseTechOverrides, type TechEntry, type TechOverrides } from "./tech-catalog";
 import { parseRateCard, ValidationError } from "./validate";
 import { paymentStatus } from "./payment-status";
 import type { Client, ClientResponse, Lead, Payment, PaymentKind, PaymentMode, Quotation, RateCard, Requirement, Stage, Tier, WorkEntry } from "./types";
@@ -45,6 +46,32 @@ export function saveRateCard(card: RateCard): void {
   getDb()
     .prepare("INSERT INTO settings (key, value) VALUES ('rate_card', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
     .run(JSON.stringify(card));
+}
+
+// ---- Technology catalog -----------------------------------------------------
+
+/** The administrator's saved changes to the catalog (separate from the defaults, which are never overwritten). */
+export function getTechOverrides(): TechOverrides {
+  const row = getDb().prepare("SELECT value FROM settings WHERE key = 'tech_catalog'").get() as { value: string } | undefined;
+  if (!row) return {};
+  try {
+    return parseTechOverrides(JSON.parse(row.value));
+  } catch {
+    return {};
+  }
+}
+
+export function getTechCatalog(): TechEntry[] {
+  return buildCatalog(getTechOverrides());
+}
+
+/** Merges a validated change into the saved overrides; other saved entries are kept. */
+export function saveTechOverrides(patch: TechOverrides): TechOverrides {
+  const merged = mergeTechOverrides(getTechOverrides(), patch);
+  getDb()
+    .prepare("INSERT INTO settings (key, value) VALUES ('tech_catalog', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(JSON.stringify(merged));
+  return merged;
 }
 
 // ---- Leads -----------------------------------------------------------------
