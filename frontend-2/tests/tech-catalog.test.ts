@@ -20,6 +20,7 @@ import {
   findTech,
   mergeTechOverrides,
   parseTechOverrides,
+  techPatchProblems,
   techForProject,
 } from "@/lib/business/tech-catalog";
 import { PROJECT_TYPES, type Requirement } from "@/lib/business/types";
@@ -111,6 +112,21 @@ describe("4. overrides are validated and never overwrite the defaults", () => {
   });
   it("saved ids that no longer exist are ignored when reading", () => {
     assert.equal(buildCatalog({ ghost: { enabled: true } } as never).length, DEFAULT_TECH_CATALOG.length);
+  });
+});
+
+describe("4b. submitted changes are checked strictly", () => {
+  it("an empty or all-invalid list is never saved (an entry must suit something)", () => {
+    assert.deepEqual(parseTechOverrides({ angular: { projectTypes: ["robot"], scalability: [] } }), {});
+    assert.deepEqual(parseTechOverrides({ angular: { projectTypes: ["robot", "web-app"] } }), { angular: { projectTypes: ["web-app"] } });
+  });
+  it("reports every problem instead of silently dropping bad values", () => {
+    assert.deepEqual(techPatchProblems({ angular: { enabled: true, devFactor: 1.2 }, php: { maintenance: "low" } }), []);
+    assert.equal(techPatchProblems(null).length, 1);
+    assert.equal(techPatchProblems([1]).length, 1);
+    const problems = techPatchProblems({ angular: { enabled: "yes", devFactor: 99, label: "x", projectTypes: ["robot"] }, cobol: {}, php: "on", __proto__x: {} });
+    assert.equal(problems.length, 7, problems.join(" | "));
+    assert.ok(problems.some((m) => m.includes("angular.enabled")) && problems.some((m) => m.includes("angular.label cannot")) && problems.some((m) => m.includes("cobol")));
   });
 });
 

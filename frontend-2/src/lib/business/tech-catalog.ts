@@ -160,13 +160,43 @@ function cleanOverride(input: unknown): TechOverride {
   const out: TechOverride = {};
   if (typeof input.enabled === "boolean") out.enabled = input.enabled;
   const types = listOf(input.projectTypes, PROJECT_TYPES);
-  if (types) out.projectTypes = types;
+  if (types?.length) out.projectTypes = types;
   const scales = listOf(input.scalability, SCALES);
-  if (scales) out.scalability = scales;
+  if (scales?.length) out.scalability = scales;
   if (typeof input.devFactor === "number" && Number.isFinite(input.devFactor) && input.devFactor >= 0.1 && input.devFactor <= 5) out.devFactor = Math.round(input.devFactor * 100) / 100;
   if (typeof input.maintenance === "string" && (LEVELS as readonly string[]).includes(input.maintenance)) out.maintenance = input.maintenance as Level;
   if (Array.isArray(input.security)) out.security = input.security.filter((s): s is string => typeof s === "string").map((s) => s.trim().slice(0, 200)).filter(Boolean).slice(0, 10);
   return out;
+}
+
+const EDITABLE = ["enabled", "projectTypes", "scalability", "devFactor", "maintenance", "security"] as const;
+
+/**
+ * Strict check for a change submitted by the administrator: lists every problem
+ * instead of silently dropping bad values. (Reading saved data stays lenient.)
+ */
+export function techPatchProblems(input: unknown): string[] {
+  if (!isObj(input)) return ["overrides must be an object like { \"angular\": { \"enabled\": true } }."];
+  const known = new Set(DEFAULT_TECH_CATALOG.map((t) => t.id));
+  const problems: string[] = [];
+  for (const [id, value] of Object.entries(input)) {
+    if (!known.has(id)) {
+      problems.push(`"${id.slice(0, 40)}" is not a technology in the catalog.`);
+      continue;
+    }
+    if (!isObj(value)) {
+      problems.push(`${id}: expected an object of settings.`);
+      continue;
+    }
+    for (const field of Object.keys(value)) {
+      if (!(EDITABLE as readonly string[]).includes(field)) {
+        problems.push(`${id}.${field} cannot be changed.`);
+      } else if (!(field in cleanOverride({ [field]: value[field] }))) {
+        problems.push(`${id}.${field} has an invalid value.`);
+      }
+    }
+  }
+  return problems;
 }
 
 /** Validates saved or submitted overrides: unknown ids and fields are dropped, values are range-checked. */
