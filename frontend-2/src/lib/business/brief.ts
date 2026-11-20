@@ -45,7 +45,7 @@ export function buildBrief(lead: Lead, rates: RateCard = DEFAULT_RATE_CARD) {
     `${rates.design[req.design]?.label ?? req.design}. ${rates.design[req.design]?.detail ?? ""}`,
     ...(req.references ? [`References and brand notes: ${req.references}`] : []),
     "",
-    "## Technology",
+    req.clientTech ? "## Technology (requested by the client: use exactly this, do not substitute another)" : "## Technology",
     `- Approach: ${q.stack.approach ?? "Custom code"}`,
     `- Frontend: ${q.stack.frontend}`,
     `- Backend: ${q.stack.backend}`,

@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
-import { AnalyzeInputSchema, analyzeRequirement, type RequirementDraft } from "./analyze.js";
+import { AnalyzeInputSchema, analyzeRequirement, applyDraftGuards, type RequirementDraft } from "./analyze.js";
 
 const draft: RequirementDraft = {
   client: { name: "Ravi", email: "", phone: "", company: "Murugan Tex", state: "Tamil Nadu" },
@@ -30,6 +30,7 @@ const draft: RequirementDraft = {
   deadlineWeeks: 0,
   clientBudget: 0,
   seoKeywords: ["silk sarees Madurai"],
+  technologyPreference: [],
   confirmed: ["UPI payments"],
   missingInfo: ["How many products at launch?"],
   assumptions: [],
@@ -134,5 +135,62 @@ describe("analyzeRequirement", () => {
   it("rejects file types it cannot read, such as old .doc files", () => {
     const doc = { name: "brief.doc", mediaType: "application/msword", data: "AA==" };
     expect(AnalyzeInputSchema.safeParse({ attachments: [doc] }).success).toBe(false);
+  });
+});
+
+describe("technology preference and demo forms", () => {
+  const staticSite: RequirementDraft = {
+    ...draft,
+    title: "BrightWave Solutions website",
+    summary: "Four page HTML website. The contact page has a demo form that does not send or store messages.",
+    projectType: "business-website",
+    complexity: "basic",
+    pages: [
+      { name: "Home", sections: 4, purpose: "Hero and highlights" },
+      { name: "Contact Us", sections: 3, purpose: "Contact details and a demo form that does not send or store messages" },
+    ],
+    modules: ["contact-form"],
+    mustHave: ["contact-form"],
+    technologyPreference: ["HTML", "CSS", "JavaScript"],
+    confirmed: ["Built with HTML, CSS and vanilla JavaScript only", "Contact page includes a demo form that does not send or store messages"],
+    missingInfo: [],
+    assumptions: [],
+  };
+
+  it("keeps the technology the client stated, as stated", async () => {
+    const { client } = fakeClient({ parsed_output: staticSite });
+    const result = await analyzeRequirement(AnalyzeInputSchema.parse({ notes: "x" }), client);
+    expect(result.success && result.draft.technologyPreference).toEqual(["HTML", "CSS", "JavaScript"]);
+  });
+
+  it("does not price a demo form as the working contact form", async () => {
+    const { client } = fakeClient({ parsed_output: staticSite });
+    const result = await analyzeRequirement(AnalyzeInputSchema.parse({ notes: "x" }), client);
+    if (!result.success) throw new Error("expected success");
+    expect(result.draft.modules).not.toContain("contact-form");
+    expect(result.draft.mustHave).not.toContain("contact-form");
+    expect(result.draft.assumptions.join(" ")).toContain("non-working demo");
+    expect(result.draft.missingInfo.join(" ")).toMatch(/deliver messages/);
+  });
+
+  it("leaves a working contact form alone", () => {
+    const working: RequirementDraft = { ...staticSite, summary: "Contact page with an enquiry form that emails the owner.", confirmed: ["Enquiry form emails the owner"], pages: [{ name: "Contact Us", sections: 3, purpose: "Form and map" }] };
+    expect(applyDraftGuards(working)).toBe(working);
+  });
+
+  it("recognises the usual ways a demo form is described", () => {
+    for (const line of ["The form is only a demo", "A dummy contact form is enough", "Placeholder form, no real submission needed to work", "The contact form will not send any message", "Form does not store submissions"]) {
+      const guarded = applyDraftGuards({ ...staticSite, summary: line, confirmed: [], pages: [{ name: "Contact Us", sections: 2, purpose: "" }] });
+      expect(guarded.modules, line).not.toContain("contact-form");
+    }
+  });
+
+  it("is safe to run twice and never changes the draft it was given", () => {
+    const before = JSON.stringify(staticSite);
+    const once = applyDraftGuards(staticSite);
+    const twice = applyDraftGuards(once);
+    expect(JSON.stringify(staticSite)).toBe(before);
+    expect(twice.assumptions).toEqual(once.assumptions);
+    expect(twice.missingInfo).toEqual(once.missingInfo);
   });
 });

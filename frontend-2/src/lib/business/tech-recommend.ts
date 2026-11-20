@@ -2,15 +2,18 @@ import { pagePlan, NEAR_BUDGET_SHARE } from "./budget";
 import { buildQuote, formatINR, needsBackend } from "./pricing";
 import {
   CATALOG_LAYERS,
+  DEFAULT_TECH_CATALOG,
   LEVELS,
   SCALES,
   checkStack,
+  findTech,
   type CatalogLayer,
   type Level,
   type Scale,
   type TechEntry,
 } from "./tech-catalog";
-import type { Client, ModuleId, PagePlan, ProjectType, RateCard, Requirement } from "./types";
+import { listLabels, unmatchedNames, withDependencies } from "./tech-preference";
+import type { Client, ClientTech, ModuleId, PagePlan, ProjectType, RateCard, Requirement } from "./types";
 
 /**
  * Technology recommendation engine (step 2). Pure and reusable: it reads a
@@ -28,6 +31,9 @@ import type { Client, ModuleId, PagePlan, ProjectType, RateCard, Requirement } f
  *   cost impact is applied through a copy of the rate card; the real one is not touched).
  *   Prices are never reduced to fit a budget; a mismatch is reported instead.
  * - Domain, hosting and other running costs are never part of the estimate.
+ * - Technology the client asked for is kept apart from our recommendations. If it
+ *   is enabled and compatible it is used as asked; if not, the reason is given and
+ *   the alternatives are marked as needing the client's confirmation first.
  */
 
 // ---- Types ------------------------------------------------------------------
@@ -50,6 +56,8 @@ export type RecommendationOptions = {
   client?: Pick<Client, "state">;
   /** How many ranked options to return (default 3). */
   maxOptions?: number;
+  /** Technology the client asked for; defaults to the requirement's own clientTech. */
+  clientTech?: ClientTech;
 };
 
 export type TechRef = { id: string; label: string };
@@ -81,6 +89,8 @@ export type BudgetComparison = {
 
 export type RecommendedOption = {
   rank: number;
+  /** "client": built on the technology the client asked for. "recommended": our suggestion (needs the client's confirmation when a request could not be used). */
+  source: "client" | "recommended";
   /** 0-100: how well the stack fits this project (higher is better). */
   score: number;
   stack: Record<CatalogLayer, TechRef[]>;
@@ -104,8 +114,28 @@ export type RecommendedOption = {
   tradeoffs: string[];
 };
 
+export type PreferenceStatus = "none" | "honoured" | "needs-confirmation";
+
+/** What the client asked for, kept apart from our recommendations. */
+export type ClientPreferenceResult = {
+  status: PreferenceStatus;
+  /** As written by the client. */
+  stated: string[];
+  /** The matching catalog technologies plus what they depend on (Laravel needs PHP). */
+  requestedIds: string[];
+  /** Why the request cannot be used as it is (disabled, unknown or incompatible). */
+  problems: string[];
+  /** True when the technology in use is an alternative the client already confirmed. */
+  confirmedAlternative: boolean;
+  /** Set when the client must confirm an alternative before it is used. */
+  confirmation?: string;
+};
+
 export type Recommendation = {
   options: RecommendedOption[];
+  clientPreference: ClientPreferenceResult;
+  /** True when a requested technology cannot be used: nothing may replace it until the client confirms. */
+  requiresConfirmation: boolean;
   needs: ResolvedNeeds;
   notes: string[];
   /** Combinations that were considered and refused as incompatible (a sample). */
@@ -387,6 +417,41 @@ function compareBudget(budget: number, total: number | undefined): BudgetCompari
   return { status, amount: budget, total, difference: budget - total };
 }
 
+// ---- What the client asked for -------------------------------------------------------
+
+const NO_PREFERENCE: ClientPreferenceResult = { status: "none", stated: [], requestedIds: [], problems: [], confirmedAlternative: false };
+
+/** Checks the client's requested technology against the catalog: enabled, known and compatible with itself. */
+export function resolvePreference(tech: ClientTech | undefined, catalog: readonly TechEntry[]): ClientPreferenceResult {
+  if (!tech || !Array.isArray(tech.stated) || tech.stated.length === 0) return NO_PREFERENCE;
+  const confirmed = Array.isArray(tech.confirmedIds) && tech.confirmedIds.length > 0;
+  const wanted = confirmed ? tech.confirmedIds! : (tech.ids ?? []);
+  const requestedIds = withDependencies(wanted, catalog.length ? catalog : DEFAULT_TECH_CATALOG);
+  const problems: string[] = [];
+  if (!confirmed) for (const name of unmatchedNames(tech)) problems.push(`"${name}" is not in the technology catalog.`);
+  for (const id of requestedIds) {
+    const entry = findTech(catalog, id);
+    if (!entry) problems.push(`"${id}" is not in the technology catalog.`);
+    else if (!entry.enabled) problems.push(`${entry.label} is not currently offered.`);
+  }
+  for (const issue of checkStack(catalog, requestedIds).issues) if (issue.kind === "incompatible" || issue.kind === "missing-requirement") problems.push(issue.message);
+  return { status: problems.length ? "needs-confirmation" : "honoured", stated: tech.stated, requestedIds, problems: [...new Set(problems)], confirmedAlternative: confirmed };
+}
+
+/** A stack uses the requested technology when it contains all of it and adds no extra frameworks or libraries. */
+function usesRequested(c: { frontend: string[]; backend: string[]; database: string[]; hosting: string }, requested: string[], byId: Map<string, TechEntry>): boolean {
+  const layers: Record<CatalogLayer, string[]> = { frontend: c.frontend, backend: c.backend, database: c.database, hosting: [c.hosting] };
+  for (const layer of CATALOG_LAYERS) {
+    const want = requested.filter((id) => byId.get(id)?.layer === layer);
+    if (!want.length) continue;
+    const have = layers[layer];
+    if (!want.every((id) => have.includes(id))) return false;
+    const allowed = layer === "frontend" ? ["html", "css", "javascript"] : [];
+    if (have.some((id) => !want.includes(id) && !allowed.includes(id))) return false;
+  }
+  return true;
+}
+
 // ---- The engine -------------------------------------------------------------------
 
 /**
@@ -401,8 +466,8 @@ export function recommendTechnology(
   rates: RateCard,
   options: RecommendationOptions = {},
 ): Recommendation {
-  const empty = (needs: ResolvedNeeds, notes: string[], problems: string[] = []): Recommendation => ({
-    options: [], needs, notes, rejected: [], rejectedCount: 0, catalogProblems: problems, separateCosts: SEPARATE_COSTS_NOTICE,
+  const empty = (needs: ResolvedNeeds, notes: string[], problems: string[] = [], preference: ClientPreferenceResult = NO_PREFERENCE): Recommendation => ({
+    options: [], clientPreference: preference, requiresConfirmation: preference.status === "needs-confirmation", needs, notes, rejected: [], rejectedCount: 0, catalogProblems: problems, separateCosts: SEPARATE_COSTS_NOTICE,
   });
   const blankNeeds: ResolvedNeeds = { needsBackend: false, demand: "light", scale: "small", scaleSource: "assumed", security: "standard", securitySource: "assumed", assumptions: [], missing: [], confidence: "low" };
 
@@ -411,9 +476,17 @@ export function recommendTechnology(
   }
   const { entries, problems } = usableCatalog(catalog);
   const needs = resolveNeeds(requirement, rates, options.needs);
+  let preference = resolvePreference(options.clientTech ?? requirement.clientTech, entries);
+  const askConfirmation = (p: ClientPreferenceResult): ClientPreferenceResult => ({
+    ...p,
+    status: "needs-confirmation",
+    confirmation: `The client asked for ${p.stated.join(", ")}. ${p.problems.join(" ")} Please confirm an alternative with the client before it is used.`,
+  });
+  if (preference.status === "needs-confirmation") preference = askConfirmation(preference);
   const enabled = new Set(entries.filter((e) => e.enabled).map((e) => e.id));
   if (!enabled.size) {
-    return empty(needs, ["No technology is enabled in the catalog. Enable the technologies you deliver, then try again."], problems);
+    const stuck = preference.status === "none" ? preference : askConfirmation({ ...preference, problems: ["No technology is enabled in the catalog."] });
+    return empty(needs, ["No technology is enabled in the catalog. Enable the technologies you deliver, then try again."], problems, stuck);
   }
   const type = requirement.projectType;
   const wanted = budget === undefined ? requirement.budget ?? 0 : budget;
@@ -456,12 +529,31 @@ export function recommendTechnology(
   const notes: string[] = [...needs.missing];
   if (!candidates.length) {
     notes.push(`No enabled technologies can be combined for a ${type.replace("-", " ")}${needs.needsBackend ? " that needs a backend and database" : ""}. Enable more technologies in the catalog.`);
-    return { ...empty(needs, notes, problems), rejected, rejectedCount };
+    const stuck = preference.status === "honoured" ? askConfirmation({ ...preference, problems: ["No enabled combination can be built for this project."] }) : preference;
+    if (stuck.confirmation) notes.unshift(stuck.confirmation);
+    return { ...empty(needs, notes, problems, stuck), rejected, rejectedCount };
   }
+
+  // The client's own technology comes first. It is used only when it is enabled, compatible and can form a full stack.
+  let pool = candidates;
+  let source: RecommendedOption["source"] = "recommended";
+  if (preference.status === "honoured") {
+    const preferred = candidates.filter((c) => usesRequested(c, preference.requestedIds, byId));
+    if (preferred.length) {
+      pool = preferred;
+      source = "client";
+    } else {
+      preference = askConfirmation({
+        ...preference,
+        problems: [`No enabled combination uses ${listLabels(preference.requestedIds, ", ")} and also fits this project${needs.needsBackend ? " (it needs a backend and a database)" : ""}.`],
+      });
+    }
+  }
+  if (preference.confirmation) notes.unshift(preference.confirmation);
 
   // One option per application stack: keep its best hosting, list the others as alternatives.
   const groups = new Map<string, Candidate[]>();
-  for (const c of candidates) {
+  for (const c of pool) {
     const key = [...c.frontend, "|", ...c.backend, "|", ...c.database].join(",");
     groups.set(key, [...(groups.get(key) ?? []), c]);
   }
@@ -498,6 +590,7 @@ export function recommendTechnology(
     const security = [...new Set(c.entries.flatMap((e) => e.security))];
     const option: RecommendedOption = {
       rank: 0,
+      source,
       score: clamp(Math.round(score), 0, 100),
       stack: { frontend: describe(c.entries, "frontend"), backend: describe(c.entries, "backend"), database: describe(c.entries, "database"), hosting: describe(c.entries, "hosting") },
       ids: c.entries.map((e) => e.id),
@@ -522,7 +615,14 @@ export function recommendTechnology(
   const kept = scored.filter((o) => o === top || (o.score >= Math.max(30, top.score - 30) && o.meetsRequirements === top.meetsRequirements)).slice(0, limit);
   kept.forEach((o, i) => (o.rank = i + 1));
 
-  if (!top.meetsRequirements) notes.push("No enabled technology fully meets the project's scale or security needs. These are the closest options; enable more technologies for a better fit.");
+  if (!top.meetsRequirements) {
+    notes.push(
+      source === "client"
+        ? "The technology the client asked for does not fully meet the project's scale or security needs. Discuss this with the client."
+        : "No enabled technology fully meets the project's scale or security needs. These are the closest options; enable more technologies for a better fit.",
+    );
+  }
+  if (source === "client") notes.push(`Using the technology the client asked for: ${preference.stated.join(", ")}.`);
   let budgetPlan: PagePlan | undefined;
   if (wanted > 0 && top.estimate) {
     if (top.budget.status === "over") {
@@ -537,5 +637,5 @@ export function recommendTechnology(
     }
   }
   if (needs.assumptions.length) notes.push(...needs.assumptions);
-  return { options: kept, needs, notes, rejected, rejectedCount, budgetPlan, catalogProblems: problems, separateCosts: SEPARATE_COSTS_NOTICE };
+  return { options: kept, clientPreference: preference, requiresConfirmation: preference.status === "needs-confirmation", needs, notes, rejected, rejectedCount, budgetPlan, catalogProblems: problems, separateCosts: SEPARATE_COSTS_NOTICE };
 }

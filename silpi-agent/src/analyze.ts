@@ -90,6 +90,9 @@ const DraftSchema = z.object({
   needsHosting: z.boolean(),
   deadlineWeeks: z.number().describe("Deadline in weeks if stated, else 0"),
   seoKeywords: z.array(z.string()).describe("3-8 search phrases the client's customers would type, with the city if local, e.g. 'organic rice shop Madurai'"),
+  technologyPreference: z
+    .array(z.string())
+    .describe("Technologies the client explicitly requires or prefers, one per item, e.g. 'HTML', 'CSS', 'JavaScript', 'PHP', 'MySQL'. Only what the client states; never your own suggestion. Empty if none"),
   confirmed: z.array(z.string()).describe("Requirements the client stated plainly, one short line each"),
   clientBudget: z.number().describe("The client's stated maximum budget in Indian rupees (convert lakh etc. to a plain number), else 0"),
   missingInfo: z.array(z.string()).describe("Unanswered: questions to ask the client before final pricing"),
@@ -109,7 +112,30 @@ Rules:
 - Keep three lists apart: confirmed (stated plainly by the client), assumptions (your guesses where unclear) and missingInfo (still unanswered, phrased as a question). Never put a guess in confirmed.
 - Put anything that affects price but is unclear into missingInfo.
 - Mark a module as mustHave only when the client says it is essential for launch.
-- Suggest seoKeywords from the business, its products or services and its location.`;
+- Suggest seoKeywords from the business, its products or services and its location.
+- technologyPreference: list only technologies the client explicitly names as required or preferred (for example "built with HTML, CSS and vanilla JavaScript only" gives HTML, CSS, JavaScript). One item per technology. Never add a technology the client did not name, and never replace what they named.
+- A form described as a demo, dummy or placeholder, or one that does not send or store messages, is NOT the contact-form module: leave contact-form out of modules and mustHave, say in assumptions that a working form is not included, and put "Will the form need to deliver messages?" in missingInfo.`;
+
+/**
+ * A form the document describes as a demo, or as one that does not send or store
+ * anything, is not the working contact-form feature (which delivers enquiries).
+ */
+const DEMO_FORM = /\bform\b[^.]{0,30}\b(is|are)\b[^.]{0,15}\b(demo|dummy|sample|placeholder|mock)\b|\b(demo|dummy|sample|placeholder|mock|non[- ]?functional)\b[^.]{0,40}\bform\b|\bform\b[^.]{0,60}\b(does not|doesn't|do not|won't|will not|not)\b[^.]{0,20}\b(send|store|submit|deliver|save)\b/i;
+
+/** Safety net for the prompt rule: never price a demo form as a working contact form. Pure; returns a new draft. */
+export function applyDraftGuards(draft: RequirementDraft): RequirementDraft {
+  const text = [draft.summary, ...draft.confirmed, ...draft.pages.map((p) => p.purpose)];
+  if (!draft.modules.includes("contact-form") || !text.some((line) => DEMO_FORM.test(line))) return draft;
+  const note = "The contact form in the document is a non-working demo, so the working Contact / enquiry form feature is not included. Add it if the client wants messages delivered.";
+  const question = "Will the contact form need to deliver messages to the client?";
+  return {
+    ...draft,
+    modules: draft.modules.filter((m) => m !== "contact-form"),
+    mustHave: draft.mustHave.filter((m) => m !== "contact-form"),
+    assumptions: draft.assumptions.includes(note) ? draft.assumptions : [...draft.assumptions, note],
+    missingInfo: draft.missingInfo.some((q) => /form/i.test(q) && /(deliver|send)/i.test(q)) ? draft.missingInfo : [...draft.missingInfo, question],
+  };
+}
 
 /** A problem with an uploaded file; reported to the user, never sent to the API. */
 class AnalyzeInputError extends Error {}
@@ -198,5 +224,5 @@ export async function analyzeRequirement(input: AnalyzeInput, client = new Anthr
   if (response.stop_reason === "max_tokens" || !response.parsed_output) {
     return { success: false, error: "The document could not be analysed completely. Try a shorter document or split it." };
   }
-  return { success: true, draft: response.parsed_output, model: response.model || model, costUsd: Number(cost.toFixed(4)) };
+  return { success: true, draft: applyDraftGuards(response.parsed_output), model: response.model || model, costUsd: Number(cost.toFixed(4)) };
 }

@@ -1,5 +1,6 @@
 import { buildQuote, effectiveStack, needsBackend, sectionsOf } from "./pricing";
 import { billablePages, supportingPages } from "./scope";
+import { clientLayerIds } from "./tech-preference";
 import type { Client, ComparisonRow, ModuleId, ProjectType, ProposalSummary, Quote, RateCard, Requirement, StackChoice, Tier } from "./types";
 
 /**
@@ -38,7 +39,7 @@ const STANDARD_FEATURES: Record<ProjectType, ModuleId[]> = {
 };
 
 /** Standard pages keep a middle number of sections; Premium keeps all of them. */
-const standardSections = (page: string) => (/^home/i.test(page) ? 4 : 3);
+const standardSections = (page: string) => (/^home\b/i.test(page) ? 4 : 3);
 
 /** Basic pages keep their key sections only. */
 const basicSections = (page: string) => (/^home\b/i.test(page) ? 3 : 2);
@@ -127,7 +128,7 @@ export function buildProposals(request: Requirement, client: Pick<Client, "state
     basicOut.push("Workflows kept simple in the first version");
   }
   const stack = cheapestStack(basic, rates);
-  if (!basic.tech?.backend && stack !== effectiveStack(basic, rates)) {
+  if (!basic.tech?.backend && !clientLayerIds(basic, "backend").length && stack !== effectiveStack(basic, rates)) {
     basic = { ...basic, stack };
     basicOut.push(`Built with ${rates.stacks[stack].label} (${rates.stacks[stack].tradeoff || "less custom code"})`);
   }

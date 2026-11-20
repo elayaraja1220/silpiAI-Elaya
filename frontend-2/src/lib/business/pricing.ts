@@ -1,5 +1,6 @@
 import { billablePages, supportingPages } from "./scope";
 import { seoAdvice } from "./seo";
+import { clientLayerIds, frontendLabel, listLabels, unmatchedNames } from "./tech-preference";
 import { separateServices } from "./services";
 import type { Client, LineItem, Quote, RateCard, Requirement, StackChoice, StackSuggestion } from "./types";
 
@@ -73,20 +74,43 @@ export function suggestStack(req: Requirement, rates: RateCard): StackSuggestion
 
   const tech = chosenTech(req, rates);
   let frontend = tech.frontend ? (backendNeeded ? tech.frontend.label : `${tech.frontend.label}, exported as a static site`) : backendNeeded ? approach.frontend : "Next.js (React), exported as a static site";
-  const backend = backendNeeded ? (tech.backend?.label ?? approach.backend) : "None (static site)";
-  const database = backendNeeded ? (tech.database?.label ?? approach.database) : "None";
+  let backend = backendNeeded ? (tech.backend?.label ?? approach.backend) : "None (static site)";
+  let database = backendNeeded ? (tech.database?.label ?? approach.database) : "None";
+  // Technology the client asked for (or confirmed instead) is shown as asked, not replaced by our default.
+  const clientFront = clientLayerIds(req, "frontend");
+  const clientBack = clientLayerIds(req, "backend");
+  const clientData = clientLayerIds(req, "database");
   if (tech.frontend || tech.backend || tech.database) notes.push("Technology chosen by the client; the estimate is adjusted for it.");
   if (choice !== "custom") notes.push(approach.note);
   if (req.projectType === "cms-website" && choice === "custom" && !tech.frontend) {
     frontend = "Next.js (React) + SILPI CMS admin";
     notes.push("Built on the SILPI CMS starter (React + Node): pages, posts, media, menus and SEO are editable by the client.");
   }
+  let styling = "Tailwind CSS";
+  if (clientFront.length) {
+    frontend = frontendLabel(clientFront);
+    styling = clientFront.includes("bootstrap") ? "Bootstrap" : clientFront.some((id) => id === "html" || id === "css") ? "CSS" : styling;
+  }
+  if (backendNeeded && clientBack.length) backend = listLabels(clientBack);
+  if (backendNeeded && clientData.length) database = listLabels(clientData);
+  if (req.clientTech && req.scope !== "module" && req.scope !== "version") {
+    const asked = req.clientTech.stated.join(", ");
+    if (req.clientTech.confirmedIds?.length) {
+      notes.push(`The client asked for ${asked}, which could not be used; they confirmed ${listLabels(req.clientTech.confirmedIds, ", ")} instead.`);
+    } else {
+      notes.push(`Technology requested by the client: ${asked}. It is used as requested; nothing is substituted without the client's confirmation.`);
+      for (const name of unmatchedNames(req.clientTech)) notes.push(`"${name}" is not in our technology list yet: confirm with the client before building.`);
+    }
+    if (!backendNeeded && (clientBack.length || clientData.length)) {
+      notes.push(`The requested ${listLabels([...clientBack, ...clientData], ", ")} is not used because this project needs no server or database.`);
+    }
+  }
   if (!backendNeeded && req.modules.includes("contact-form")) {
     notes.push("Contact form enquiries reach the client by email through a form service (e.g. Web3Forms free plan); no server needed.");
   }
   if (req.modules.includes("payments")) notes.push("Payments through Razorpay (UPI, cards, net banking).");
-  if (req.modules.includes("chat")) notes.push("Live chat uses Socket.IO on the Node server.");
-  if (req.modules.includes("multilingual")) notes.push("Translations through next-intl; content can be entered per language.");
+  if (req.modules.includes("chat") && (!clientBack.length || clientBack.includes("nodejs"))) notes.push("Live chat uses Socket.IO on the Node server.");
+  if (req.modules.includes("multilingual") && (!clientFront.length || clientFront.includes("nextjs"))) notes.push("Translations through next-intl; content can be entered per language.");
   if (req.scope === "module" || req.scope === "version") {
     notes.push(`Work is added to the existing project${req.existingProject ? ` "${req.existingProject}"` : ""}; its current stack is kept.`);
   }
@@ -96,7 +120,7 @@ export function suggestStack(req: Requirement, rates: RateCard): StackSuggestion
     notes.push("Shared or static hosting cannot run a Node.js backend; VPS or cloud hosting is recommended.");
   }
 
-  return { approach: backendNeeded ? approach.label : "Static site", frontend, backend, database, styling: "Tailwind CSS", hosting, notes };
+  return { approach: backendNeeded ? approach.label : "Static site", frontend, backend, database, styling, hosting, notes };
 }
 
 export function gstFor(client: Pick<Client, "state">, rates: RateCard, taxable: number): Quote["gst"] {

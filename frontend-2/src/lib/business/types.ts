@@ -120,6 +120,13 @@ export type RequirementInsights = {
   questions: string[];
 };
 
+/**
+ * Technology the client asked for in their own words, kept apart from anything we recommend.
+ * `stated`: as written by the client. `ids`: the same, matched to the technology catalog.
+ * `confirmedIds`: an alternative the client agreed to because a request could not be used.
+ */
+export type ClientTech = { stated: string[]; ids: string[]; confirmedIds?: string[] };
+
 export type Requirement = {
   title: string;
   summary: string;
@@ -153,6 +160,8 @@ export type Requirement = {
   excludedModules?: ModuleId[];
   /** Technology picked by a technical client (ids from the rate card). Empty = SILPI chooses. */
   tech?: Partial<Record<TechLayer, string>>;
+  /** Technology the client explicitly requested (never replaced silently; see ClientTech). */
+  clientTech?: ClientTech;
   /** Premium package only: adds the priced "Premium care" line (speed & security check, priority support). */
   premiumCare?: boolean;
   /** Header, footer, navigation and other shared parts: part of the set-up, never billed as pages. */
@@ -425,6 +434,8 @@ export type RequirementDraft = {
   deadlineWeeks: number;
   clientBudget: number;
   seoKeywords: string[];
+  /** Technologies the client explicitly named (e.g. HTML, CSS, JavaScript). Missing on older agent versions. */
+  technologyPreference?: string[];
   confirmed: string[];
   missingInfo: string[];
   assumptions: string[];

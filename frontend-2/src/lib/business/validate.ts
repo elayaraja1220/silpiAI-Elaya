@@ -17,6 +17,7 @@ import {
 } from "./types";
 import { INDIAN_STATES } from "./rate-card";
 import { autoComplexity, billablePages, splitPages } from "./scope";
+import { parseClientTechInput } from "./tech-preference";
 
 /** Thrown for bad input; API routes turn it into a 400. */
 export class ValidationError extends Error {}
@@ -113,6 +114,7 @@ export function parseRequirement(input: unknown, rates: RateCard): Requirement {
     budget: int(r.budget, 0, 1_000_000_000, 0),
     budgetStrict: r.budgetStrict === true,
     premiumCare: r.premiumCare === true,
+    ...(parseClientTechInput(r.clientTech) ? { clientTech: parseClientTechInput(r.clientTech) } : {}),
     stack: oneOf(r.stack, STACKS, "custom"),
     tech: Object.fromEntries(
       (["frontend", "backend", "database"] as const).flatMap((layer) => {

@@ -6,6 +6,8 @@ import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, HelpCircle, 
 import { buildQuote, formatINR, needsBackend, sectionsOf } from "@/lib/business/pricing";
 import { checkBudget } from "@/lib/business/budget";
 import { buildProposals, defaultTier } from "@/lib/business/proposals";
+import type { TechEntry } from "@/lib/business/tech-catalog";
+import { parseClientTech } from "@/lib/business/tech-preference";
 import {
   billablePages,
   defaultPageKind,
@@ -46,6 +48,7 @@ import { DocumentAnalyzer, type AnalysisOutcome } from "./document-analyzer";
 import { PackageDetails } from "./package-details";
 import { QuoteTotals } from "./quotation-document";
 import { ScopeSummary } from "./scope-summary";
+import { TechnologyCheck } from "./technology-check";
 import { Card, Choice, Field, Input, Select, Textarea, jsonFetch } from "./ui";
 
 const STEPS = ["Requirement", "Pages & features", "Package", "Client & services", "Review"] as const;
@@ -117,6 +120,8 @@ function mergeDraft(d: RequirementDraft, files: string[], client: Client, req: R
     qualityRequirements: (d.qualityRequirements ?? []).slice(0, 20),
     externalServices: (d.externalServices ?? []).slice(0, 20),
     seoKeywords: d.seoKeywords.slice(0, 12),
+    // Technology the client named is kept exactly as stated; it is never replaced silently.
+    clientTech: parseClientTech(d.technologyPreference) ?? req.clientTech,
     insights: { confirmed: d.confirmed, assumptions: d.assumptions, questions: d.missingInfo },
     design: pick(d.design, DESIGN_SOURCES, req.design),
     references: [d.references, source].filter(Boolean).join("\n"),
@@ -175,6 +180,7 @@ function stepError(step: number, client: Client, req: Requirement): string {
 
 export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: Lead) => void; onCancel: () => void }) {
   const [rates, setRates] = useState<RateCard | null>(null);
+  const [catalog, setCatalog] = useState<TechEntry[] | null>(null);
   const [existing, setExisting] = useState<string[]>([]);
   const [step, setStep] = useState(0);
   const [client, setClient] = useState<Client>(emptyClient);
@@ -192,6 +198,9 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
     jsonFetch<{ rateCard: RateCard }>("/api/business/rate-card")
       .then((r) => setRates(r.rateCard))
       .catch((e: Error) => setError(e.message));
+    jsonFetch<{ catalog: TechEntry[] }>("/api/business/tech-catalog")
+      .then((r) => setCatalog(r.catalog))
+      .catch(() => {});
     // Existing generated projects, offered for module / version work.
     fetch("/api/projects")
       .then((r) => r.json())
@@ -241,11 +250,6 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
     setReq((r) => applyPagePlan(r, plan));
     setTier(null);
   };
-  useEffect(() => {
-    const plan = budgetCheck?.pagePlan;
-    if (req.budgetStrict && plan && plan.pages.length > 0) applyPlan();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [req.budgetStrict, budgetCheck]);
   const setStrict = (on: boolean) => {
     if (on) {
       setR("budgetStrict", true);
@@ -377,7 +381,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
             <p className="text-sm font-medium text-slate-100">Stay within budget</p>
             <p className="mt-0.5 text-[11px] text-slate-400">
               {req.budgetStrict
-                ? `On: we offer only what ${formatINR(budget)} can build. Extra pages wait in Phase 2 (kept on record).`
+                ? `On: we show what ${formatINR(budget)} can build. The client's pages and features stay as requested until you click "Use this scope".`
                 : "Off: the full scope is priced and compared with the budget. Nothing is moved."}
             </p>
           </div>
@@ -638,7 +642,24 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
           {step === PACKAGE_STEP && (
             proposals ? (
               <>
+                {((req.deferredPages?.length ?? 0) > 0 || (req.deferredModules?.length ?? 0) > 0) && (
+                  <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+                    <p className="font-semibold">Phase 2: not in this quotation</p>
+                    <p className="mt-1 text-slate-200">
+                      {[...(req.deferredPages ?? []).map((p) => `${p} page`), ...(req.deferredModules ?? []).map((m) => rates.modules[m]?.label ?? m)].join(", ")}.
+                    </p>
+                    <p className="mt-1 text-slate-300">These were requested but are left out of the prices below. They stay on record and can be added back.</p>
+                  </div>
+                )}
                 {budgetCheck && <BudgetSummary check={budgetCheck} onMoveToPhase2={toPhase2} onApplyPlan={applyPlan} onChangeDesign={(x) => setR("design", x)} />}
+                <TechnologyCheck
+                  requirement={priced}
+                  budget={budget}
+                  rates={rates}
+                  catalog={catalog}
+                  onConfirm={(ids) => setReq((r) => (r.clientTech ? { ...r, clientTech: { ...r.clientTech, confirmedIds: ids } } : r))}
+                  onUndo={() => setReq((r) => (r.clientTech ? { ...r, clientTech: { stated: r.clientTech.stated, ids: r.clientTech.ids } } : r))}
+                />
                 <PackageDetails proposals={proposals} rates={rates} selected={shownTier} suggested={suggested} budget={budget} onSelect={setTier} />
               </>
             ) : (
