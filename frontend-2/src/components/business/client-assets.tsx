@@ -99,12 +99,25 @@ export function ClientAssets({ token }: { token: string }) {
           if (!items.length) return null;
           return (
             <div key={group}>
-              <h3 className="text-xs font-semibold uppercase tracking-[.15em] text-slate-400">{group}</h3>
-              <div className="mt-2 space-y-3">
-                {items.map((a) => (
-                  <Item key={a.id + a.updatedAt} asset={a} busy={busy === a.id} onUpload={(f) => upload(a.id, f)} onText={(t) => saveText(a.id, t)} onRemove={(fid) => removeFile(a.id, fid)} />
-                ))}
-              </div>
+              {group !== "Brand" && <h3 className="text-xs font-semibold uppercase tracking-[.15em] text-slate-400">{group}</h3>}
+              {group === "Brand" ? (
+                // Logo, mobile logo, favicon, colours and fonts: one section
+                <div className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200">
+                  <div className="bg-slate-50 px-4 py-3">
+                    <p className="text-sm font-semibold text-slate-900">Brand identity</p>
+                    <p className="mt-0.5 text-xs text-slate-500">Your logos, favicon, colours and fonts in one place.</p>
+                  </div>
+                  {items.map((a, i) => (
+                    <Item key={a.id + a.updatedAt} embedded step={i + 1} asset={a} busy={busy === a.id} onUpload={(f) => upload(a.id, f)} onText={(t) => saveText(a.id, t)} onRemove={(fid) => removeFile(a.id, fid)} />
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 space-y-3">
+                  {items.map((a) => (
+                    <Item key={a.id + a.updatedAt} asset={a} busy={busy === a.id} onUpload={(f) => upload(a.id, f)} onText={(t) => saveText(a.id, t)} onRemove={(fid) => removeFile(a.id, fid)} />
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -113,7 +126,7 @@ export function ClientAssets({ token }: { token: string }) {
   );
 }
 
-function Item({ asset: a, busy, onUpload, onText, onRemove }: { asset: ClientAsset; busy: boolean; onUpload: (f: FileList) => void; onText: (t: string) => void; onRemove: (fileId: string) => void }) {
+function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, step }: { asset: ClientAsset; busy: boolean; embedded?: boolean; step?: number; onUpload: (f: FileList) => void; onText: (t: string) => void; onRemove: (fileId: string) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(a.text);
   const locked = a.status === "received";
@@ -122,10 +135,10 @@ function Item({ asset: a, busy, onUpload, onText, onRemove }: { asset: ClientAss
   const brand = a.key === "brand-style";
 
   return (
-    <div className={`rounded-xl border p-4 ${locked ? "border-emerald-200 bg-emerald-50/50" : a.status === "redo" ? "border-amber-300 bg-amber-50/60" : "border-slate-200"}`}>
+    <div className={embedded ? `p-4 ${locked ? "bg-emerald-50/50" : a.status === "redo" ? "bg-amber-50/60" : ""}` : `rounded-xl border p-4 ${locked ? "border-emerald-200 bg-emerald-50/50" : a.status === "redo" ? "border-amber-300 bg-amber-50/60" : "border-slate-200"}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-900">{a.label}</p>
+          <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">{step && <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-600">{step}</span>}{a.label}</p>
           <p className="mt-0.5 max-w-xl text-xs leading-5 text-slate-500">{a.hint}</p>
         </div>
         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLE[a.status]}`}>

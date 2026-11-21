@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, FileDown, Loader2, MessageSquare } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileDown, Loader2, MessageSquare, MonitorPlay } from "lucide-react";
 
 import { ClientAssets } from "@/components/business/client-assets";
 import { QuotationDocument } from "@/components/business/quotation-document";
@@ -130,6 +130,16 @@ export function ClientQuotation({ token }: { token: string }) {
               )}
               {!view.payment.upiId && !view.payment.bankDetails && <p className="text-sm text-slate-600">We will send the payment details to you shortly.</p>}
             </div>
+          </section>
+        )}
+        {view.demo && (
+          <section className="rounded-2xl border border-violet-300 bg-violet-50 p-5">
+            <h2 className="flex items-center gap-2 font-semibold text-violet-900"><MonitorPlay size={18} /> Preview your website</h2>
+            <p className="mt-1 text-sm text-violet-900/80">
+              We have prepared a private demo of your website. It is for you to look through and is clearly marked as a demo. It is open until {new Date(view.demo.expiresAt).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}.
+              {view.demo.protected ? " It is protected: please ask us for the password." : ""}
+            </p>
+            <a href={view.demo.url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500"><ExternalLink size={15} /> Open the demo</a>
           </section>
         )}
         {approved && <ClientAssets token={token} />}

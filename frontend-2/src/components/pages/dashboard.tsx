@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import { DeleteLeadDialog } from "@/components/business/delete-lead-dialog";
+import { LiveDemosCard } from "@/components/business/live-demos-card";
 import { jsonFetch } from "@/components/business/ui";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatINR } from "@/lib/business/pricing";
@@ -417,6 +418,9 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             </ol>
           </div>
         </section>
+
+        {/* Every demo that is open right now, across all projects */}
+        <LiveDemosCard />
 
         {/* Follow-ups */}
         <section className="rounded-2xl border border-white/[.08] bg-[#121622] p-5">

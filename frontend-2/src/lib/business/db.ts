@@ -137,6 +137,30 @@ CREATE TABLE IF NOT EXISTS asset_files (
 );
 CREATE INDEX IF NOT EXISTS asset_files_asset ON asset_files(asset_id);
 
+-- Private demo previews of a generated website, shown to a client through a secret link (see src/lib/demo). The copy of the
+-- site lives on disk under storage/demos/<id>/; nothing here is ever sent to the client except the link.
+CREATE TABLE IF NOT EXISTS demo_links (
+  id             TEXT PRIMARY KEY,
+  lead_id        TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  token          TEXT NOT NULL UNIQUE,
+  label          TEXT NOT NULL,
+  mode           TEXT NOT NULL,
+  framework      TEXT NOT NULL DEFAULT '',
+  project_name   TEXT NOT NULL,
+  spa            INTEGER NOT NULL DEFAULT 0,
+  app_dir        TEXT NOT NULL DEFAULT '',
+  start_command  TEXT NOT NULL DEFAULT '',
+  password_hash  TEXT NOT NULL DEFAULT '',
+  show_to_client INTEGER NOT NULL DEFAULT 1,
+  created_at     TEXT NOT NULL,
+  expires_at     TEXT NOT NULL,
+  revoked_at     TEXT,
+  views          INTEGER NOT NULL DEFAULT 0,
+  last_view_at   TEXT,
+  report         TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS demo_links_lead ON demo_links(lead_id, created_at);
+
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL

@@ -923,9 +923,16 @@ describe("13. security by construction", () => {
   it("no code reads Claude Code's credential or session files", () => {
     for (const file of executionFiles) assert.ok(!/\.credentials|credentials\.json|\.claude\.json|\.claude[\\/]|keychain|readFileSync\([^)]*claude/i.test(readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")), `${path.relative(process.cwd(), file)} reads a credential file`);
   });
-  it("programs are started in exactly three places, always without a request-supplied command", () => {
+  it("programs are started in a few known places, always without a request-supplied command", () => {
     const users = walk(path.resolve("src")).filter((f) => /\.(ts|tsx)$/.test(f) && /child_process/.test(readFileSync(f, "utf8"))).map((f) => path.relative(path.resolve("src"), f).replace(/\\/g, "/")).sort();
-    assert.deepEqual(users, ["lib/business/analyze.ts", "lib/execution/api-agent.ts", "lib/execution/claude-cli.ts", "lib/execution/verify.ts", "lib/silpi-runner.ts"].sort());
+    assert.deepEqual(users, ["lib/business/analyze.ts", "lib/demo/app-runner.ts", "lib/demo/service.ts", "lib/execution/api-agent.ts", "lib/execution/claude-cli.ts", "lib/execution/verify.ts", "lib/silpi-runner.ts"].sort());
+    // Demo previews: both programs are fixed strings. Nothing from a request, a project or the database becomes a command.
+    const runnerSrc = read("src/lib/demo/app-runner.ts");
+    assert.ok(/spawn\(DEMO_START_COMMAND,/.test(runnerSrc) && /DEMO_START_COMMAND = "npm run start"/.test(runnerSrc), "the app runner starts one constant command");
+    assert.ok(/demo\.start_command !== DEMO_START_COMMAND/.test(runnerSrc), "a stored value that is not that command is refused");
+    assert.ok(/spawn\("npm run build",/.test(read("src/lib/demo/service.ts")), "the build is a fixed command");
+    assert.ok(/env: cleanEnv\(/.test(runnerSrc) && /env: cleanEnv\(/.test(read("src/lib/demo/service.ts")), "demo programs get a clean environment, without SILPI's secrets");
+    for (const f of ["src/lib/demo/app-runner.ts", "src/lib/demo/service.ts", "src/lib/demo/gateway.ts"]) assert.ok(!/(?<![.\w])exec(Sync)?\(|execFile|eval\(|new Function/.test(read(f)), f);
     for (const f of ["src/lib/execution/claude-cli.ts", "src/lib/execution/verify.ts", "src/lib/execution/api-agent.ts"]) assert.ok(!/(?<![.\w])exec(Sync)?\(|execFile|eval\(|new Function/.test(read(f)), f);
   });
   it("the API is started in one place only, after the approval check", () => {

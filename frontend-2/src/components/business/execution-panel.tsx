@@ -28,6 +28,9 @@ async function api<T = object>(url: string, body?: object): Promise<Reply<T>> {
 /** Fired after a run is started from outside this panel, so the panel reloads its jobs. */
 export const JOBS_CHANGED = "silpi:jobs-changed";
 
+/** Recorded in the project history when the demo checkbox is used. */
+const DEMO_REASON = "Demo only: started without the advance payment";
+
 const TONE: Record<string, string> = {
   "Local subscription execution": "border-emerald-400/40 bg-emerald-500/10 text-emerald-200",
   "API-funded execution": "border-amber-400/50 bg-amber-500/15 text-amber-100",
@@ -192,6 +195,29 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
     );
   }
 
+  // DEMO ONLY (see src/lib/dev-flags.ts): lets a demo build start before the advance. Not for real client work.
+  // Shown wherever the start is blocked by the missing advance: before the workspace is prepared and next to the Start button.
+  const demoBox = DEV_START_WITHOUT_PAYMENT && advanceMissing ? (
+    <label className={cn("flex cursor-pointer items-start gap-3 rounded-xl border p-4 text-xs transition", withoutAdvance ? "border-amber-400/50 bg-amber-500/[.09]" : "border-white/[.09] bg-white/[.02] hover:border-white/20")} data-testid="demo-without-advance">
+      <input
+        type="checkbox"
+        checked={withoutAdvance}
+        onChange={(e) => { setWithoutAdvance(e.target.checked); setReason(e.target.checked ? DEMO_REASON : ""); setError(""); }}
+        className="mt-0.5 h-4 w-4 accent-amber-500"
+        data-testid="demo-without-advance-checkbox"
+      />
+      <span className="min-w-0">
+        <span className="flex flex-wrap items-center gap-2 font-semibold text-slate-100">
+          Generate the project without the advance payment
+          <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-900">Demo only</span>
+        </span>
+        <span className="mt-1 block leading-5 text-slate-400">
+          For showing the tool in a demo. The {formatINR(pay.advanceRemaining)} advance is skipped and the history records &quot;{DEMO_REASON}&quot;. Do not use it for real client work: this option is removed when demo mode is turned off.
+        </span>
+      </span>
+    </label>
+  ) : null;
+
   return (
     <div className="space-y-4" data-testid="execution-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -201,6 +227,8 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
         </div>
         {status && <span className={cn("rounded-full border px-3 py-1 text-[11px] font-semibold", TONE[status])} data-testid="job-status">{status}</span>}
       </div>
+
+      {!job && demoBox}
 
       <ol className="space-y-4">
         <Step done title="1. The client approved the quotation" />
@@ -245,7 +273,9 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
                 </label>
               </div>
 
-              {advanceMissing && (
+              {demoBox}
+
+              {advanceMissing && !DEV_START_WITHOUT_PAYMENT && (
                 <div className="space-y-2 rounded-lg border border-amber-400/25 bg-amber-500/[.07] p-3 text-xs">
                   <p className="flex items-center gap-1.5 font-medium text-amber-100"><AlertTriangle size={14} /> Advance of {formatINR(pay.advanceRemaining)} not received yet.</p>
                   <label className="flex items-center gap-2 text-slate-300"><input type="checkbox" checked={withoutAdvance} onChange={(e) => setWithoutAdvance(e.target.checked)} className="accent-violet-500" /> Start without advance (your decision)</label>

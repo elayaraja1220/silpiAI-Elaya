@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { handle, notFound } from "@/lib/business/http";
 import { removeLeadFiles } from "@/lib/business/asset-store";
+import { removeLeadDemos } from "@/lib/demo/service";
 import { deleteLead, getLead, setStage, stageHistory } from "@/lib/business/store";
 import { STAGES, type Stage } from "@/lib/business/types";
 import { ValidationError } from "@/lib/business/validate";
@@ -35,5 +36,5 @@ export async function PATCH(request: NextRequest, context: Context) {
 export async function DELETE(_request: NextRequest, context: Context) {
   const { id } = await context.params;
   if (!getLead(id)) return notFound();
-  return handle("LEAD DELETE", () => { deleteLead(id); removeLeadFiles(id); return { deleted: true }; });
+  return handle("LEAD DELETE", () => { removeLeadDemos(id); deleteLead(id); removeLeadFiles(id); return { deleted: true }; });
 }

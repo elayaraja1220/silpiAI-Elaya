@@ -6,6 +6,9 @@ import { ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Printer, RefreshCw, R
 
 import { DeleteLeadDialog } from "@/components/business/delete-lead-dialog";
 import { AssetsPanel } from "@/components/business/assets-panel";
+import { DemoPanel } from "@/components/business/demo-panel";
+import { JourneyStepper, LeadTabBar, NextSteps, TabPanel, type TabDef, type TabId } from "@/components/business/lead-tabs";
+import { assetProgress, assetsOpen } from "@/lib/business/assets";
 import { ExecutionPanel } from "@/components/business/execution-panel";
 import { BudgetSummary } from "@/components/business/budget-summary";
 import { AccuracyCard, HoursPanel } from "@/components/business/hours-panel";
@@ -125,6 +128,26 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
   const apply = (r: { lead: Lead; history: History }) => { setLead(r.lead); setHistory(r.history); setError(""); };
 
+  // One section at a time. The tab is kept in the address (#files, #build...) so a refresh or a shared link opens the same place.
+  const [tab, setTab] = useState<TabId>("summary");
+  const [files, setFiles] = useState<{ sent: number; total: number } | null>(null);
+  useEffect(() => {
+    const wanted = window.location.hash.slice(1);
+    if (wanted) setTab(wanted as TabId);
+  }, []);
+  const go = (next: TabId) => {
+    setTab(next);
+    window.history.replaceState(null, "", `#${next}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const filesOpen = !!lead && assetsOpen(lead.stage);
+  useEffect(() => {
+    if (!filesOpen) return;
+    jsonFetch<{ assets: { status: string }[] }>(`/api/business/leads/${id}/assets`)
+      .then((r) => { const p = assetProgress(r.assets as never); setFiles({ sent: p.sent, total: p.total }); })
+      .catch(() => {});
+  }, [id, filesOpen, tab]);
+
   useEffect(() => {
     jsonFetch<{ lead: Lead; history: History }>(`/api/business/leads/${id}`).then(apply).catch((e: Error) => setError(e.message));
   }, [id]);
@@ -152,6 +175,18 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
   const editable = lead.stage === "requirement" || lead.stage === "quoted";
   const button = "flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition disabled:opacity-50";
+  const building = ["approved", "advance_paid", "in_development", "testing", "demo_ready"].includes(lead.stage);
+  const payable = building || lead.stage === "final_paid";
+  const tabs: TabDef[] = [
+    { id: "summary", label: "Summary" },
+    ...(lead.quotation ? [{ id: "quotation" as const, label: "Quotation" }] : []),
+    ...(lead.quotation && filesOpen ? [{ id: "files" as const, label: "Client files", hint: files ? `${files.sent}/${files.total}` : undefined }] : []),
+    ...(building ? [{ id: "build" as const, label: "Build" }] : []),
+    ...(lead.projectName ? [{ id: "demo" as const, label: "Demo preview" }] : []),
+    ...(lead.quotation && filesOpen ? [{ id: "payments" as const, label: "Payments & hours" }] : []),
+    ...(lead.quotation ? [{ id: "internal" as const, label: "Costs & services", hint: "team only" }] : []),
+  ];
+  const active: TabId = tabs.some((t) => t.id === tab) ? tab : "summary";
 
   return (
     <div className="space-y-5">
@@ -172,48 +207,42 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
           ) : ["requirement", "quoted", "approved"].includes(lead.stage) && (
             <button disabled={!!busy} onClick={() => setStage("lost")} className={`${button} text-rose-300 hover:bg-rose-500/10`}><XCircle size={15} /> Mark lost</button>
           )}
-          <button onClick={() => window.print()} className={`${button} border border-white/10 text-slate-200 hover:bg-white/5`}><Printer size={15} /> Print / Save PDF</button>
+          <button onClick={() => { if (active !== "quotation" && lead.quotation) go("quotation"); setTimeout(() => window.print(), 150); }} className={`${button} border border-white/10 text-slate-200 hover:bg-white/5`}><Printer size={15} /> Print / Save PDF</button>
         </div>
       </div>
 
       {error && <p className="no-print rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{error}</p>}
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
-        <div className="min-w-0 space-y-5">
-          {/* Originals first: the project is generated from the client's own content. */}
-          {lead.quotation && ["approved", "advance_paid", "in_development", "testing", "demo_ready", "final_paid", "delivered"].includes(lead.stage) && <AssetsPanel leadId={lead.id} />}
-          {["approved", "advance_paid", "in_development", "testing", "demo_ready"].includes(lead.stage) && <ExecutionPanel lead={lead} onChanged={apply} />}
-          {lead.quotation && ["approved", "advance_paid", "in_development", "testing", "demo_ready", "final_paid", "delivered"].includes(lead.stage) && <HoursPanel lead={lead} onChanged={apply} />}
-          {lead.quotation?.budgetCheck && lead.quotation.budgetCheck.status !== "none" && <BudgetSummary check={lead.quotation.budgetCheck} />}
-          {lead.quotation && <ProposalsPanel lead={lead} editable={editable} onChanged={apply} />}
-          {/* Internal only: kept out of the printed or saved quotation */}
-          {lead.quotation && <div className="no-print"><LeadCostPanel lead={lead} onConfigure={() => router.push("/pricing")} /></div>}
-          {lead.quotation && <div className="no-print"><RunningServicesEditor key={lead.quotation.id} leadId={lead.id} /></div>}
-          {lead.quotation ? <QuotationDocument quotation={lead.quotation} requirement={lead.requirement} /> : <Card className="text-sm text-slate-400">No quotation yet.</Card>}
-        </div>
-
-        <div className="no-print space-y-5">
-          {["approved", "advance_paid", "in_development", "testing", "demo_ready", "final_paid"].includes(lead.stage) && <PaymentPanel key={`pay-${lead.updatedAt}`} lead={lead} onChanged={apply} />}
-          <SharePanel key={lead.updatedAt} lead={lead} onChanged={apply} />
-          {lead.requirement.insights && <InsightsCard insights={lead.requirement.insights} />}
-          {editable && (
-            <Card className="space-y-3">
-              <p className="text-xs font-semibold text-slate-300">Adjust & re-price</p>
-              <p className="text-[11px] text-slate-500">Re-prices the selected proposal with the current rate card; creates a new quotation number.</p>
-              <Input type="number" min={0} value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="Discount in ₹ (before GST)" />
-              <button disabled={!!busy} onClick={requote} className={`${button} w-full justify-center bg-violet-500 text-white hover:bg-violet-400`}>
-                {busy === "requote" ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Re-price quotation
-              </button>
-            </Card>
+      {/* Who and how much, and where the project is */}
+      <section className="no-print space-y-4 rounded-2xl border border-white/[.07] bg-gradient-to-b from-[#141927] to-[#10141f] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-[.18em] text-violet-300">{lead.quotation ? `Quotation ${lead.quotation.number}` : "No quotation yet"}</p>
+            <h2 className="mt-1 text-lg font-semibold leading-snug text-slate-100">{lead.requirement.title}</h2>
+            <p className="mt-0.5 text-sm text-slate-400">{lead.client.company || lead.client.name} · <span className="capitalize">{lead.requirement.projectType.replace(/-/g, " ")}</span></p>
+          </div>
+          {lead.quotation && (
+            <div className="text-right">
+              <p className="text-2xl font-semibold tabular-nums text-white">{formatINR(lead.quotation.grandTotal)}</p>
+              <p className="text-[11px] text-slate-500">incl. GST</p>
+            </div>
           )}
+        </div>
+        <JourneyStepper stage={lead.stage} />
+      </section>
 
+      <LeadTabBar tabs={tabs} active={active} onChange={go} />
+
+      {/* Summary: what to do next, then the background */}
+      <TabPanel id="summary" active={active}>
+        <NextSteps lead={lead} files={files} onGo={go} onApprove={() => setStage("approved")} busy={!!busy} />
+        <div className="no-print grid gap-5 lg:grid-cols-2">
           <Card>
             <p className="text-xs font-semibold text-slate-300">Requirement</p>
             <p className="mt-2 whitespace-pre-line text-xs leading-5 text-slate-400">{lead.requirement.summary}</p>
             {lead.requirement.references && <p className="mt-2 whitespace-pre-line text-xs text-slate-500">Refs: {lead.requirement.references}</p>}
             {lead.requirement.existingProject && <p className="mt-2 text-xs text-slate-500">Existing project: {lead.requirement.existingProject} {lead.requirement.version}</p>}
           </Card>
-
           <Card>
             <p className="text-xs font-semibold text-slate-300">History</p>
             <ol className="mt-3 space-y-3 border-l border-white/10 pl-4">
@@ -226,8 +255,70 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
               ))}
             </ol>
           </Card>
+          {lead.requirement.insights && <div className="lg:col-span-2"><InsightsCard insights={lead.requirement.insights} /></div>}
         </div>
-      </div>
+        {!lead.quotation && <Card className="text-sm text-slate-400">No quotation yet.</Card>}
+      </TabPanel>
+
+      {/* Quotation: the packages, sharing, and exactly what the client sees */}
+      {lead.quotation && (
+        <TabPanel id="quotation" active={active}>
+          {lead.quotation.budgetCheck && lead.quotation.budgetCheck.status !== "none" && <BudgetSummary check={lead.quotation.budgetCheck} />}
+          <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
+            <div className="min-w-0"><ProposalsPanel lead={lead} editable={editable} onChanged={apply} /></div>
+            <div className="no-print space-y-5">
+              <SharePanel key={lead.updatedAt} lead={lead} onChanged={apply} />
+              {editable && (
+                <Card className="space-y-3">
+                  <p className="text-xs font-semibold text-slate-300">Adjust & re-price</p>
+                  <p className="text-[11px] text-slate-500">Re-prices the selected proposal with the current rate card; creates a new quotation number.</p>
+                  <Input type="number" min={0} value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="Discount in ₹ (before GST)" />
+                  <button disabled={!!busy} onClick={requote} className={`${button} w-full justify-center bg-violet-500 text-white hover:bg-violet-400`}>
+                    {busy === "requote" ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Re-price quotation
+                  </button>
+                </Card>
+              )}
+            </div>
+          </div>
+          <p className="no-print pt-2 text-[11px] font-semibold uppercase tracking-[.15em] text-slate-500">What the client sees</p>
+          <QuotationDocument quotation={lead.quotation} requirement={lead.requirement} />
+        </TabPanel>
+      )}
+
+      {lead.quotation && filesOpen && (
+        <TabPanel id="files" active={active}>
+          <AssetsPanel leadId={lead.id} />
+        </TabPanel>
+      )}
+
+      {building && (
+        <TabPanel id="build" active={active}>
+          <ExecutionPanel lead={lead} onChanged={apply} />
+        </TabPanel>
+      )}
+
+      {lead.projectName && (
+        <TabPanel id="demo" active={active}>
+          <DemoPanel leadId={lead.id} clientName={lead.client.company || lead.client.name} hasProject={!!lead.projectName} />
+        </TabPanel>
+      )}
+
+      {lead.quotation && filesOpen && (
+        <TabPanel id="payments" active={active}>
+          <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+            <div className="min-w-0"><HoursPanel lead={lead} onChanged={apply} /></div>
+            {payable && <div className="no-print"><PaymentPanel key={`pay-${lead.updatedAt}`} lead={lead} onChanged={apply} /></div>}
+          </div>
+        </TabPanel>
+      )}
+
+      {/* Internal only: never in the printed or saved quotation */}
+      {lead.quotation && (
+        <TabPanel id="internal" active={active}>
+          <div className="no-print"><LeadCostPanel lead={lead} onConfigure={() => router.push("/pricing")} /></div>
+          <div className="no-print"><RunningServicesEditor key={lead.quotation.id} leadId={lead.id} /></div>
+        </TabPanel>
+      )}
     </div>
   );
 }

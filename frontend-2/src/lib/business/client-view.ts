@@ -16,12 +16,14 @@ export type ClientView = {
   response?: Lead["clientResponse"];
   /** Running services the admin approved for the client (already reduced to client-safe fields). Absent when none. */
   running?: PublicRunningServices;
+  /** A private preview of the website the team made for them (only when it can be opened from outside the team's computer). */
+  demo?: { url: string; expiresAt: string; protected: boolean };
   /** Shown once approved: what to pay and how. */
   payment?: { advanceDue: number; advancePaid: number; advanceRemaining: number; upiId: string; bankDetails: string; payee: string; reference: string };
 };
 
 /** `business`: current business details, so a UPI ID added later still shows. */
-export function clientView(lead: Lead, business: RateCard["business"], running?: PublicRunningServices | null): ClientView | null {
+export function clientView(lead: Lead, business: RateCard["business"], running?: PublicRunningServices | null, demo?: ClientView["demo"] | null): ClientView | null {
   const q = lead.quotation;
   if (!q) return null;
   const scope = q.requirement ?? lead.requirement;
@@ -37,6 +39,7 @@ export function clientView(lead: Lead, business: RateCard["business"], running?:
     requirement: { title: scope.title, summary: scope.summary, pages: scope.pages },
     response: lead.clientResponse,
     ...(running && running.services.length ? { running } : {}),
+    ...(demo ? { demo } : {}),
     payment: ["approved", "advance_paid", "in_development", "testing", "demo_ready"].includes(lead.stage)
       ? (() => {
           const s = paymentStatus(q, lead.payments);
