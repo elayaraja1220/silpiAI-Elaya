@@ -48,14 +48,24 @@ export function sectionsOf(req: Requirement, page: string, rates: RateCard): num
   return n && n > 0 ? Math.min(30, Math.round(n)) : defaultSections(page, rates);
 }
 
+/** True when the styling / UI library works with the frontend ("" = our standard, Next.js). */
+export function stylingFits(rates: RateCard, frontendId: string | undefined, stylingId: string): boolean {
+  const o = rates.technology?.styling?.[stylingId];
+  if (!o) return false;
+  return !o.frameworks?.length || o.frameworks.includes(frontendId || "next");
+}
+
 /** Technology the client picked (valid ids only). Module / version work keeps the existing stack. */
 export function chosenTech(req: Requirement, rates: RateCard) {
-  if (req.scope === "module" || req.scope === "version" || !rates.technology) return {} as Record<"frontend" | "backend" | "database", { label: string; factor: number } | undefined>;
-  const pick = (layer: "frontend" | "backend" | "database") => {
+  if (req.scope === "module" || req.scope === "version" || !rates.technology) return {} as Record<"frontend" | "backend" | "database" | "styling", { label: string; factor: number } | undefined>;
+  const pick = (layer: "frontend" | "backend" | "database" | "styling") => {
     const id = req.tech?.[layer];
-    return id ? rates.technology[layer]?.[id] : undefined;
+    if (!id) return undefined;
+    // A UI library that does not work with the chosen frontend is ignored (the price never counts it).
+    if (layer === "styling" && !stylingFits(rates, req.tech?.frontend, id)) return undefined;
+    return rates.technology[layer]?.[id];
   };
-  return { frontend: pick("frontend"), backend: pick("backend"), database: pick("database") };
+  return { frontend: pick("frontend"), backend: pick("backend"), database: pick("database"), styling: pick("styling") };
 }
 
 /** Hours factor of the technology: the chosen backend replaces the approach's own factor. */
@@ -63,7 +73,7 @@ export function techFactor(req: Requirement, rates: RateCard): number {
   const t = chosenTech(req, rates);
   const backendNeeded = needsBackend(req, rates);
   const stackPart = backendNeeded && t.backend ? t.backend.factor : (rates.stacks[effectiveStack(req, rates)]?.devFactor ?? 1);
-  return stackPart * (t.frontend?.factor ?? 1) * (backendNeeded ? (t.database?.factor ?? 1) : 1);
+  return stackPart * (t.frontend?.factor ?? 1) * (t.styling?.factor ?? 1) * (backendNeeded ? (t.database?.factor ?? 1) : 1);
 }
 
 export function suggestStack(req: Requirement, rates: RateCard): StackSuggestion {
@@ -80,16 +90,16 @@ export function suggestStack(req: Requirement, rates: RateCard): StackSuggestion
   const clientFront = clientLayerIds(req, "frontend");
   const clientBack = clientLayerIds(req, "backend");
   const clientData = clientLayerIds(req, "database");
-  if (tech.frontend || tech.backend || tech.database) notes.push("Technology chosen by the client; the estimate is adjusted for it.");
+  if (tech.frontend || tech.backend || tech.database || tech.styling) notes.push("Technology chosen by the client; the estimate is adjusted for it.");
   if (choice !== "custom") notes.push(approach.note);
   if (req.projectType === "cms-website" && choice === "custom" && !tech.frontend) {
     frontend = "Next.js (React) + SILPI CMS admin";
     notes.push("Built on the SILPI CMS starter (React + Node): pages, posts, media, menus and SEO are editable by the client.");
   }
-  let styling = "Tailwind CSS";
+  let styling = tech.styling?.label ?? "Tailwind CSS";
   if (clientFront.length) {
     frontend = frontendLabel(clientFront);
-    styling = stylingFor(clientFront, styling);
+    styling = tech.styling?.label ?? stylingFor(clientFront, styling);
   }
   if (backendNeeded && clientBack.length) backend = listLabels(clientBack);
   if (backendNeeded && clientData.length) database = listLabels(clientData);

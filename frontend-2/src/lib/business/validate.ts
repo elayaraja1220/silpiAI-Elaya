@@ -120,7 +120,7 @@ export function parseRequirement(input: unknown, rates: RateCard): Requirement {
     ...(parseSelectedStack(r.selectedStack) ? { selectedStack: parseSelectedStack(r.selectedStack) } : {}),
     stack: oneOf(r.stack, STACKS, "custom"),
     tech: Object.fromEntries(
-      (["frontend", "backend", "database"] as const).flatMap((layer) => {
+      (["frontend", "backend", "database", "styling"] as const).flatMap((layer) => {
         const v = obj(r.tech)[layer];
         return typeof v === "string" && rates.technology?.[layer]?.[v] ? [[layer, v]] : [];
       }),

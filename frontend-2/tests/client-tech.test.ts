@@ -40,7 +40,7 @@ describe("what each technology does to the price", () => {
   const c = techChoices(base(), TN, rates, "standard");
 
   it("shows frontend, backend and database, each with 'SILPI chooses' first at no price change", () => {
-    assert.deepEqual(c.layers.map((l) => l.layer), ["frontend", "backend", "database"]);
+    assert.deepEqual(c.layers.map((l) => l.layer), ["frontend", "backend", "database", "styling"]);
     for (const l of c.layers) {
       assert.ok(l.applies);
       assert.equal(l.options[0].id, "");
@@ -182,5 +182,37 @@ describe("approving with a technology choice", () => {
     const hourly = store.createLead(client, parseRequirement({ ...base(), pages: [], modules: [], billing: "hourly", hourly: { role: "Consultant", rate: 1000, estimatedHours: 10, rangePct: 20, cycle: "monthly" } }, store.getRateCard()));
     const done = store.respondAsClient(store.shareToken(hourly.id), { action: "approved", name: "Pat Client", message: "", tech: { frontend: "vue" } });
     assert.deepEqual(done.requirement.tech ?? {}, {}, "no technology is attached to an hourly engagement");
+  });
+});
+
+describe("styling and UI libraries", () => {
+  const c = techChoices(base(), TN, rates, "standard");
+  const styling = layer(c, "styling");
+
+  it("offers Bootstrap, Ant Design, PrimeNG and Material UI, each tagged with the frontends it works with", () => {
+    for (const id of ["bootstrap", "antd", "primeng", "mui", "angular-material", "vuetify", "primevue", "skeleton"]) assert.ok(opt(styling, id), id);
+    assert.deepEqual(opt(styling, "primeng").frameworks, ["angular"]);
+    assert.ok(opt(styling, "antd").frameworks!.includes("react"));
+  });
+  it("covers React, Next.js, Angular, Vue and Svelte frontends", () => {
+    const front = layer(c, "frontend");
+    for (const id of ["next", "react", "angular", "vue", "svelte"]) assert.ok(opt(front, id), id);
+  });
+  it("accepts a UI library that fits the frontend and drops one that does not", () => {
+    assert.deepEqual(parseTechSelection({ frontend: "angular", styling: "primeng" }, base(), rates), { frontend: "angular", styling: "primeng" });
+    assert.deepEqual(parseTechSelection({ frontend: "vue", styling: "primeng" }, base(), rates), { frontend: "vue" });
+    assert.deepEqual(parseTechSelection({ styling: "mui" }, base(), rates), { styling: "mui" }, "no frontend picked = Next.js, which Material UI fits");
+    assert.throws(() => parseTechSelection({ styling: "nope" }, base(), rates), ValidationError);
+  });
+  it("the chosen library shows in the stack and the price follows it", () => {
+    const p = previewTech(base(), TN, rates, "standard", { frontend: "angular", styling: "primeng" });
+    assert.equal(p.stack.styling, "PrimeNG");
+    const plain = previewTech(base(), TN, rates, "standard", { frontend: "angular" });
+    assert.equal(plain.stack.styling, "Tailwind CSS");
+    assert.ok(p.total < plain.total, "a ready-made component library saves hours");
+  });
+  it("a library that does not fit the frontend is never priced or shown", () => {
+    const p = previewTech(base(), TN, rates, "standard", { frontend: "vue", styling: "primeng" });
+    assert.equal(p.stack.styling, "Tailwind CSS");
   });
 });

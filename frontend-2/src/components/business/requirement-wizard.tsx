@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, HelpCircle, Loader2, Plus, ShieldCheck, Sparkles, Star, X } from "lucide-react";
 
-import { buildQuote, formatINR, needsBackend, sectionsOf } from "@/lib/business/pricing";
+import { buildQuote, formatINR, needsBackend, sectionsOf, stylingFits } from "@/lib/business/pricing";
 import { checkBudget } from "@/lib/business/budget";
 import { buildProposals, defaultTier } from "@/lib/business/proposals";
 import type { CostConfig } from "@/lib/business/cost-types";
@@ -638,14 +638,14 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   Leave every choice on &quot;SILPI chooses&quot; if the client does not mind. A different technology changes the development hours, and the estimate updates straight away.
                   {!needsBackend(req, rates) && " This site needs no backend or database, so only the frontend matters."}
                 </p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                  {(["frontend", "backend", "database"] as const).map((layer) => {
-                    const backendLayer = layer !== "frontend";
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {(["frontend", "backend", "database", "styling"] as const).map((layer) => {
+                    const backendLayer = layer === "backend" || layer === "database";
                     const off = backendLayer && !needsBackend(req, rates);
-                    const options = Object.entries(rates.technology?.[layer] ?? {}).filter(([id, o]) => o.available || req.tech?.[layer] === id);
+                    const options = Object.entries(rates.technology?.[layer] ?? {}).filter(([id, o]) => (o.available || req.tech?.[layer] === id) && (layer !== "styling" || stylingFits(rates, req.tech?.frontend, id)));
                     const current = req.tech?.[layer] ? rates.technology[layer][req.tech[layer]!] : undefined;
                     return (
-                      <Field key={layer} label={layer === "frontend" ? "Frontend" : layer === "backend" ? "Backend" : "Database"} hint={current?.detail}>
+                      <Field key={layer} label={layer === "frontend" ? "Frontend" : layer === "backend" ? "Backend" : layer === "database" ? "Database" : "Styling / UI library"} hint={current?.detail}>
                         <Select
                           value={req.tech?.[layer] ?? ""}
                           disabled={off}
@@ -653,6 +653,8 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                             const next = { ...(req.tech ?? {}) };
                             if (e.target.value) next[layer] = e.target.value;
                             else delete next[layer];
+                            // A UI library that does not work with the new frontend is dropped.
+                            if (layer === "frontend" && next.styling && !stylingFits(rates, next.frontend, next.styling)) delete next.styling;
                             setR("tech", next);
                           }}
                         >
@@ -690,7 +692,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   budget={budget}
                   rates={rates}
                   catalog={catalog}
-                  onUse={(ids) => setReq((r) => ({ ...r, selectedStack: { ids } }))}
+                  onUse={(ids) => setReq((r) => { const { tech: _t, ...rest } = r; return { ...rest, selectedStack: { ids } }; })}
                   onConfirm={(ids) => setReq((r) => (r.clientTech ? { ...r, clientTech: { ...r.clientTech, confirmedIds: ids } } : r))}
                   onUndo={() => setReq((r) => (r.clientTech ? { ...r, clientTech: { stated: r.clientTech.stated, ids: r.clientTech.ids } } : r))}
                   onClearSelection={() => setReq((r) => { const { selectedStack: _s, ...rest } = r; return rest; })}

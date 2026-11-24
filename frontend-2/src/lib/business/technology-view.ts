@@ -2,7 +2,7 @@ import { formatINR } from "./pricing";
 import { checkStack, type TechEntry } from "./tech-catalog";
 import { frontendLabel, listLabels, selectedStackIds, stylingFor } from "./tech-preference";
 import type { Recommendation, RecommendedOption } from "./tech-recommend";
-import type { Requirement } from "./types";
+import type { RateCard, Requirement } from "./types";
 
 /**
  * What the technology panel shows (pure, so it can be tested).
@@ -17,6 +17,23 @@ export const SOURCE_LABELS: Record<StackSource, string> = {
   recommended: "Our recommendation",
 };
 
+/** The rate-card frontend a catalog stack uses (the UI libraries on offer depend on it). */
+export function frontendKey(frontendIds: readonly string[]): string {
+  if (frontendIds.includes("angular")) return "angular";
+  if (frontendIds.includes("nextjs")) return "next";
+  if (frontendIds.includes("react")) return "react";
+  return "plain";
+}
+
+/** Popular UI libraries for a frontend, from the rate card (the generic CSS choices are not listed). */
+export function uiLibrariesFor(rates: RateCard | undefined, key: string): string {
+  const styling = rates?.technology?.styling ?? {};
+  return Object.values(styling)
+    .filter((o) => o.available && o.frameworks?.length && o.frameworks.includes(key))
+    .map((o) => o.label)
+    .join(", ");
+}
+
 export type OptionAction = "use" | "confirm" | "selected";
 
 export type TechOptionView = {
@@ -27,6 +44,8 @@ export type TechOptionView = {
   /** Frontend, backend, database, styling and hosting as text. */
   stack: { label: string; value: string }[];
   hostingAlternatives: string;
+  /** UI libraries that work with this frontend (Bootstrap, Material UI, Ant Design...). */
+  uiLibraries: string;
   /** Technology ids without hosting (what the client confirms or the team selects). */
   appIds: string[];
   reasons: string[];
@@ -62,7 +81,7 @@ export type TechnologyView = {
 const cap = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
 
-function optionView(option: RecommendedOption, requirement: Requirement, confirmedAlternative: boolean, requiresConfirmation: boolean, inUseIds: string[]): TechOptionView {
+function optionView(option: RecommendedOption, requirement: Requirement, confirmedAlternative: boolean, requiresConfirmation: boolean, inUseIds: string[], rates?: RateCard): TechOptionView {
   const hostIds = option.stack.hosting.map((h) => h.id);
   const appIds = option.ids.filter((id) => !hostIds.includes(id));
   const front = option.stack.frontend.map((t) => t.id);
@@ -85,6 +104,7 @@ function optionView(option: RecommendedOption, requirement: Requirement, confirm
       { label: "Hosting", value: option.stack.hosting.map((t) => t.label).join(", ") },
     ],
     hostingAlternatives: option.hostingAlternatives.map((h) => h.label).join(", "),
+    uiLibraries: uiLibrariesFor(rates, frontendKey(front)),
     appIds,
     reasons: option.reasons,
     tradeoffs: option.tradeoffs,
@@ -102,11 +122,11 @@ function optionView(option: RecommendedOption, requirement: Requirement, confirm
   };
 }
 
-export function buildTechnologyView(requirement: Requirement, result: Recommendation, catalog: readonly TechEntry[]): TechnologyView {
+export function buildTechnologyView(requirement: Requirement, result: Recommendation, catalog: readonly TechEntry[], rates?: RateCard): TechnologyView {
   const pref = result.clientPreference;
   const confirmed = pref.confirmedAlternative;
   const inUseIds = selectedStackIds(requirement);
-  const options = result.options.map((o) => optionView(o, requirement, confirmed, result.requiresConfirmation, inUseIds));
+  const options = result.options.map((o) => optionView(o, requirement, confirmed, result.requiresConfirmation, inUseIds, rates));
 
   const asked = requirement.clientTech?.stated.join(", ") ?? "";
   const client: TechnologyView["client"] = pref.status === "none" ? null : { stated: asked, status: pref.status, problems: pref.problems, ...(pref.confirmation ? { confirmation: pref.confirmation } : {}) };

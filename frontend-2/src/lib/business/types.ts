@@ -75,9 +75,11 @@ export const STACKS = ["custom", "managed", "starter"] as const;
 export type StackChoice = (typeof STACKS)[number];
 
 /** Technical clients can pick the technology; the estimate updates from these choices. */
-export const TECH_LAYERS = ["frontend", "backend", "database"] as const;
+export const TECH_LAYERS = ["frontend", "backend", "database", "styling"] as const;
 export type TechLayer = (typeof TECH_LAYERS)[number];
-export type TechOption = { label: string; /** Development hours factor against the default (1 = same). */ factor: number; available: boolean; detail: string };
+export type TechOption = { label: string; /** Development hours factor against the default (1 = same). */ factor: number; available: boolean; detail: string;
+  /** Styling / UI libraries only: the frontend ids it works with (empty or missing = all). */
+  frameworks?: string[] };
 
 export const HOSTING_PLANS = ["static", "shared", "vps", "cloud"] as const;
 export type HostingPlan = (typeof HOSTING_PLANS)[number];

@@ -1,4 +1,4 @@
-import { needsBackend } from "./pricing";
+import { needsBackend, stylingFits } from "./pricing";
 import { buildProposals } from "./proposals";
 import { TECH_LAYERS, TIERS, type Client, type RateCard, type Requirement, type TechLayer, type Tier } from "./types";
 import { ValidationError } from "./validate";
@@ -18,6 +18,8 @@ export type TechChoiceOption = {
   id: string;
   label: string;
   detail: string;
+  /** Styling / UI libraries: the frontend ids it works with (empty = all), so the page can hide the ones that do not fit. */
+  frameworks?: string[];
   /** Quotation total incl. GST if this option is picked and the other layers stay as they are. */
   total: number;
   /** total minus the current total: positive = costs more, negative = costs less. */
@@ -46,17 +48,24 @@ export type TechPreview = {
   stack: { frontend: string; backend: string; database: string; styling: string };
 };
 
-const LAYER_LABEL: Record<TechLayer, string> = { frontend: "Frontend", backend: "Backend", database: "Database" };
+const LAYER_LABEL: Record<TechLayer, string> = { frontend: "Frontend", backend: "Backend", database: "Database", styling: "Styling / UI library" };
 
 /** Layers that exist in this project. Module / version work keeps the existing project's stack. */
 export function layerApplies(layer: TechLayer, req: Requirement, rates: RateCard): boolean {
   if (req.scope === "module" || req.scope === "version") return false;
-  return layer === "frontend" ? true : needsBackend(req, rates);
+  return layer === "frontend" || layer === "styling" ? true : needsBackend(req, rates);
 }
 
 /** The selection with only real, applicable layers (a blank value means "SILPI chooses"). */
 const clean = (tech: TechSelection | undefined, req: Requirement, rates: RateCard): TechSelection =>
-  Object.fromEntries(TECH_LAYERS.flatMap((l) => (tech?.[l] && layerApplies(l, req, rates) ? [[l, tech[l]]] : [])));
+  Object.fromEntries(
+    TECH_LAYERS.flatMap((l) => {
+      if (!tech?.[l] || !layerApplies(l, req, rates)) return [];
+      // A UI library only stays when it works with the chosen frontend.
+      if (l === "styling" && !stylingFits(rates, tech.frontend, tech[l]!)) return [];
+      return [[l, tech[l]]];
+    }),
+  );
 
 function priced(req: Requirement, client: Pick<Client, "state">, rates: RateCard, tier: Tier) {
   const proposals = buildProposals(req, client, rates);
@@ -74,6 +83,7 @@ export function techChoices(base: Requirement, client: Pick<Client, "state">, ra
   const layers = TECH_LAYERS.map((layer): TechChoiceLayer => {
     const applies = layerApplies(layer, base, rates);
     const entries = Object.entries(rates.technology?.[layer] ?? {}).filter(([id, o]) => o.available || current[layer] === id);
+    // Options are priced with the other layers as they are now; the page hides UI libraries that do not fit the frontend picked there.
     const total = (id: string) => {
       const next: TechSelection = { ...current };
       if (id) next[layer] = id;
@@ -83,7 +93,7 @@ export function techChoices(base: Requirement, client: Pick<Client, "state">, ra
     const options: TechChoiceOption[] = applies
       ? [
           { id: "", label: "SILPI chooses (our standard)", detail: "The option we recommend for this project.", total: total(""), delta: total("") - now },
-          ...entries.map(([id, o]) => ({ id, label: o.label, detail: o.detail, total: total(id), delta: total(id) - now })),
+          ...entries.map(([id, o]) => ({ id, label: o.label, detail: o.detail, ...(layer === "styling" ? { frameworks: o.frameworks ?? [] } : {}), total: total(id), delta: total(id) - now })),
         ]
       : [];
     return { layer, label: LAYER_LABEL[layer], applies, current: current[layer] ?? "", options };
@@ -102,6 +112,8 @@ export function parseTechSelection(input: unknown, base: Requirement, rates: Rat
     if (typeof v !== "string" || !rates.technology?.[layer]?.[v]?.available) throw new ValidationError(`That ${LAYER_LABEL[layer].toLowerCase()} option is not available.`);
     if (layerApplies(layer, base, rates)) out[layer] = v;
   }
+  // A UI library that does not work with the chosen frontend is dropped (the page already hides it).
+  if (out.styling && !stylingFits(rates, out.frontend, out.styling)) delete out.styling;
   return out;
 }
 

@@ -16,7 +16,7 @@ const tone = (delta: number) => (delta === 0 ? "text-slate-500" : delta > 0 ? "t
  * "Choose your technology": frontend, backend and database, each option with what it does to the price.
  * The prices come from the server; picking something only previews the new total. It is saved when the client approves.
  */
-export function TechnologyChooser({ endpoint, local, tier, value, onApply, onClose, intro = "Pick the frontend, backend and database you prefer. Each option shows how it changes the price compared with this quotation. Nothing is saved until you approve.", applyLabel = "Use this technology", applying = false }: {
+export function TechnologyChooser({ endpoint, local, tier, value, onApply, onClose, intro = "Pick the frontend, backend, database and styling (UI library) you prefer. Each option shows how it changes the price compared with this quotation. Nothing is saved until you approve.", applyLabel = "Use this technology", applying = false }: {
   /** The route that lists the options (GET) and works out a price (POST). */
   endpoint?: string;
   /** Or price in the browser from the requirement itself (the new-quotation wizard, before anything is saved). */
@@ -78,10 +78,18 @@ export function TechnologyChooser({ endpoint, local, tier, value, onApply, onClo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, tier, tech, choices]);
 
+  // UI libraries that work with the frontend picked above (no frontend picked = our standard, Next.js).
+  const fits = (o: TechChoiceLayer["options"][number], frontend: string | undefined) => !o.frameworks?.length || o.frameworks.includes(frontend || "next");
+
   const pick = (layer: TechChoiceLayer["layer"], id: string) => setTech((t) => {
     const next = { ...t };
     if (id) next[layer] = id;
     else delete next[layer];
+    // Changing the frontend drops a UI library that does not work with the new one.
+    if (layer === "frontend" && next.styling) {
+      const chosen = choices?.layers.find((l) => l.layer === "styling")?.options.find((o) => o.id === next.styling);
+      if (chosen && !fits(chosen, next.frontend)) delete next.styling;
+    }
     return next;
   });
 
@@ -101,11 +109,12 @@ export function TechnologyChooser({ endpoint, local, tier, value, onApply, onClo
           {choices?.layers.map((layer) => (
             <section key={layer.layer}>
               <h3 className="text-sm font-semibold text-slate-900">{layer.label}</h3>
+              {layer.layer === "styling" && layer.applies && <p className="mt-0.5 text-xs text-slate-500">Only the libraries that work with your frontend ({tech.frontend ? choices.layers.find((l) => l.layer === "frontend")?.options.find((o) => o.id === tech.frontend)?.label : "Next.js"}) are shown.</p>}
               {!layer.applies ? (
                 <p className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">This project needs no {layer.layer}, so there is nothing to choose.</p>
               ) : (
                 <div className="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={layer.label}>
-                  {layer.options.map((o) => {
+                  {layer.options.filter((o) => layer.layer !== "styling" || fits(o, tech.frontend)).map((o) => {
                     const on = (tech[layer.layer] ?? "") === o.id;
                     return (
                       <button

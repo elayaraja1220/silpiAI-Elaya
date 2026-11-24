@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, ShieldCheck, Undo2 } from "lucide-react";
 
 import type { TechEntry } from "@/lib/business/tech-catalog";
+import { suggestStack } from "@/lib/business/pricing";
 import { recommendTechnology } from "@/lib/business/tech-recommend";
 import { buildTechnologyView, type StackSource, type TechOptionView } from "@/lib/business/technology-view";
 import type { RateCard, Requirement } from "@/lib/business/types";
@@ -52,11 +53,25 @@ export function TechnologyRecommendations({
   const view = useMemo(() => {
     if (!catalog) return null;
     try {
-      return buildTechnologyView(requirement, recommendTechnology(requirement, budget, catalog, rates), catalog);
+      return buildTechnologyView(requirement, recommendTechnology(requirement, budget, catalog, rates), catalog, rates);
     } catch {
       return null;
     }
   }, [requirement, budget, rates, catalog]);
+
+  // What was picked with "Change technology": shown on its own so it is always clear what is in use.
+  const chosen = useMemo(() => {
+    const t = requirement.tech;
+    if (!t || !Object.keys(t).length || requirement.scope === "module" || requirement.scope === "version") return null;
+    const s = suggestStack(requirement, rates);
+    const rows = [
+      { label: "Frontend", value: s.frontend },
+      { label: "Backend", value: s.backend },
+      { label: "Database", value: s.database },
+      { label: "Styling / UI library", value: s.styling },
+    ];
+    return rows;
+  }, [requirement, rates]);
 
   if (!catalog) return <Card className="text-xs text-slate-400">Loading technology options...</Card>;
   if (!view || !view.visible) return null;
@@ -75,7 +90,7 @@ export function TechnologyRecommendations({
             <Cpu size={18} /> Change technology
           </button>
         )}
-        {view.inUse && (
+        {view.inUse && !chosen && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold", SOURCE_STYLE[view.inUse.source])}>
               {view.inUse.source === "client" ? "Client's choice" : view.inUse.source === "client-confirmed" ? "Client-confirmed alternative" : "Our recommendation"}
@@ -85,6 +100,24 @@ export function TechnologyRecommendations({
         )}
         </div>
       </div>
+
+      {chosen && (
+        <div className="rounded-xl border border-emerald-400/50 bg-emerald-500/10 p-3.5 text-xs" data-testid="chosen-technology">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-emerald-100"><CheckCircle2 size={15} /> In use: the technology you chose</p>
+            {onChooseTech && <button type="button" onClick={onChooseTech} className="rounded-md border border-white/15 px-2.5 py-1 text-[11px] font-semibold text-slate-100 hover:bg-white/10">Change</button>}
+          </div>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+            {chosen.map((s) => (
+              <div key={s.label} className="contents">
+                <dt className="text-slate-400">{s.label}</dt>
+                <dd className="text-slate-100">{s.value}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 text-[11px] text-slate-400">The estimate already includes it. Using one of the stacks below instead replaces this choice.</p>
+        </div>
+      )}
 
       {view.client && (
         <div className={cn("rounded-lg border p-3 text-xs", view.client.status === "honoured" ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100" : "border-amber-400/40 bg-amber-500/10 text-amber-100")}>
@@ -113,7 +146,7 @@ export function TechnologyRecommendations({
 
       <ol className="space-y-3">
         {view.options.map((o) => (
-          <OptionCard key={o.key} option={o} onUse={() => onUse(o.appIds)} onConfirm={() => onConfirm(o.appIds)} />
+          <OptionCard key={o.key} option={o} replacing={!!chosen} onUse={() => onUse(o.appIds)} onConfirm={() => onConfirm(o.appIds)} />
         ))}
       </ol>
 
@@ -125,7 +158,7 @@ export function TechnologyRecommendations({
   );
 }
 
-function OptionCard({ option: o, onUse, onConfirm }: { option: TechOptionView; onUse: () => void; onConfirm: () => void }) {
+function OptionCard({ option: o, replacing = false, onUse, onConfirm }: { option: TechOptionView; replacing?: boolean; onUse: () => void; onConfirm: () => void }) {
   const selected = o.action === "selected";
   return (
     <li className={cn("rounded-xl border p-3.5 text-xs", selected ? "border-violet-400/60 bg-violet-500/10" : "border-white/[.08] bg-white/[.02]")}>
@@ -143,7 +176,7 @@ function OptionCard({ option: o, onUse, onConfirm }: { option: TechOptionView; o
             onClick={o.action === "confirm" ? onConfirm : onUse}
             className={cn("rounded-md px-2.5 py-1 text-[11px] font-semibold", o.action === "confirm" ? "bg-amber-400/90 text-slate-900 hover:bg-amber-300" : "bg-violet-500 text-white hover:bg-violet-400")}
           >
-            {o.actionLabel}
+            {replacing && o.action === "use" ? "Use this instead" : o.actionLabel}
           </button>
         )}
       </div>
@@ -156,6 +189,7 @@ function OptionCard({ option: o, onUse, onConfirm }: { option: TechOptionView; o
           </div>
         ))}
       </dl>
+      {o.uiLibraries && <p className="mt-1 text-[11px] text-slate-500">UI libraries that fit: {o.uiLibraries}. Pick one with Change technology.</p>}
       {o.hostingAlternatives && <p className="mt-1 text-[11px] text-slate-500">Other suitable hosting: {o.hostingAlternatives}</p>}
 
       <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px] text-slate-300">
