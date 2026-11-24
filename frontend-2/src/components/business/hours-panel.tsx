@@ -7,6 +7,7 @@ import { EXTRA_WORK, accuracy, hoursReport, quotedItems } from "@/lib/business/h
 import type { Lead, Stage } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
 
+import { HourlyProgress } from "./hourly-terms-card";
 import { Card, jsonFetch } from "./ui";
 
 type History = { fromStage: Stage | null; toStage: Stage; note: string; at: string }[];
@@ -53,6 +54,8 @@ export function HoursPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { l
           {report.actual > 0 && <span className={cn("ml-1.5 font-semibold", over ? "text-rose-300" : "text-emerald-300")}>{over ? "+" : ""}{report.variancePct}%</span>}
         </p>
       </div>
+
+      {lead.quotation?.hourly && <HourlyProgress terms={lead.quotation.hourly} worked={report.actual} />}
 
       <div className="grid gap-2 sm:grid-cols-[1fr_90px_130px]">
         <select value={item} onChange={(e) => setItem(e.target.value)} className={field}>

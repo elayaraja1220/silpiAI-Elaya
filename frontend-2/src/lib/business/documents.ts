@@ -14,10 +14,11 @@ import {
 } from "docx";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 
+import { deferredTexts } from "./clarifications";
 import { formatINR } from "./pricing";
 import { seoAdvice } from "./seo";
 import { CHOICE_LABELS } from "./services";
-import type { Quotation, Requirement } from "./types";
+import { BILLING_CYCLE_LABELS, type Quotation, type Requirement } from "./types";
 
 /**
  * Server-only. Turns a saved quotation into a downloadable PDF or Word file.
@@ -35,10 +36,16 @@ type Block =
 const date = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
 /** Common outline of the quotation document. */
-function outline(q: Quotation, fallback: Requirement, running?: PublicRunningServices | null): { title: string; meta: string[]; from: string[]; to: string[]; blocks: Block[] } {
+function outline(q: Quotation, fallback: Requirement, running?: PublicRunningServices | null, deferred: string[] = fallback.insights?.tracker ? deferredTexts(fallback.insights.tracker) : []): { title: string; meta: string[]; from: string[]; to: string[]; blocks: Block[] } {
   const req = q.requirement ?? fallback;
   const money = formatINR;
   const blocks: Block[] = [];
+  // Items left out of the price on purpose: stated first, so the client cannot assume they are included.
+  if (deferred.length > 0) {
+    blocks.push({ kind: "heading", text: "Not included in this price" });
+    blocks.push({ kind: "text", text: "We do not yet have enough clear information to estimate the items below. They are NOT part of this quotation. Once they are clear, we will send a separate quotation for them." });
+    blocks.push({ kind: "bullets", items: deferred });
+  }
 
   blocks.push({ kind: "heading", text: req.title });
   blocks.push({ kind: "text", text: req.summary });
@@ -51,6 +58,26 @@ function outline(q: Quotation, fallback: Requirement, running?: PublicRunningSer
       q.totalHours ? `${q.totalHours} development hours` : "",
     ].filter(Boolean).join("  |  "),
   });
+
+  const hourly = q.hourly;
+  if (hourly) {
+    blocks.push({ kind: "heading", text: "Hourly engagement terms" });
+    blocks.push({
+      kind: "pairs",
+      rows: [
+        { label: "Who works", value: hourly.role },
+        { label: "Rate", value: `${money(hourly.rate)} per hour (before GST)` },
+        { label: `Estimate (${hourly.expectedHours} h)`, value: money(hourly.expectedTotal) },
+        { label: `Lowest (${hourly.minHours} h)`, value: money(hourly.minTotal) },
+        { label: `Not to exceed (${hourly.capHours} h)`, value: money(hourly.capTotal), bold: true },
+      ],
+    });
+    blocks.push({ kind: "bullets", items: [
+      `Billed for the hours actually worked, ${BILLING_CYCLE_LABELS[hourly.cycle]}.`,
+      `We will not bill beyond ${hourly.capHours} hours without your written approval.`,
+      "The log of hours worked is available to you at any time.",
+    ] });
+  }
 
   if (q.proposals?.length) {
     blocks.push({ kind: "heading", text: "Proposals to choose from" });
@@ -98,12 +125,12 @@ function outline(q: Quotation, fallback: Requirement, running?: PublicRunningSer
   if (q.gst.mode === "inter") totals.push({ label: `IGST @ ${q.gst.rate}%`, value: money(q.gst.igst) });
   if (q.gst.mode === "export") totals.push({ label: "GST: export of services (zero-rated, under LUT)", value: money(0) });
   if (q.roundOff !== 0) totals.push({ label: "Round off", value: money(q.roundOff) });
-  totals.push({ label: "Development grand total", value: money(q.grandTotal), bold: true });
+  totals.push({ label: hourly ? "Estimated total" : "Development grand total", value: money(q.grandTotal), bold: true });
   blocks.push({ kind: "pairs", rows: totals });
-  blocks.push({ kind: "text", muted: true, text: "Domain and hosting charges are not included in website development pricing. These services are billed separately." });
+  if (!hourly) blocks.push({ kind: "text", muted: true, text: "Domain and hosting charges are not included in website development pricing. These services are billed separately." });
 
   // B and C: separately billed services, never part of the development total.
-  const services = q.services;
+  const services = hourly ? undefined : q.services;
   if (services) {
     const section = (letter: string, title: string, choice: string, est: typeof services.domain.estimate) => {
       blocks.push({ kind: "heading", text: `${letter}. ${title} (separate, optional)` });
@@ -135,8 +162,8 @@ function outline(q: Quotation, fallback: Requirement, running?: PublicRunningSer
     blocks.push({ kind: "text", muted: true, text: running.note });
   }
 
-  blocks.push({ kind: "heading", text: "Technology" });
-  blocks.push({
+  if (!hourly) blocks.push({ kind: "heading", text: "Technology" });
+  if (!hourly) blocks.push({
     kind: "bullets",
     items: [
       ...(q.stack.approach ? [`Approach: ${q.stack.approach}`] : []),
@@ -149,14 +176,14 @@ function outline(q: Quotation, fallback: Requirement, running?: PublicRunningSer
   });
 
   const seo = q.seo ?? seoAdvice(req);
-  blocks.push({ kind: "heading", text: "SEO" });
-  blocks.push({ kind: "text", bold: true, text: "Included in every website" });
-  blocks.push({ kind: "bullets", items: seo.included });
-  if (seo.recommended.length) {
+  if (!hourly) blocks.push({ kind: "heading", text: "SEO" });
+  if (!hourly) blocks.push({ kind: "text", bold: true, text: "Included in every website" });
+  if (!hourly) blocks.push({ kind: "bullets", items: seo.included });
+  if (!hourly && seo.recommended.length) {
     blocks.push({ kind: "text", bold: true, text: "Recommended for this project" });
     blocks.push({ kind: "bullets", items: seo.recommended });
   }
-  if (seo.keywords.length) blocks.push({ kind: "text", text: `Target search phrases: ${seo.keywords.join(", ")}` });
+  if (!hourly && seo.keywords.length) blocks.push({ kind: "text", text: `Target search phrases: ${seo.keywords.join(", ")}` });
 
   if (q.deferred) {
     blocks.push({ kind: "heading", text: "Phase 2 (not in this quotation)" });
@@ -170,9 +197,13 @@ function outline(q: Quotation, fallback: Requirement, running?: PublicRunningSer
     items: [
       ...(q.business.upiId ? [`Pay by UPI to ${q.business.upiId} with the note ${q.number}.`] : []),
       ...(q.business.bankDetails ? [`Bank transfer: ${q.business.bankDetails.replace(/\n+/g, ", ")}`] : []),
-      "Work starts once the advance is received. Every page is tested automatically and shown in a demo before the balance is due.",
-      "Source code, build files and hosting set-up are handed over after full payment.",
-      "Domain and hosting are billed separately from development, at the provider's rates, and renew yearly.",
+      ...(hourly
+        ? ["Work starts once the advance is received. The advance is adjusted in the final bill against the hours actually worked."]
+        : [
+            "Work starts once the advance is received. Every page is tested automatically and shown in a demo before the balance is due.",
+            "Source code, build files and hosting set-up are handed over after full payment.",
+            "Domain and hosting are billed separately from development, at the provider's rates, and renew yearly.",
+          ]),
       `This quotation is valid until ${date(q.validUntil)}.`,
     ],
   });

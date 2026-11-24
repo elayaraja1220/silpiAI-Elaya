@@ -2,14 +2,18 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { getDb, transaction } from "./db";
 import { buildQuote } from "./pricing";
+import { applyClientTech, describeTech, parseTechSelection, type TechSelection } from "./client-tech";
+import { buildHourlyQuote, isHourly } from "./hourly";
 import { buildProposals, compareProposals, defaultTier, toSummary } from "./proposals";
 import { DEFAULT_RATE_CARD } from "./rate-card";
 import { checkBudget } from "./budget";
 import { applyCostPatch, emptyCostConfig, parseCostConfig } from "./cost-config";
 import type { CostConfig, CostConfigPatch } from "./cost-types";
 import { buildCatalog, mergeTechOverrides, parseTechOverrides, type TechEntry, type TechOverrides } from "./tech-catalog";
+import { estimateStatus, confirmedTexts, deferredTexts, legacyLists, type ClarificationItem, type InsightDecision } from "./clarifications";
 import { parseRateCard, ValidationError } from "./validate";
 import { paymentStatus } from "./payment-status";
+import { MODULES, type ModuleId } from "./types";
 import type { Client, ClientResponse, Lead, Payment, PaymentKind, PaymentMode, Quotation, RateCard, Requirement, Stage, Tier, WorkEntry } from "./types";
 
 /** Server-only data access for the business workflow. */
@@ -169,12 +173,15 @@ function recordStage(leadId: string, from: Stage | null, to: Stage, note = ""): 
  * Saves a new quotation for the lead with all three proposals and the chosen
  * one priced in full, and moves the lead to "quoted".
  */
-function issueQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requirement">, tier: Tier | undefined, discount: number, note: string): Quotation {
+function issueQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requirement">, tier: Tier | undefined, discount: number, note: string, clampDiscount = false): Quotation {
   const rates = getRateCard();
+  if (isHourly(lead.requirement)) return issueHourlyQuotation(lead, discount, note, rates);
   const proposals = buildProposals(lead.requirement, lead.client, rates);
   const chosen = proposals.find((p) => p.tier === (tier ?? defaultTier(proposals, lead.requirement.budget)))!;
   // Only a discount the team approves is applied, never one made up to fit the budget.
   const maxDiscount = Math.floor((chosen.quote.subtotal * rates.maxDiscountPercent) / 100);
+  // A discount the team already gave is kept when the price moves (never above the limit); a new one that is too big is refused.
+  if (clampDiscount) discount = Math.min(discount, maxDiscount);
   if (discount > maxDiscount) {
     throw new ValidationError(`The discount can be at most ${rates.maxDiscountPercent}% (₹${maxDiscount}). Change the limit in Business & pricing.`);
   }
@@ -215,6 +222,34 @@ function issueQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requiremen
   return quotation;
 }
 
+/** Hourly engagement: one quotation (rate, estimated hours and cap), no packages to choose from, no discount. */
+function issueHourlyQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requirement">, discount: number, note: string, rates: RateCard): Quotation {
+  if (discount > 0) throw new ValidationError("An hourly quotation is priced by its rate. Change the rate instead of adding a discount.");
+  const created = new Date();
+  const quotation: Quotation = {
+    ...buildHourlyQuote(lead.requirement, lead.client, rates),
+    id: randomUUID(),
+    number: nextQuoteNumber(),
+    leadId: lead.id,
+    createdAt: created.toISOString(),
+    validUntil: new Date(created.getTime() + rates.quoteValidityDays * 86_400_000).toISOString(),
+    business: rates.business,
+    client: lead.client,
+    requirement: lead.requirement,
+  };
+  const db = getDb();
+  db.prepare("INSERT INTO quotations (id, lead_id, number, data, created_at) VALUES (?, ?, ?, ?, ?)").run(quotation.id, lead.id, quotation.number, JSON.stringify(quotation), quotation.createdAt);
+  const label = `${quotation.number} · hourly engagement${note ? ` (${note})` : ""}`;
+  if (lead.stage !== "quoted") {
+    db.prepare("UPDATE leads SET stage = 'quoted', updated_at = ? WHERE id = ?").run(now(), lead.id);
+    recordStage(lead.id, lead.stage, "quoted", label);
+  } else {
+    db.prepare("UPDATE leads SET updated_at = ? WHERE id = ?").run(now(), lead.id);
+    recordStage(lead.id, "quoted", "quoted", label);
+  }
+  return quotation;
+}
+
 /** Saves the requirement and issues its first quotation in one step. */
 export function createLead(client: Client, requirement: Requirement, tier?: Tier): Lead {
   const id = randomUUID();
@@ -241,10 +276,28 @@ const MANUAL_TRANSITIONS: Partial<Record<Stage, Stage[]>> = {
   lost: ["requirement"],
 };
 
+/**
+ * A quotation is final only when nothing that needs a decision is open: no critical question, no proposed requirement and no
+ * assumption waiting for approval. Until then it is a preliminary estimate and cannot be approved.
+ */
+export function assertFinalAllowed(lead: Pick<Lead, "requirement">): void {
+  const status = estimateStatus(lead.requirement.insights?.tracker ?? []);
+  if (status.level === "preliminary") {
+    const b = status.blockers;
+    const parts = [
+      b.criticalQuestions ? `${b.criticalQuestions} critical question${b.criticalQuestions === 1 ? "" : "s"} still unanswered` : "",
+      b.proposals ? `${b.proposals} new requirement${b.proposals === 1 ? "" : "s"} waiting for a decision` : "",
+      b.assumptions ? `${b.assumptions} assumption${b.assumptions === 1 ? "" : "s"} waiting for approval` : "",
+    ].filter(Boolean);
+    throw new StageError(`This is a preliminary estimate, not a final quotation yet: ${parts.join(", ")}. It can be approved once these are settled.`);
+  }
+}
+
 export function setStage(id: string, to: Stage, note = ""): Lead {
   transaction((db) => {
     const lead = getLead(id);
     if (!lead) throw new StageError("Project not found.");
+    if (to === "approved") assertFinalAllowed(lead);
     if (!MANUAL_TRANSITIONS[lead.stage]?.includes(to)) {
       throw new StageError(`Cannot move from "${lead.stage}" to "${to}".`);
     }
@@ -271,11 +324,96 @@ export function requote(id: string, discount: number): Lead {
   return getLead(id)!;
 }
 
+/**
+ * The team sets the technology (frontend, backend, database) for the current quotation, with the same rules and prices as the client's
+ * own choice: known options only, the price follows the technology, a discount already given is kept (never above the limit).
+ */
+export function setTechnology(id: string, tech: TechSelection): Lead {
+  transaction((db) => {
+    const lead = getLead(id);
+    assertEditable(lead);
+    if (isHourly(lead.requirement)) throw new ValidationError("An hourly engagement has no website technology to choose.");
+    const rates = getRateCard();
+    const picked = parseTechSelection(tech, lead.requirement, rates);
+    const next = applyClientTech(lead.requirement, picked, rates);
+    db.prepare("UPDATE leads SET requirement = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), id);
+    issueQuotation({ ...lead, requirement: next }, lead.quotation?.tier, lead.quotation?.discount ?? 0, `technology: ${describeTech(picked, rates)}`, true);
+  });
+  return getLead(id)!;
+}
+
+/**
+ * The team's decision on a requirement the AI proposed from a gap in the document (or on one of its assumptions):
+ * accept it into the scope, reject it, or mark it as needing the client's clarification.
+ * Accepting an item that maps to a feature adds that feature, so the quotation is priced again (a new version; the old one is kept);
+ * rejecting it later takes the feature out again.
+ */
+export function decideInsight(id: string, itemId: string, decision: InsightDecision): Lead {
+  transaction((db) => {
+    const lead = getLead(id);
+    assertEditable(lead);
+    const insights = lead.requirement.insights;
+    const item = insights?.tracker?.find((i) => i.id === itemId);
+    if (!insights?.tracker || !item) throw new ValidationError("That item was not found.");
+    if (item.kind === "requirement") throw new ValidationError("A requirement the client's document states needs no decision.");
+    // An open question can only be set aside (priced later) or put back; the other decisions are for proposals and assumptions.
+    if (item.kind === "question" && decision !== "defer" && decision !== "reset") throw new ValidationError("A question is answered by the client; you can only start without it or undo that.");
+
+    const rates = getRateCard();
+    const status: ClarificationItem["status"] =
+      decision === "accept" ? "confirmed" : decision === "reject" ? "rejected" : decision === "clarify" ? "needs-clarification" : decision === "defer" ? "deferred" : item.kind === "question" ? "unanswered" : "pending-approval";
+    let modules = lead.requirement.modules;
+    let mustHave = lead.requirement.mustHave ?? [];
+    let applied = item.appliedModule === true;
+    const moduleId = item.kind === "discovered" && item.module && (MODULES as readonly string[]).includes(item.module) && rates.modules[item.module as ModuleId] ? (item.module as ModuleId) : null;
+    if (moduleId && !isHourly(lead.requirement)) {
+      if (status === "confirmed" && !modules.includes(moduleId)) {
+        // An accepted requirement is agreed scope: it goes into every package, so it is a must-have too.
+        modules = [...modules, moduleId];
+        mustHave = [...new Set([...mustHave, moduleId])];
+        applied = true;
+      } else if (status !== "confirmed" && applied) {
+        modules = modules.filter((m) => m !== moduleId);
+        mustHave = mustHave.filter((m) => m !== moduleId);
+        applied = false;
+      }
+    }
+    const tracker: ClarificationItem[] = insights.tracker.map((i) => {
+      if (i.id !== itemId) return i;
+      const { appliedModule: _drop, ...rest } = i;
+      return { ...rest, status, ...(applied ? { appliedModule: true } : {}) };
+    });
+    const lists = legacyLists(tracker);
+    const next: Requirement = {
+      ...lead.requirement,
+      modules,
+      mustHave,
+      insights: { ...insights, tracker, confirmed: tracker.some((i) => i.kind === "requirement") ? confirmedTexts(tracker) : insights.confirmed, questions: lists.questions, assumptions: lists.assumptions },
+    };
+    db.prepare("UPDATE leads SET requirement = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), id);
+    const label = `Decision: ${{ accept: "accepted", reject: "rejected", clarify: "needs the client's clarification", defer: "left out of the price, to be quoted separately later", reset: "back to pending" }[decision]} - ${item.text.slice(0, 120)}`;
+    if (modules.length !== lead.requirement.modules.length) {
+      // The scope changed, so the price is worked out again from it (a new quotation version; earlier ones stay on record).
+      issueQuotation({ ...lead, requirement: next }, lead.quotation?.tier, lead.quotation?.discount ?? 0, label, true);
+    } else {
+      recordStage(id, lead.stage, lead.stage, label);
+    }
+  });
+  return getLead(id)!;
+}
+
+/** Every version of the lead's quotation, oldest first: the history of the estimate. */
+export function quotationVersions(leadId: string): Quotation[] {
+  const rows = getDb().prepare("SELECT data FROM quotations WHERE lead_id = ? ORDER BY created_at ASC, rowid ASC").all(leadId) as QuoteRow[];
+  return rows.map((r) => JSON.parse(r.data) as Quotation);
+}
+
 /** Makes one of the three proposals the quotation. */
 export function chooseTier(id: string, tier: Tier): Lead {
   transaction(() => {
     const lead = getLead(id);
     assertEditable(lead);
+    if (isHourly(lead.requirement)) throw new ValidationError("An hourly engagement has no packages to choose from.");
     issueQuotation(lead, tier, 0, "proposal changed");
   });
   return getLead(id)!;
@@ -309,7 +447,7 @@ export function getLeadByToken(token: string): Lead | null {
  * The client's answer through the link: approve a proposal (which becomes
  * the quotation and locks it) or ask for changes (the team re-quotes).
  */
-export function respondAsClient(token: string, response: Omit<ClientResponse, "at">): Lead {
+export function respondAsClient(token: string, response: Omit<ClientResponse, "at" | "acknowledgedDeferred"> & { tech?: TechSelection; acknowledgeDeferred?: boolean }): Lead {
   let leadId = "";
   transaction((db) => {
     const lead = getLeadByToken(token);
@@ -318,12 +456,36 @@ export function respondAsClient(token: string, response: Omit<ClientResponse, "a
     if (new Date(lead.quotation.validUntil).getTime() < Date.now()) {
       throw new StageError("This quotation has expired. Please ask us for a fresh one.");
     }
+    // The client cannot approve a price that is still a preliminary estimate.
+    if (response.action === "approved") assertFinalAllowed(lead);
     leadId = lead.id;
-    const record: ClientResponse = { ...response, at: now() };
+    // Items left out of the price must be acknowledged before approving; what the client was shown is recorded as it stood then.
+    const deferred = deferredTexts(lead.requirement.insights?.tracker ?? []);
+    if (response.action === "approved" && deferred.length > 0 && response.acknowledgeDeferred !== true) {
+      throw new ValidationError("Please confirm that you understand the items listed as not included in this price.");
+    }
+    const { tech, acknowledgeDeferred: _ack, ...answer } = response;
+    const record: ClientResponse = { ...answer, at: now(), ...(response.action === "approved" && deferred.length > 0 ? { acknowledgedDeferred: deferred } : {}) };
     db.prepare("UPDATE leads SET client_response = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(record), now(), lead.id);
 
     if (response.action === "approved") {
-      if (response.tier && response.tier !== lead.quotation.tier) {
+      // The client may have chosen their own technology on the page: it is applied, and the quotation is priced again with it.
+      let priced: Pick<Lead, "id" | "stage" | "client" | "requirement"> = lead;
+      let techNote = "";
+      if (tech && !isHourly(lead.requirement)) {
+        const rates = getRateCard();
+        const picked = parseTechSelection(tech, lead.requirement, rates);
+        const next = applyClientTech(lead.requirement, picked, rates);
+        if (JSON.stringify(next.tech ?? {}) !== JSON.stringify(lead.requirement.tech ?? {})) {
+          db.prepare("UPDATE leads SET requirement = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), lead.id);
+          priced = { ...lead, requirement: next };
+          techNote = describeTech(picked, rates);
+        }
+      }
+      if (techNote) {
+        issueQuotation(priced, response.tier ?? lead.quotation.tier, lead.quotation.discount, "technology chosen by client", true);
+        recordStage(lead.id, "quoted", "quoted", `Client chose the technology: ${techNote}`);
+      } else if (response.tier && response.tier !== lead.quotation.tier) {
         issueQuotation(lead, response.tier, 0, "chosen by client");
       }
       db.prepare("UPDATE leads SET stage = 'approved', updated_at = ? WHERE id = ?").run(now(), lead.id);
@@ -417,13 +579,14 @@ export function markReadyForDelivery(id: string, note: string): Lead {
   transaction((db) => {
     const lead = getLead(id);
     if (!lead) throw new StageError("Project not found.");
-    if (lead.stage !== "in_development" && lead.stage !== "testing") {
+    if (lead.stage !== "in_development" && lead.stage !== "testing" && lead.stage !== "demo_ready") {
       throw new StageError("Only a project in development can be marked ready for delivery.");
     }
     const approved = db
       .prepare("SELECT 1 AS ok FROM exec_jobs WHERE lead_id = ? AND state = 'completed' AND json_extract(review, '$.status') = 'approved' LIMIT 1")
       .get(id) as { ok: number } | undefined;
     if (!approved) throw new StageError("Review and approve the generated project first.");
+    if (lead.stage === "demo_ready") return; // a rebuilt project that was already demo ready stays there
     db.prepare("UPDATE leads SET stage = 'demo_ready', updated_at = ? WHERE id = ?").run(now(), id);
     recordStage(id, lead.stage, "demo_ready", note);
   });

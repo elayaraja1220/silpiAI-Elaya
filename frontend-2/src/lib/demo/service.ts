@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import http from "node:http";
+import path from "node:path";
 
 import { getLead } from "@/lib/business/store";
 import { ValidationError } from "@/lib/business/validate";
+import { appDirOf, hasSeparateBackend } from "@/lib/execution/app-dir";
 import { assertContained, resolveWorkspace, workspaceRoot } from "@/lib/execution/workspace";
 import { ExecError } from "@/lib/execution/types";
 
@@ -46,14 +48,19 @@ export type DemoDeps = {
 };
 
 /** `npm run build` in a clean environment (no SILPI secrets), with a time limit. */
-export function runBuild(dir: string, timeoutMs = 5 * 60_000): Promise<{ ok: boolean; message: string }> {
+export function runBuild(dir: string, timeoutMs = 10 * 60_000): Promise<{ ok: boolean; message: string }> {
   return new Promise((resolve) => {
     let tail = "";
-    const child = spawn("npm run build", { cwd: dir, shell: true, windowsHide: true, env: cleanEnv({}), stdio: ["ignore", "pipe", "pipe"] });
+    // Fixed commands only. Dependencies are installed first when the folder has none (scripts of the project are not run while installing).
+    // (--include=dev: the demo environment sets NODE_ENV=production, which would otherwise skip the build tools.)
+    const options: SpawnOptions = { cwd: dir, shell: true, windowsHide: true, env: cleanEnv({}), stdio: ["ignore", "pipe", "pipe"] };
+    const child = existsSync(path.join(dir, "node_modules"))
+      ? spawn("npm run build", options)
+      : spawn("npm install --include=dev --ignore-scripts --no-audit --no-fund && npm run build", options);
     const keep = (c: Buffer) => { tail = (tail + c.toString("utf8")).slice(-600); };
     child.stdout?.on("data", keep);
     child.stderr?.on("data", keep);
-    const timer = setTimeout(() => { child.kill(); resolve({ ok: false, message: "The build took longer than 5 minutes and was stopped." }); }, timeoutMs);
+    const timer = setTimeout(() => { child.kill(); resolve({ ok: false, message: "The build took longer than 10 minutes and was stopped." }); }, timeoutMs);
     child.once("error", (e) => { clearTimeout(timer); resolve({ ok: false, message: e.message }); });
     child.once("exit", (code) => { clearTimeout(timer); resolve({ ok: code === 0, message: tail.trim() }); });
   });
@@ -113,21 +120,24 @@ export async function createDemo(leadId: string, options: CreateOptions, deps: D
     throw e;
   }
 
-  let found = detectProject(dir);
-  if (found.mode === "none" && hasBuildScript(dir)) {
-    const built = await deps.build(dir);
+  // A full-stack project keeps its website in a sub-folder (frontend/): that is what the demo builds and shows.
+  const webDir = appDirOf(dir);
+  let found = detectProject(webDir);
+  if (found.mode === "none" && hasBuildScript(webDir)) {
+    const built = await deps.build(webDir);
     if (!built.ok) throw new ValidationError(`The project could not be built for the demo. ${built.message.slice(-300)}`.trim());
-    found = detectProject(dir);
+    found = detectProject(webDir);
   }
   if (found.mode === "none") throw new ValidationError(found.reason);
 
   const id = randomUUID();
-  const base: DemoReport = { framework: found.framework, files: 0, bytes: 0, redactions: 0, warnings: [], pages: 0, broken: [], unverified: [], truncated: false, checked: true };
+  const frontendOnly = hasSeparateBackend(dir) ? ["Frontend-only demo: the project's separate server and database are not run, so forms, sign-in and the admin area will not work here."] : [];
+  const base: DemoReport = { framework: found.framework, files: 0, bytes: 0, redactions: 0, warnings: frontendOnly, pages: 0, broken: [], unverified: [], truncated: false, checked: true };
 
   if (found.mode === "static") {
     const dest = siteDir(id);
     try {
-      const copy = snapshotSite(found.outputDir, dest, readEnvValues(dir));
+      const copy = snapshotSite(found.outputDir, dest, readEnvValues(webDir));
       if (resolveStatic(dest, "/").kind !== "file") throw new ValidationError("The built website has no home page (index.html).");
       const hits = scanForSecrets(dest);
       const blocking = hits.filter((h) => h.severity === "block");
@@ -138,7 +148,7 @@ export async function createDemo(leadId: string, options: CreateOptions, deps: D
       const crawl = await crawlSite(staticFetcher(dest, found.spa));
       const report: DemoReport = {
         ...base, files: copy.files, bytes: copy.bytes, redactions: copy.redactions, pages: crawl.pages, broken: crawl.broken, unverified: crawl.unverified, truncated: crawl.truncated,
-        warnings: [...hits.filter((h) => h.severity === "warn").map((h) => `${h.file} has ${h.kind}.`), ...(copy.redactions ? [`${copy.redactions} private value${copy.redactions === 1 ? "" : "s"} from the project's .env file were replaced with a placeholder.`] : [])],
+        warnings: [...frontendOnly, ...hits.filter((h) => h.severity === "warn").map((h) => `${h.file} has ${h.kind}.`), ...(copy.redactions ? [`${copy.redactions} private value${copy.redactions === 1 ? "" : "s"} from the project's .env file were replaced with a placeholder.`] : [])],
       };
       const row = insertDemo({ id, leadId, label: opts.label, mode: "static", framework: found.framework, projectName: lead.projectName, spa: found.spa, password: opts.password, showToClient: opts.showToClient, days: opts.days, report });
       await startGateway();
@@ -150,15 +160,15 @@ export async function createDemo(leadId: string, options: CreateOptions, deps: D
   }
 
   // A framework that needs a running server: start it privately, check it, leave it to start again on demand.
-  const entry = { id, app_dir: dir, start_command: found.startCommand };
+  const entry = { id, app_dir: webDir, start_command: found.startCommand };
   try {
     const port = await startApp(entry, { timeoutMs: 120_000 });
     const crawl = await crawlSite(httpFetcher(port), 150);
     const report: DemoReport = {
       ...base, pages: crawl.pages, broken: crawl.broken, unverified: crawl.unverified, truncated: crawl.truncated,
-      warnings: ["This site runs as an app. It was started with demo settings only (no real keys), but its files cannot be scanned for secrets like a static site."],
+      warnings: [...frontendOnly, "This site runs as an app. It was started with demo settings only (no real keys), but its files cannot be scanned for secrets like a static site."],
     };
-    const row = insertDemo({ id, leadId, label: opts.label, mode: "app", framework: found.framework, projectName: lead.projectName, spa: false, appDir: dir, startCommand: found.startCommand, password: opts.password, showToClient: opts.showToClient, days: opts.days, report });
+    const row = insertDemo({ id, leadId, label: opts.label, mode: "app", framework: found.framework, projectName: lead.projectName, spa: false, appDir: webDir, startCommand: found.startCommand, password: opts.password, showToClient: opts.showToClient, days: opts.days, report });
     await startGateway();
     return toView(row);
   } catch (error) {

@@ -4,22 +4,28 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Printer, RefreshCw, RotateCcw, Trash2, XCircle } from "lucide-react";
 
+import { AnalysisPanel } from "@/components/business/analysis-panel";
+import { deferredTexts, type InsightDecision } from "@/lib/business/clarifications";
+import { documentsOf } from "@/lib/business/requirement-view";
 import { DeleteLeadDialog } from "@/components/business/delete-lead-dialog";
 import { AssetsPanel } from "@/components/business/assets-panel";
 import { DemoPanel } from "@/components/business/demo-panel";
-import { JourneyStepper, LeadTabBar, NextSteps, TabPanel, type TabDef, type TabId } from "@/components/business/lead-tabs";
-import { assetProgress, assetsOpen } from "@/lib/business/assets";
+import { JourneyStepper, LeadTabBar, NextSteps, TabPanel, type FilesProgress, type TabDef, type TabId } from "@/components/business/lead-tabs";
+import { assetsOpen, isDesignKey } from "@/lib/business/assets";
 import { ExecutionPanel } from "@/components/business/execution-panel";
 import { BudgetSummary } from "@/components/business/budget-summary";
 import { AccuracyCard, HoursPanel } from "@/components/business/hours-panel";
 import { LeadCostPanel } from "@/components/business/cost-panel";
+import { TechnologyChooser } from "@/components/business/technology-chooser";
 import { RunningServicesEditor } from "@/components/business/running-services-editor";
+import { HourlyTermsCard } from "@/components/business/hourly-terms-card";
 import { PaymentPanel, ProposalsPanel, SharePanel } from "@/components/business/proposals-panel";
 import { QuotationDocument } from "@/components/business/quotation-document";
+import { BillingModePicker, HourlyEngagementForm } from "@/components/business/hourly-engagement-form";
 import { RequirementWizard } from "@/components/business/requirement-wizard";
 import { Card, Input, StageBadge, jsonFetch } from "@/components/business/ui";
 import { formatINR } from "@/lib/business/pricing";
-import { STAGE_LABELS, type Lead, type RequirementInsights, type Stage } from "@/lib/business/types";
+import { STAGE_LABELS, type BillingMode, type Lead, type Quote, type RequirementInsights, type Stage } from "@/lib/business/types";
 import { formatRelativeTime } from "@/lib/utils";
 
 type History = { fromStage: Stage | null; toStage: Stage; note: string; at: string }[];
@@ -84,11 +90,11 @@ export function ClientsPage() {
                 <tr key={lead.id} onClick={() => router.push(`/clients/${lead.id}`)} className="cursor-pointer border-b border-white/[.04] transition hover:bg-white/[.03]">
                   <td className="px-5 py-3">
                     <p className="font-medium text-slate-100">{lead.requirement.title}</p>
-                    <p className="text-xs capitalize text-slate-500">{lead.requirement.scope} · {lead.requirement.projectType.replace("-", " ")}</p>
+                    <p className="text-xs capitalize text-slate-500">{lead.requirement.billing === "hourly" ? "Hourly engagement" : `${lead.requirement.scope} · ${lead.requirement.projectType.replace("-", " ")}`}</p>
                   </td>
                   <td className="px-5 py-3 text-slate-300">{lead.client.company || lead.client.name}</td>
                   <td className="px-5 py-3 text-slate-400">{lead.quotation?.number ?? "—"}</td>
-                  <td className="px-5 py-3 text-right tabular-nums text-slate-200">{lead.quotation ? formatINR(lead.quotation.grandTotal) : "—"}</td>
+                  <td className="px-5 py-3 text-right tabular-nums text-slate-200">{lead.quotation ? <>{formatINR(lead.quotation.grandTotal)}{lead.quotation.hourly && <span className="ml-1 text-[10px] text-slate-500">est.</span>}</> : "—"}</td>
                   <td className="px-5 py-3"><StageBadge stage={lead.stage} /></td>
                   <td className="px-5 py-3 text-xs text-slate-500">{formatRelativeTime(lead.updatedAt)}</td>
                   <td className="px-3 py-3 text-right">
@@ -109,7 +115,17 @@ export function ClientsPage() {
 /** Page: /clients/new */
 export function NewRequirementPage() {
   const router = useRouter();
-  return <RequirementWizard onCancel={() => router.push("/clients")} onCreated={(lead) => router.push(`/clients/${lead.id}`)} />;
+  const [billing, setBilling] = useState<BillingMode>("fixed");
+  const cancel = () => router.push("/clients");
+  const created = (lead: Lead) => router.push(`/clients/${lead.id}`);
+  // Both stay mounted so a half-filled fixed-price form is not lost when you look at the other one.
+  return (
+    <div className="space-y-5">
+      <BillingModePicker mode={billing} onChange={setBilling} />
+      <div className={billing === "fixed" ? "" : "hidden"}><RequirementWizard onCancel={cancel} onCreated={created} /></div>
+      {billing === "hourly" && <HourlyEngagementForm onCancel={cancel} onCreated={created} />}
+    </div>
+  );
 }
 
 /** Page: /clients/[id] */
@@ -123,6 +139,7 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [lead, setLead] = useState<Lead | null>(null);
   const [history, setHistory] = useState<History>([]);
   const [discount, setDiscount] = useState("");
+  const [techOpen, setTechOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -130,7 +147,8 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
   // One section at a time. The tab is kept in the address (#files, #build...) so a refresh or a shared link opens the same place.
   const [tab, setTab] = useState<TabId>("summary");
-  const [files, setFiles] = useState<{ sent: number; total: number } | null>(null);
+  const [files, setFiles] = useState<FilesProgress | null>(null);
+  const [genRequest, setGenRequest] = useState(0);
   useEffect(() => {
     const wanted = window.location.hash.slice(1);
     if (wanted) setTab(wanted as TabId);
@@ -143,8 +161,9 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const filesOpen = !!lead && assetsOpen(lead.stage);
   useEffect(() => {
     if (!filesOpen) return;
-    jsonFetch<{ assets: { status: string }[] }>(`/api/business/leads/${id}/assets`)
-      .then((r) => { const p = assetProgress(r.assets as never); setFiles({ sent: p.sent, total: p.total }); })
+    // "Uploaded" means the item has any file or text, whoever added it and whether or not it was checked yet.
+    jsonFetch<{ assets: { key: string; files: unknown[]; text: string }[] }>(`/api/business/leads/${id}/assets`)
+      .then((r) => setFiles({ withContent: r.assets.filter((a) => a.files.length > 0 || a.text.trim().length > 0).length, total: r.assets.length, hasDesign: r.assets.some((a) => isDesignKey(a.key) && a.files.length > 0) }))
       .catch(() => {});
   }, [id, filesOpen, tab]);
 
@@ -180,7 +199,7 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const tabs: TabDef[] = [
     { id: "summary", label: "Summary" },
     ...(lead.quotation ? [{ id: "quotation" as const, label: "Quotation" }] : []),
-    ...(lead.quotation && filesOpen ? [{ id: "files" as const, label: "Client files", hint: files ? `${files.sent}/${files.total}` : undefined }] : []),
+    ...(lead.quotation && filesOpen ? [{ id: "files" as const, label: "Client files & design", hint: files ? `${files.withContent}/${files.total}` : undefined }] : []),
     ...(building ? [{ id: "build" as const, label: "Build" }] : []),
     ...(lead.projectName ? [{ id: "demo" as const, label: "Demo preview" }] : []),
     ...(lead.quotation && filesOpen ? [{ id: "payments" as const, label: "Payments & hours" }] : []),
@@ -219,12 +238,12 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
           <div className="min-w-0">
             <p className="text-[11px] uppercase tracking-[.18em] text-violet-300">{lead.quotation ? `Quotation ${lead.quotation.number}` : "No quotation yet"}</p>
             <h2 className="mt-1 text-lg font-semibold leading-snug text-slate-100">{lead.requirement.title}</h2>
-            <p className="mt-0.5 text-sm text-slate-400">{lead.client.company || lead.client.name} · <span className="capitalize">{lead.requirement.projectType.replace(/-/g, " ")}</span></p>
+            <p className="mt-0.5 text-sm text-slate-400">{lead.client.company || lead.client.name} · {lead.requirement.billing === "hourly" ? <span>Hourly engagement · {lead.requirement.hourly?.role}</span> : <span className="capitalize">{lead.requirement.projectType.replace(/-/g, " ")}</span>}</p>
           </div>
           {lead.quotation && (
             <div className="text-right">
               <p className="text-2xl font-semibold tabular-nums text-white">{formatINR(lead.quotation.grandTotal)}</p>
-              <p className="text-[11px] text-slate-500">incl. GST</p>
+              <p className="text-[11px] text-slate-500">{lead.quotation.hourly ? "estimate, incl. GST" : "incl. GST"}</p>
             </div>
           )}
         </div>
@@ -255,7 +274,19 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
               ))}
             </ol>
           </Card>
-          {lead.requirement.insights && <div className="lg:col-span-2"><InsightsCard insights={lead.requirement.insights} /></div>}
+          {lead.requirement.insights && (
+            <div className="lg:col-span-2">
+              <InsightsCard
+                leadId={lead.id}
+                insights={lead.requirement.insights}
+                quotation={lead.quotation}
+                documents={documentsOf(lead.requirement.references)}
+                refreshKey={lead.updatedAt}
+                busy={busy === "insight"}
+                onDecide={(itemId, decision) => run("insight", `/api/business/leads/${lead.id}/insights`, "PATCH", { itemId, decision })}
+              />
+            </div>
+          )}
         </div>
         {!lead.quotation && <Card className="text-sm text-slate-400">No quotation yet.</Card>}
       </TabPanel>
@@ -265,10 +296,10 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
         <TabPanel id="quotation" active={active}>
           {lead.quotation.budgetCheck && lead.quotation.budgetCheck.status !== "none" && <BudgetSummary check={lead.quotation.budgetCheck} />}
           <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
-            <div className="min-w-0"><ProposalsPanel lead={lead} editable={editable} onChanged={apply} /></div>
+            <div className="min-w-0">{lead.quotation.hourly ? <HourlyTermsCard lead={lead} /> : <ProposalsPanel lead={lead} editable={editable} onChanged={apply} />}</div>
             <div className="no-print space-y-5">
               <SharePanel key={lead.updatedAt} lead={lead} onChanged={apply} />
-              {editable && (
+              {editable && !lead.quotation.hourly && (
                 <Card className="space-y-3">
                   <p className="text-xs font-semibold text-slate-300">Adjust & re-price</p>
                   <p className="text-[11px] text-slate-500">Re-prices the selected proposal with the current rate card; creates a new quotation number.</p>
@@ -281,19 +312,36 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
             </div>
           </div>
           <p className="no-print pt-2 text-[11px] font-semibold uppercase tracking-[.15em] text-slate-500">What the client sees</p>
-          <QuotationDocument quotation={lead.quotation} requirement={lead.requirement} />
+          <QuotationDocument
+            quotation={lead.quotation}
+            requirement={lead.requirement}
+            deferred={deferredTexts(lead.requirement.insights?.tracker ?? [])}
+            techAction={editable && !lead.quotation.hourly ? { onChoose: () => setTechOpen(true) } : undefined}
+          />
+          {techOpen && (
+            <TechnologyChooser
+              endpoint={`/api/business/leads/${id}/technology`}
+              tier={lead.quotation.tier ?? "standard"}
+              value={null}
+              intro="Set the frontend, backend and database for this quotation. Each option shows how it changes the price. Applying it prices the quotation again with a new number; any discount you gave is kept."
+              applyLabel="Apply to the quotation"
+              applying={busy === "technology"}
+              onClose={() => setTechOpen(false)}
+              onApply={async (tech) => { await run("technology", `/api/business/leads/${id}/technology`, "PUT", { tech }); setTechOpen(false); }}
+            />
+          )}
         </TabPanel>
       )}
 
       {lead.quotation && filesOpen && (
         <TabPanel id="files" active={active}>
-          <AssetsPanel leadId={lead.id} />
+          <AssetsPanel leadId={lead.id} again={!!lead.projectName} onGenerate={building ? () => setGenRequest((n) => n + 1) : undefined} />
         </TabPanel>
       )}
 
       {building && (
         <TabPanel id="build" active={active}>
-          <ExecutionPanel lead={lead} onChanged={apply} />
+          <ExecutionPanel lead={lead} onChanged={apply} contentCount={files?.withContent ?? null} contentTotal={files?.total ?? 0} hasDesign={files?.hasDesign} onGoToFiles={() => go("files")} generateRequest={genRequest} onStarted={() => go("build")} />
         </TabPanel>
       )}
 
@@ -324,22 +372,12 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
 }
 
 /** What the AI separated out of the documents: still useful while talking to the client. */
-function InsightsCard({ insights }: { insights: RequirementInsights }) {
-  const groups = [
-    { title: "Confirmed", items: insights.confirmed, color: "text-emerald-300" },
-    { title: "Assumed: confirm", items: insights.assumptions, color: "text-amber-300" },
-    { title: "Unanswered: ask", items: insights.questions, color: "text-rose-300" },
-  ].filter((g) => g.items.length);
-  if (!groups.length) return null;
+function InsightsCard({ leadId, insights, quotation, documents, refreshKey, busy, onDecide }: { leadId: string; insights: RequirementInsights; quotation?: Quote; documents: string[]; refreshKey: string; busy: boolean; onDecide: (itemId: string, decision: InsightDecision) => void }) {
+  if (!insights.confirmed.length && !insights.questions.length && !insights.assumptions.length && !insights.tracker?.length) return null;
   return (
     <Card>
       <p className="text-xs font-semibold text-slate-300">From the client&apos;s documents</p>
-      {groups.map((g) => (
-        <details key={g.title} className="mt-2 text-xs" open={g.title.startsWith("Unanswered")}>
-          <summary className={`cursor-pointer ${g.color}`}>{g.title} ({g.items.length})</summary>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-400">{g.items.map((i) => <li key={i}>{i}</li>)}</ul>
-        </details>
-      ))}
+      <div className="mt-2"><AnalysisPanel leadId={leadId} insights={insights} quotation={quotation} documents={documents} refreshKey={refreshKey} busy={busy} onDecide={onDecide} /></div>
     </Card>
   );
 }

@@ -5,11 +5,15 @@ import { CheckCircle2, FileText, FolderInput, Loader2, Trash2, Upload } from "lu
 
 import { BrandStyleEditor, BrandStyleSummary } from "@/components/business/brand-style-editor";
 import {
+  MIN_BRAND_COLORS,
+  isBrandStyleText,
+  parseBrandStyle,
   ACCEPT_ATTRIBUTE,
   ASSET_GROUPS,
   ASSET_STATUS_LABELS,
   MAX_FILE_BYTES,
   assetProgress,
+  designKeyOfContent,
   formatBytes,
   type AssetStatus,
   type ClientAsset,
@@ -81,7 +85,7 @@ export function ClientAssets({ token }: { token: string }) {
 
   return (
     <section className="rounded-2xl bg-white p-5 shadow-sm sm:p-6" id="send-files">
-      <h2 className="flex items-center gap-2 font-semibold text-slate-900"><FolderInput size={18} className="text-violet-600" /> Send us your original files and content</h2>
+      <h2 className="flex items-center gap-2 font-semibold text-slate-900"><FolderInput size={18} className="text-violet-600" /> Send us your original files, designs and content</h2>
       <p className="mt-1 text-sm text-slate-500">
         To build your website we need your own logo, images and the real content for every page. Add whatever you have below, one item at a time. Anything you do not have yet can be sent later: you can come back to this page any time.
       </p>
@@ -95,21 +99,33 @@ export function ClientAssets({ token }: { token: string }) {
 
       <div className="mt-5 space-y-6">
         {ASSET_GROUPS.map((group) => {
+          // A page's design is shown beside its content (below), so it has no list of its own.
+          if (group === "Page design" && assets.some((a) => a.group === "Page content")) return null;
           const items = assets.filter((a) => a.group === group);
           if (!items.length) return null;
           return (
             <div key={group}>
-              {group !== "Brand" && <h3 className="text-xs font-semibold uppercase tracking-[.15em] text-slate-400">{group}</h3>}
+              {group !== "Brand" && <h3 className="text-xs font-semibold uppercase tracking-[.15em] text-slate-400">{group === "Page content" ? "Pages: design and content" : group}</h3>}
               {group === "Brand" ? (
-                // Logo, mobile logo, favicon, colours and fonts: one section
-                <div className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200">
-                  <div className="bg-slate-50 px-4 py-3">
-                    <p className="text-sm font-semibold text-slate-900">Brand identity</p>
-                    <p className="mt-0.5 text-xs text-slate-500">Your logos, favicon, colours and fonts in one place.</p>
-                  </div>
-                  {items.map((a, i) => (
-                    <Item key={a.id + a.updatedAt} embedded step={i + 1} asset={a} busy={busy === a.id} onUpload={(f) => upload(a.id, f)} onText={(t) => saveText(a.id, t)} onRemove={(fid) => removeFile(a.id, fid)} />
-                  ))}
+                // Logos, fonts and colours: one section with three tabs
+                <BrandClient items={items} busyId={busy} onUpload={upload} onText={saveText} onRemove={removeFile} />
+              ) : group === "Page content" ? (
+                <div className="mt-2 space-y-4">
+                  {items.map((content) => {
+                    const design = assets.find((a) => a.key === designKeyOfContent(content.key));
+                    const page = content.label.replace(/ page: original content$/, "");
+                    return (
+                      <div key={content.id} className="overflow-hidden rounded-xl border border-slate-200" data-testid="page-row">
+                        <p className="border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-900">{page}</p>
+                        <div className={`grid divide-y divide-slate-200 ${design ? "md:grid-cols-2 md:divide-x md:divide-y-0" : ""}`}>
+                          {design && (
+                            <Item key={design.id + design.updatedAt} embedded asset={design} busy={busy === design.id} titleOverride="Design" hintOverride={`The design of the ${page} page: a PNG, JPG or PDF.`} onUpload={(f) => upload(design.id, f)} onText={(t) => saveText(design.id, t)} onRemove={(fid) => removeFile(design.id, fid)} />
+                          )}
+                          <Item key={content.id + content.updatedAt} embedded asset={content} busy={busy === content.id} titleOverride="Content document" onUpload={(f) => upload(content.id, f)} onText={(t) => saveText(content.id, t)} onRemove={(fid) => removeFile(content.id, fid)} />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="mt-2 space-y-3">
@@ -126,7 +142,7 @@ export function ClientAssets({ token }: { token: string }) {
   );
 }
 
-function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, step }: { asset: ClientAsset; busy: boolean; embedded?: boolean; step?: number; onUpload: (f: FileList) => void; onText: (t: string) => void; onRemove: (fileId: string) => void }) {
+function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, step, brandPart, titleOverride, hintOverride, showUpload = true }: { asset: ClientAsset; busy: boolean; embedded?: boolean; step?: number; brandPart?: "colors" | "fonts"; titleOverride?: string; hintOverride?: string; showUpload?: boolean; onUpload: (f: FileList) => void; onText: (t: string) => void; onRemove: (fileId: string) => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(a.text);
   const locked = a.status === "received";
@@ -138,8 +154,8 @@ function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, st
     <div className={embedded ? `p-4 ${locked ? "bg-emerald-50/50" : a.status === "redo" ? "bg-amber-50/60" : ""}` : `rounded-xl border p-4 ${locked ? "border-emerald-200 bg-emerald-50/50" : a.status === "redo" ? "border-amber-300 bg-amber-50/60" : "border-slate-200"}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">{step && <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-600">{step}</span>}{a.label}</p>
-          <p className="mt-0.5 max-w-xl text-xs leading-5 text-slate-500">{a.hint}</p>
+          <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">{step && <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-600">{step}</span>}{titleOverride ?? a.label}</p>
+          <p className="mt-0.5 max-w-xl text-xs leading-5 text-slate-500">{hintOverride ?? a.hint}</p>
         </div>
         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLE[a.status]}`}>
           {locked && <CheckCircle2 size={12} />} {ASSET_STATUS_LABELS[a.status]}
@@ -148,7 +164,7 @@ function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, st
 
       {a.status === "redo" && a.note && <p className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900"><b>Please send again:</b> {a.note}</p>}
 
-      {a.files.length > 0 && (
+      {a.files.length > 0 && (!brand || showUpload) && (
         <ul className="mt-3 space-y-1.5">
           {a.files.map((f) => (
             <li key={f.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
@@ -163,7 +179,7 @@ function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, st
 
       {!locked && (
         <div className="mt-3 space-y-3">
-          {takesFiles && (
+          {takesFiles && (!brand || showUpload) && (
             <div>
               <input ref={input} type="file" multiple accept={ACCEPT_ATTRIBUTE} hidden onChange={(e) => { if (e.target.files?.length) onUpload(e.target.files); e.target.value = ""; }} />
               <button type="button" disabled={busy} onClick={() => input.current?.click()} className="flex items-center gap-2 rounded-lg border border-dashed border-violet-400 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-60">
@@ -172,7 +188,7 @@ function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, st
               <p className="mt-1 text-[11px] text-slate-400">Images, PDF, Word, Excel, design files, font files (WOFF2, WOFF, TTF, OTF) or a ZIP. Up to {MAX_FILE_BYTES / 1048576} MB each.</p>
             </div>
           )}
-          {brand && <BrandStyleEditor key={a.updatedAt} value={a.text} busy={busy} tone="light" onSave={onText} />}
+          {brand && <BrandStyleEditor key={a.updatedAt} value={a.text} busy={busy} tone="light" part={brandPart ?? "all"} onSave={onText} />}
           {takesText && !brand && (
             <div>
               <textarea value={text} onChange={(e) => setText(e.target.value)} rows={a.kind === "text" ? 5 : 3} maxLength={20000} placeholder={a.kind === "text" ? "Type or paste here" : "Or type / paste the text here"} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-violet-500" />
@@ -184,6 +200,58 @@ function Item({ asset: a, busy, onUpload, onText, onRemove, embedded = false, st
         </div>
       )}
       {locked && a.text.trim() && (brand ? <BrandStyleSummary value={a.text} tone="light" /> : <p className="mt-3 line-clamp-3 whitespace-pre-wrap text-xs text-slate-500">{a.text}</p>)}
+    </div>
+  );
+}
+
+/** The client's brand identity: logos, fonts and colours as three tabs, so each one is a small, clear task. */
+function BrandClient({ items, busyId, onUpload, onText, onRemove }: { items: ClientAsset[]; busyId: string; onUpload: (id: string, f: FileList) => void; onText: (id: string, t: string) => void; onRemove: (id: string, fileId: string) => void }) {
+  const [tab, setTab] = useState<"logos" | "fonts" | "colors">("logos");
+  const logos = items.filter((a) => a.key !== "brand-style");
+  const style = items.find((a) => a.key === "brand-style");
+  const parsed = style && isBrandStyleText(style.text) ? parseBrandStyle(style.text) : null;
+  const colorCount = parsed ? parsed.colors.slice(0, MIN_BRAND_COLORS).filter(Boolean).length : 0;
+  const fontCount = parsed ? parsed.fonts.filter((f) => f.name).length : 0;
+  const showFontFiles = !!style && (style.files.length > 0 || !!parsed?.fonts.some((f) => f.source === "imported"));
+  const tabs = [
+    { id: "logos" as const, label: "Logos", note: `${logos.filter((a) => a.files.length > 0).length}/${logos.length}` },
+    { id: "fonts" as const, label: "Fonts", note: fontCount ? String(fontCount) : "none yet" },
+    { id: "colors" as const, label: "Colours", note: `${colorCount}/${MIN_BRAND_COLORS}` },
+  ];
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200">
+      <div className="bg-slate-50 px-4 pt-3">
+        <p className="text-sm font-semibold text-slate-900">Brand identity</p>
+        <p className="mt-0.5 text-xs text-slate-500">Your logos, fonts and colours. Add whatever you have; each tab is separate.</p>
+        <div role="tablist" aria-label="Brand identity" className="mt-3 flex gap-1">
+          {tabs.map((t) => (
+            <button key={t.id} role="tab" aria-selected={tab === t.id} type="button" onClick={() => setTab(t.id)} className={`flex items-center gap-2 rounded-t-lg border border-b-0 px-4 py-2 text-sm font-medium transition ${tab === t.id ? "border-slate-200 bg-white text-violet-700" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
+              {t.label} <span className={`rounded-full px-1.5 text-[10px] ${tab === t.id ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-600"}`}>{t.note}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="divide-y divide-slate-200 border-t border-slate-200 bg-white">
+        {tab === "logos" && logos.map((a, i) => (
+          <Item key={a.id + a.updatedAt} embedded step={i + 1} asset={a} busy={busyId === a.id} onUpload={(f) => onUpload(a.id, f)} onText={(t) => onText(a.id, t)} onRemove={(fid) => onRemove(a.id, fid)} />
+        ))}
+        {tab !== "logos" && style && (
+          <Item
+            key={style.id + style.updatedAt}
+            embedded
+            asset={style}
+            busy={busyId === style.id}
+            brandPart={tab}
+            titleOverride={tab === "fonts" ? "Fonts" : "Colours"}
+            hintOverride={tab === "fonts" ? "Pick fonts from Google Fonts or Adobe Fonts, or give your own font as @font-face CSS. Add another font with the button." : "Give at least 9 colour codes, like #0B3D91. Add more if your brand has them."}
+            showUpload={tab === "fonts" && showFontFiles}
+            onUpload={(f) => onUpload(style.id, f)}
+            onText={(t) => onText(style.id, t)}
+            onRemove={(fid) => onRemove(style.id, fid)}
+          />
+        )}
+      </div>
     </div>
   );
 }

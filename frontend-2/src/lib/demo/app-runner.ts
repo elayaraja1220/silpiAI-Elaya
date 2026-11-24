@@ -1,5 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import net from "node:net";
+import path from "node:path";
 
 import type { DemoRow } from "./store";
 
@@ -12,6 +14,19 @@ import type { DemoRow } from "./store";
 export const MAX_RUNNING_APPS = 3;
 /** The only command a demo ever runs. It is a constant: nothing from a request or from the database is run as a command. */
 export const DEMO_START_COMMAND = "npm run start";
+/**
+ * The command a demo runs: always `npm run start`. Some generated sites hard-code a port in their start script (`next start -p 3000`),
+ * which ignores the free port picked here and collides with SILPI itself; then the same flag is passed again with the picked port,
+ * and the last one wins. The only thing ever added is that flag and a whole number made here, never anything from a request.
+ */
+export function startCommandFor(appDir: string, port: number): string {
+  let flag = "";
+  try {
+    const start = (JSON.parse(readFileSync(path.join(appDir, "package.json"), "utf8")) as { scripts?: { start?: unknown } }).scripts?.start;
+    if (typeof start === "string") flag = /(^|\s)--port[ =]\d+/.test(start) ? "--port" : /(^|\s)-p[ =]?\d+/.test(start) ? "-p" : "";
+  } catch { /* no readable package.json: run it as it is */ }
+  return flag ? `${DEMO_START_COMMAND} -- ${flag} ${Math.trunc(port)}` : DEMO_START_COMMAND;
+}
 export const IDLE_STOP_MS = 20 * 60 * 1000;
 const START_TIMEOUT_MS = 90_000;
 
@@ -111,7 +126,7 @@ export function startApp(demo: Pick<DemoRow, "id" | "app_dir" | "start_command">
   entry.ready = (async () => {
     const port = await freePort();
     entry.port = port;
-    const child = spawn(DEMO_START_COMMAND, {
+    const child = spawn(startCommandFor(demo.app_dir, port), {
       cwd: demo.app_dir,
       shell: true,
       windowsHide: true,

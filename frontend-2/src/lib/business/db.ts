@@ -161,6 +161,28 @@ CREATE TABLE IF NOT EXISTS demo_links (
 );
 CREATE INDEX IF NOT EXISTS demo_links_lead ON demo_links(lead_id, created_at);
 
+-- A document analysed before: the same documents and notes always give the same draft (and so the same estimate).
+CREATE TABLE IF NOT EXISTS analysis_cache (
+  key        TEXT PRIMARY KEY,
+  draft      TEXT NOT NULL,
+  model      TEXT NOT NULL DEFAULT '',
+  cost_usd   REAL NOT NULL DEFAULT 0,
+  runs       INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+
+-- The chat between the client (on their quotation link) and the team. "read" means the other side has seen the message.
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  sender  TEXT NOT NULL,
+  name    TEXT NOT NULL DEFAULT '',
+  text    TEXT NOT NULL,
+  at      TEXT NOT NULL,
+  read    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS chat_lead ON chat_messages(lead_id, id);
+
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL

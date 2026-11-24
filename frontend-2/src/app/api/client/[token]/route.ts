@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import type { TechSelection } from "@/lib/business/client-tech";
 import { allowResponse, clientView } from "@/lib/business/client-view";
 import { handle } from "@/lib/business/http";
 import { clientDemoInfo } from "@/lib/demo/service";
@@ -43,7 +44,9 @@ export async function POST(request: NextRequest, context: Context) {
     if (action === "approved" && body.agree !== true) throw new ValidationError("Please accept the payment terms to approve.");
     if (action === "changes_requested" && message.length < 5) throw new ValidationError("Tell us what you would like to change.");
     const tier = TIERS.includes(body.tier as Tier) ? (body.tier as Tier) : undefined;
-    const lead = respondAsClient(token, { action, tier, name, message });
+    // Only when approving; checked against the available options again on the server, and priced by the server, never by the browser.
+    const tech = action === "approved" && body.tech && typeof body.tech === "object" ? (body.tech as TechSelection) : undefined;
+    const lead = respondAsClient(token, { action, tier, name, message, acknowledgeDeferred: body.acknowledgeDeferred === true, ...(tech ? { tech } : {}) });
     return { view: clientView(lead, getRateCard().business, publicRunningFor(lead.id), clientDemoInfo(lead.id)) };
   });
 }

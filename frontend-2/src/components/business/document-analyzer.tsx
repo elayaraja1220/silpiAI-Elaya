@@ -10,7 +10,18 @@ const ACCEPT = ".docx,.pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv";
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
-export type AnalysisOutcome = { draft: RequirementDraft; files: string[]; model: string; costUsd: number };
+export type AnalysisOutcome = {
+  draft: RequirementDraft;
+  files: string[];
+  model: string;
+  costUsd: number;
+  /** The same documents were analysed before: the saved result is used, so the estimate is the same. */
+  cached?: boolean;
+  /** How many readings the draft is the agreement of. */
+  runs?: number;
+  /** Fewer readings than a majority succeeded; the result was not kept. */
+  partial?: boolean;
+};
 
 /**
  * "Start from a document": upload the client's requirement files, the AI
@@ -42,9 +53,9 @@ export function DocumentAnalyzer({ onDraft, children }: { onDraft: (outcome: Ana
       files.forEach((f) => body.append("files", f));
       body.append("notes", notes);
       const response = await fetch("/api/business/analyze", { method: "POST", body });
-      const result = (await response.json().catch(() => ({}))) as { success?: boolean; error?: string; draft?: RequirementDraft; model?: string; costUsd?: number };
+      const result = (await response.json().catch(() => ({}))) as { success?: boolean; error?: string; draft?: RequirementDraft; model?: string; costUsd?: number; cached?: boolean; runs?: number; partial?: boolean };
       if (!result.success || !result.draft) throw new Error(result.error || `Analysis failed (${response.status}).`);
-      onDraft({ draft: result.draft, files: files.map((f) => f.name), model: result.model ?? "", costUsd: result.costUsd ?? 0 });
+      onDraft({ draft: result.draft, files: files.map((f) => f.name), model: result.model ?? "", costUsd: result.costUsd ?? 0, cached: result.cached, runs: result.runs, partial: result.partial });
     } catch (e) {
       setError((e as Error).message);
     } finally {

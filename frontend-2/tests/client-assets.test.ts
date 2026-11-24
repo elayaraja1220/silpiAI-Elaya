@@ -248,6 +248,71 @@ describe("using what the client uploaded", () => {
     assert.match(md, /- Mobile logo/);
     assert.match(md, /Placeholder/);
     assert.equal(readFileSync(path.join(out, ".silpi", "client-assets", "brand", "logo", "My Logo.png"), "utf8"), "LOGO");
+    assert.equal(exported.design, undefined, "no design reference was sent");
+    assert.ok(!exported.missing.some((l) => /design/i.test(l)), "a design reference is optional, so it is never listed as missing");
+  });
+
+  it("a design reference is handed over as the design to follow: its own section at the top, and listed for the generator", async () => {
+    const m = await mods();
+    const { id, token } = await newLead();
+    m.store.setStage(id, "approved", "test");
+    const ctx = { params: Promise.resolve({ token }) };
+    const items = (await body(await m.clientRoute.GET(get(`/api/client/${token}/assets`), ctx))).assets!;
+    const design = items.find((a) => a.key === "design-reference");
+    assert.ok(design, "the checklist has a design reference item");
+    const { buildChecklist: checklist } = await import("@/lib/business/assets");
+    const template = checklist(requirement({ pages: ["Home"] })).find((i) => i.key === "design-reference")!;
+    assert.equal(template.group, "Design");
+    assert.equal(template.kind, "both");
+    await m.clientRoute.POST(upload(`/api/client/${token}/assets`, design!.id, [{ name: "home page.png", data: "HOME" }, { name: "phone.jpg", data: "PHONE" }, { name: "notes.txt", data: "n" }]), ctx);
+    await m.clientRoute.POST(json(`/api/client/${token}/assets`, { assetId: design!.id, text: "Copy the layout and colours; use our own words." }), ctx);
+    await m.clientRoute.POST(json(`/api/client/${token}/assets`, { assetId: items.find((a) => a.key === "page:home")!.id, text: "Welcome" }), ctx);
+
+    const out = path.join(root, "project-design");
+    const exported = m.assets.exportContent(id, out);
+    assert.deepEqual(exported.design, [".silpi/client-assets/design/design-reference/home page.png", ".silpi/client-assets/design/design-reference/phone.jpg"], "only images and PDFs are the reference");
+    assert.ok(!exported.missing.some((l) => /design/i.test(l)));
+    const { readFileSync } = await import("node:fs");
+    const md = readFileSync(path.join(out, ".silpi", "client-content.md"), "utf8");
+    assert.ok(md.indexOf("## Design reference: reproduce this design completely") > 0 && md.indexOf("## Design reference") < md.indexOf("## Page content"), "the design comes before everything else");
+    assert.match(md, /Do not place them on a page as pictures/);
+    assert.match(md, /Copy the layout and colours; use our own words\./);
+    assert.match(md, /\.silpi\/client-assets\/design\/design-reference\/phone\.jpg/);
+    assert.equal(readFileSync(path.join(out, ".silpi", "client-assets", "design", "design-reference", "phone.jpg"), "utf8"), "PHONE");
+    assert.ok(!/### Design reference/.test(md), "it is not listed again as an ordinary item");
+  });
+
+  it("every page has its own design beside its content, and the design is handed to the generator as that page's design", async () => {
+    const { buildChecklist: checklist, designKeyOfContent } = await import("@/lib/business/assets");
+    const list = checklist(requirement({ pages: ["Home", "About Us"] }));
+    for (const page of ["home", "about-us"]) {
+      const design = list.find((i) => i.key === `design:${page}`)!;
+      assert.ok(design, `a design item for ${page}`);
+      assert.equal(design.kind, "files");
+      assert.equal(design.group, "Page design");
+      assert.equal(designKeyOfContent(`page:${page}`), `design:${page}`);
+    }
+
+    const m = await mods();
+    const { id, token } = await newLead();
+    m.store.setStage(id, "approved", "test");
+    const ctx = { params: Promise.resolve({ token }) };
+    const items = (await body(await m.clientRoute.GET(get(`/api/client/${token}/assets`), ctx))).assets!;
+    const home = items.find((a) => a.key === "design:home")!;
+    assert.ok(home, "an existing approved project gets the page designs too");
+    await m.clientRoute.POST(upload(`/api/client/${token}/assets`, home.id, [{ name: "home-design.png", data: "HOMEDESIGN" }]), ctx);
+    await m.clientRoute.POST(json(`/api/client/${token}/assets`, { assetId: items.find((a) => a.key === "page:home")!.id, text: "Welcome" }), ctx);
+
+    const out = path.join(root, "project-page-design");
+    const exported = m.assets.exportContent(id, out);
+    assert.deepEqual(exported.design, [".silpi/client-assets/page-design/design-home/home-design.png"]);
+    assert.ok(!exported.missing.some((l) => /page: design/.test(l)), "a page without a design is not 'missing': designs are optional");
+    const { readFileSync } = await import("node:fs");
+    const md = readFileSync(path.join(out, ".silpi", "client-content.md"), "utf8");
+    assert.match(md, /home-design\.png`.*\(the design of the Home page\)/);
+    assert.ok(md.indexOf("## Design reference") < md.indexOf("## Page content"), "the designs come before the content");
+    assert.equal(readFileSync(path.join(out, ".silpi", "client-assets", "page-design", "design-home", "home-design.png"), "utf8"), "HOMEDESIGN");
+    assert.ok(!/### Home page: design/.test(md), "a design is not listed again as ordinary content");
   });
 
   it("with nothing uploaded the export still works and lists everything as missing", async () => {

@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  ExternalLink,
   Code2,
   FilePlus2,
   FolderOpen,
@@ -26,7 +27,9 @@ import {
 } from "lucide-react";
 
 import { DeleteLeadDialog } from "@/components/business/delete-lead-dialog";
+import { demoApi } from "@/components/business/demo-panel";
 import { LiveDemosCard } from "@/components/business/live-demos-card";
+import type { DemoView } from "@/lib/demo/service";
 import { jsonFetch } from "@/components/business/ui";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatINR } from "@/lib/business/pricing";
@@ -141,6 +144,14 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       .catch((e: Error) => { setLeads([]); setError(e.message); });
   };
   useEffect(load, []);
+
+  // The demos that are open now, so "Review demo" can open the right one straight away.
+  const [demos, setDemos] = useState<DemoView[] | null>(null);
+  const [demosLocal, setDemosLocal] = useState(true);
+  useEffect(() => {
+    demoApi("/api/demo").then((r) => { setDemos(r.demos); setDemosLocal(r.local); }).catch(() => setDemos([]));
+  }, []);
+  const demoOf = (leadId: string) => demos?.find((d) => d.leadId === leadId && d.status === "live");
 
   const all = useMemo(() => leads ?? [], [leads]);
   const now = Date.now();
@@ -332,12 +343,26 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                       <td className="px-3 py-3"><Pill tone={d.development[1]}>{d.development[0]}</Pill></td>
                       <td className="px-3 py-3 text-slate-500">{formatRelativeTime(l.updatedAt)}</td>
                       <td className="px-3 py-3">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); router.push(`/clients/${l.id}`); }}
-                          className={cn("whitespace-nowrap rounded-lg px-3 py-1.5 text-[11px] font-medium transition", d.action === "Record advance" || d.action === "Generate project" ? "bg-violet-500 text-white hover:bg-violet-400" : "border border-white/10 bg-white/[.04] text-slate-200 hover:bg-white/[.08]")}
-                        >
-                          {d.action}
-                        </button>
+                        {d.action === "Review demo" && demoOf(l.id) ? (
+                          // One click: the demo opens in a new tab.
+                          <a
+                            href={demoOf(l.id)!.previewUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Open the demo in a new tab"
+                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-violet-500 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-400"
+                          >
+                            Review demo <ExternalLink size={12} />
+                          </a>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); router.push(d.action === "Review demo" ? `/clients/${l.id}#demo` : `/clients/${l.id}`); }}
+                            className={cn("whitespace-nowrap rounded-lg px-3 py-1.5 text-[11px] font-medium transition", d.action === "Record advance" || d.action === "Generate project" ? "bg-violet-500 text-white hover:bg-violet-400" : "border border-white/10 bg-white/[.04] text-slate-200 hover:bg-white/[.08]")}
+                          >
+                            {d.action === "Review demo" ? "Create demo" : d.action}
+                          </button>
+                        )}
                       </td>
                       <td className="px-2 py-3">
                         <button aria-label={`Delete ${l.requirement.title}`} onClick={(e) => { e.stopPropagation(); setToDelete(l); }} className="rounded-md p-1.5 text-slate-600 transition hover:bg-rose-500/10 hover:text-rose-300"><Trash2 size={14} /></button>
@@ -420,7 +445,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </section>
 
         {/* Every demo that is open right now, across all projects */}
-        <LiveDemosCard />
+        <LiveDemosCard demos={demos} local={demosLocal} />
 
         {/* Follow-ups */}
         <section className="rounded-2xl border border-white/[.08] bg-[#121622] p-5">

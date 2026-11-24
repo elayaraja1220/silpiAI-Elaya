@@ -87,7 +87,9 @@ export function scrubbedEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 // ---- fixed command lines ---------------------------------------------------------------------------
 
 /** What Claude Code may do while it builds: edit files in the project folder and run the project's own npm scripts. */
-export const ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash(npm install:*)", "Bash(npm run:*)", "Bash(npm test:*)", "Bash(npx tsc:*)", "Bash(npx eslint:*)"];
+export const ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash(npm install:*)", "Bash(npm run:*)", "Bash(npm test:*)", "Bash(npm --prefix:*)", "Bash(npx tsc:*)", "Bash(npx eslint:*)",
+  // On Windows Claude Code uses PowerShell instead of Bash: the same fixed npm commands, nothing else.
+  "PowerShell(npm install:*)", "PowerShell(npm run:*)", "PowerShell(npm test:*)", "PowerShell(npm --prefix:*)"];
 
 export function localArgs(maxTurns: number): string[] {
   return ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--max-turns", String(Math.round(maxTurns)), "--allowedTools", ALLOWED_TOOLS.join(",")];

@@ -31,6 +31,8 @@ export function TechnologyRecommendations({
   onConfirm,
   onUndo,
   onClearSelection,
+  onChooseTech,
+  techChosen = false,
 }: {
   requirement: Requirement;
   budget: number;
@@ -42,6 +44,10 @@ export function TechnologyRecommendations({
   onConfirm: (ids: string[]) => void;
   onUndo: () => void;
   onClearSelection: () => void;
+  /** Opens the chooser for frontend, backend and database; the price follows the choice. */
+  onChooseTech?: () => void;
+  /** A technology has been chosen with the chooser. */
+  techChosen?: boolean;
 }) {
   const view = useMemo(() => {
     if (!catalog) return null;
@@ -58,11 +64,17 @@ export function TechnologyRecommendations({
   return (
     <div data-testid="technology-panel">
     <Card className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="flex items-center gap-2 text-sm font-semibold text-slate-100"><Cpu size={15} className="text-violet-300" /> {view.title}</p>
-          <p className="mt-0.5 text-[11px] text-slate-500">Only technologies enabled in your catalog are used. Prices are not changed by the technology.</p>
+          <p className="mt-0.5 text-[11px] text-slate-500">Only technologies enabled in your catalog are used. Our recommendations do not change the price; a technology you choose does, and the estimate shows how.</p>
         </div>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+        {onChooseTech && (
+          <button type="button" onClick={onChooseTech} className="flex items-center gap-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-emerald-500/25 transition hover:brightness-110 focus:outline-none focus-visible:ring-4 focus-visible:ring-emerald-400/30" data-testid="choose-technology">
+            <Cpu size={18} /> Change technology
+          </button>
+        )}
         {view.inUse && (
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-semibold", SOURCE_STYLE[view.inUse.source])}>
@@ -71,6 +83,7 @@ export function TechnologyRecommendations({
             <span className="text-slate-300">In use: {view.inUse.text}</span>
           </div>
         )}
+        </div>
       </div>
 
       {view.client && (

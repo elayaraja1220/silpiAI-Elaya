@@ -9,13 +9,17 @@ import {
   Download,
   FileText,
   FolderInput,
+  Hammer,
   Images,
   Info,
+  LayoutTemplate,
   Loader2,
+  Lock,
   Palette,
   Paperclip,
   RotateCcw,
   Trash2,
+  Type,
   Upload,
   type LucideIcon,
 } from "lucide-react";
@@ -27,9 +31,16 @@ import {
   ASSET_GROUPS,
   ASSET_STATUS_LABELS,
   assetProgress,
+  designKeyOfContent,
+  isDesignKey,
+  isPageDesignKey,
+  PAGE_CONTENT_PREFIX,
+  MIN_BRAND_COLORS,
   extensionOf,
   formatBytes,
+  isBrandStyleText,
   isInlineImage,
+  parseBrandStyle,
   type AssetGroup,
   type AssetStatus,
   type ClientAsset,
@@ -38,7 +49,9 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 
 type Reply = { available: boolean; assets: ClientAsset[] };
 
-const GROUP_ICON: Record<AssetGroup, LucideIcon> = { Brand: Palette, "Business details": Building2, "Page content": FileText, Images: Images, Other: Paperclip };
+const GROUP_ICON: Record<AssetGroup, LucideIcon> = { Brand: Palette, Design: LayoutTemplate, "Business details": Building2, "Page design": LayoutTemplate, "Page content": FileText, Images: Images, Other: Paperclip };
+/** The menu heading: each page holds its design and its content side by side, so the pages sit under one heading. */
+const GROUP_LABEL: Partial<Record<AssetGroup, string>> = { "Page content": "Pages: design and content" };
 const PILL: Record<AssetStatus, string> = {
   pending: "border-white/10 bg-white/[.05] text-slate-400",
   submitted: "border-sky-400/30 bg-sky-400/10 text-sky-300",
@@ -53,16 +66,24 @@ const hasContent = (a: ClientAsset) => a.files.length > 0 || a.text.trim().lengt
  * A menu entry. Most entries are one checklist item. The brand items (logo, mobile logo, favicon, colours and fonts)
  * are one entry, "Brand identity", so they are handled in a single place.
  */
-type Entry = { key: string; group: AssetGroup; label: string; assets: ClientAsset[] };
+type Entry = { key: string; group: AssetGroup; label: string; assets: ClientAsset[]; /** A page: its content and, beside it, its design. */ page?: { content: ClientAsset; design?: ClientAsset } };
 
 function entriesOf(list: ClientAsset[]): Entry[] {
   const out: Entry[] = [];
   const brand = list.filter((a) => a.group === "Brand");
+  const byKey = new Map(list.map((a) => [a.key, a]));
+  const hasContentItem = (designKey: string) => byKey.has(`${PAGE_CONTENT_PREFIX}${designKey.slice("design:".length)}`);
   for (const a of list) {
     if (a.group === "Brand") {
       if (!out.some((e) => e.key === "brand")) out.push({ key: "brand", group: "Brand", label: "Brand identity", assets: brand });
+    } else if (a.key.startsWith(PAGE_CONTENT_PREFIX)) {
+      // A page: its content with its design beside it (the design item is shown here, not as an entry of its own).
+      const design = byKey.get(designKeyOfContent(a.key));
+      out.push({ key: a.key, group: a.group, label: a.label.replace(/ page: original content$/, ""), assets: design ? [a, design] : [a], page: { content: a, ...(design ? { design } : {}) } });
+    } else if (isPageDesignKey(a.key) && hasContentItem(a.key)) {
+      continue;
     } else {
-      out.push({ key: a.key, group: a.group, label: a.label.replace(/ page: original content$/, ""), assets: [a] });
+      out.push({ key: a.key, group: a.group, label: a.label.replace(/ page: (original content|design)$/, ""), assets: [a] });
     }
   }
   return out;
@@ -81,7 +102,59 @@ function entryStatus(assets: ClientAsset[]): AssetStatus {
  * Team side of the client's originals, laid out like a CMS dashboard: a content menu on the left, the item's editor and
  * media library in the middle, and a "Status" box (like WordPress' Publish box) on the right.
  */
-export function AssetsPanel({ leadId }: { leadId: string }) {
+/**
+ * "Generate the project" bar, shown at the top and bottom of the section. It is enabled as soon as anything (partial or full)
+ * is uploaded and disabled only when nothing is. When the content is partial it lists what is still missing, pages first.
+ */
+function GenerateBar({ list, onGenerate, position, again, onOpenDesign }: { list: ClientAsset[]; onGenerate: () => void; position: "top" | "bottom"; again: boolean; onOpenDesign: () => void }) {
+  const hasDesign = list.some((a) => isDesignKey(a.key) && a.files.length > 0);
+  // Page designs are optional extras: they unlock generating (any upload does) but never make the content count "partial".
+  const needed = list.filter((a) => !isPageDesignKey(a.key));
+  const filled = needed.filter(hasContent).length;
+  const missing = needed.filter((a) => !hasContent(a));
+  const designs = list.filter((a) => isPageDesignKey(a.key));
+  const designsDone = designs.filter(hasContent).length;
+  const partial = filled > 0 && missing.length > 0;
+  const none = list.filter(hasContent).length === 0;
+  const names = (a: ClientAsset) => a.label.replace(/ page: (original content|design)$/, "");
+  const missingPages = missing.filter((a) => a.group === "Page content").map(names);
+  const missingOther = missing.filter((a) => a.group !== "Page content").map(names);
+  const pagesWithoutDesign = designs.filter((a) => !hasContent(a)).map(names);
+  return (
+    <div className={cn("space-y-3 px-5 py-4", position === "top" ? "border-b border-white/[.07] bg-violet-500/[.05]" : "border-t border-white/[.07] bg-black/20")} data-testid={`generate-bar-${position}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className={cn("text-xs", none ? "text-amber-200" : partial ? "text-sky-200" : "text-emerald-300")}>
+          {none ? "Locked: upload at least one file or some content to generate the project." : partial ? `Partial content: ${filled} of ${needed.length} items uploaded. You can generate now; the rest gets a placeholder.` : `All ${needed.length} items uploaded. Ready to generate.`}
+        </p>
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={none}
+          title={none ? "Collect the client's files first" : undefined}
+          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:hover:brightness-100"
+          data-testid={`generate-${position}`}
+        >
+          {none ? <Lock size={15} /> : <Hammer size={15} />} {again ? "Generate again with new content" : "Generate the project"}
+        </button>
+      </div>
+      {!none && !hasDesign && (
+        <p className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-5 text-amber-100" data-testid={`no-design-${position}`}>
+          No design reference uploaded: the website will get a generic modern design. To make it look like a specific design, add it first.
+          <button type="button" onClick={onOpenDesign} className="rounded-md border border-amber-300/40 px-2 py-0.5 font-semibold hover:bg-amber-400/15">Add design reference</button>
+        </p>
+      )}
+      {(partial || (designsDone > 0 && pagesWithoutDesign.length > 0)) && (
+        <div className="space-y-1.5 rounded-lg border border-white/[.07] bg-white/[.02] p-3 text-[11px] leading-5 text-slate-400" data-testid={`remaining-${position}`}>
+          {missingPages.length > 0 && <p><b className="text-slate-200">Pages still missing content ({missingPages.length}):</b> {missingPages.join(", ")}</p>}
+          {missingOther.length > 0 && <p><b className="text-slate-200">Other items not sent ({missingOther.length}):</b> {missingOther.join(", ")}</p>}
+          {designsDone > 0 && pagesWithoutDesign.length > 0 && <p><b className="text-slate-200">Pages without their own design ({pagesWithoutDesign.length}):</b> {pagesWithoutDesign.join(", ")}. They follow the style of the pages that have one.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AssetsPanel({ leadId, onGenerate, again = false }: { leadId: string; onGenerate?: () => void; /** A project was already generated: the button builds it again. */ again?: boolean }) {
   const base = `/api/business/leads/${leadId}/assets`;
   const [data, setData] = useState<Reply | null>(null);
   const [error, setError] = useState("");
@@ -143,7 +216,7 @@ export function AssetsPanel({ leadId }: { leadId: string }) {
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300"><FolderInput size={18} /></span>
           <div>
-            <h3 className="text-sm font-semibold text-slate-100">Client files and content</h3>
+            <h3 className="text-sm font-semibold text-slate-100">Client files and design</h3>
             <p className="mt-0.5 text-xs text-slate-400">{progress.sent} of {progress.total} items uploaded. Nothing is mandatory: missing items get a placeholder.</p>
           </div>
         </div>
@@ -158,6 +231,7 @@ export function AssetsPanel({ leadId }: { leadId: string }) {
       </div>
       <div className="h-1 bg-white/[.06]"><div className="h-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all" style={{ width: `${progress.percent}%` }} /></div>
 
+      {onGenerate && <GenerateBar list={list} onGenerate={onGenerate} position="top" again={again} onOpenDesign={() => setSelected("design-reference")} />}
       {error && <p className="m-4 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{error}</p>}
 
       <div className="grid lg:grid-cols-[250px_1fr]">
@@ -176,7 +250,7 @@ export function AssetsPanel({ leadId }: { leadId: string }) {
               const Icon = GROUP_ICON[group];
               return (
                 <div key={group} className="mb-1">
-                  <p className="flex items-center gap-2 px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[.14em] text-slate-500"><Icon size={12} /> {group}</p>
+                  <p className="flex items-center gap-2 px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[.14em] text-slate-500"><Icon size={12} /> {GROUP_LABEL[group] ?? group}</p>
                   {items.map((e) => {
                     const on = e.key === current.key;
                     const status = entryStatus(e.assets);
@@ -217,6 +291,21 @@ export function AssetsPanel({ leadId }: { leadId: string }) {
             onUpload={upload}
             onRemove={removeFile}
           />
+        ) : current.page ? (
+          <PageEditor
+            key={`page-${current.assets.map((a) => `${a.id}-${a.updatedAt}`).join("|")}`}
+            page={current.page}
+            name={current.label}
+            leadId={leadId}
+            busy={busy}
+            hasPrev={index > 0}
+            hasNext={index < entries.length - 1}
+            onPrev={() => setSelected(entries[index - 1].key)}
+            onNext={() => setSelected(entries[index + 1].key)}
+            onPatch={patch}
+            onUpload={upload}
+            onRemove={removeFile}
+          />
         ) : (
           <Editor
             key={`${current.assets[0].id}-${current.assets[0].updatedAt}`}
@@ -233,6 +322,7 @@ export function AssetsPanel({ leadId }: { leadId: string }) {
           />
         )}
       </div>
+      {onGenerate && <GenerateBar list={list} onGenerate={onGenerate} position="bottom" again={again} onOpenDesign={() => setSelected("design-reference")} />}
     </Card>
   );
 }
@@ -240,17 +330,19 @@ export function AssetsPanel({ leadId }: { leadId: string }) {
 // ---- pieces shared by the editors ----------------------------------------------------------------------------------------------------
 
 /** Thumbnails of what was uploaded, a drop zone and an "Add media" button. */
-function MediaLibrary({ asset: a, leadId, busy, onUpload, onRemove, compact = false }: { asset: ClientAsset; leadId: string; busy: boolean; onUpload: (f: FileList) => void; onRemove: (fileId: string) => void; compact?: boolean }) {
+function MediaLibrary({ asset: a, leadId, busy, onUpload, onRemove, compact = false, bare = false }: { asset: ClientAsset; leadId: string; busy: boolean; onUpload: (f: FileList) => void; onRemove: (fileId: string) => void; compact?: boolean; /** No "Media / Add media" header: just the drop zone (used in the brand section). */ bare?: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   return (
     <section>
+      {!bare && (
       <div className="mb-2 flex items-center justify-between">
         <h5 className="text-sm font-semibold text-slate-200">Media <span className="ml-1 text-xs font-normal text-slate-500">{a.files.length} file{a.files.length === 1 ? "" : "s"}</span></h5>
         <button type="button" disabled={busy} onClick={() => input.current?.click()} className="flex items-center gap-1.5 rounded-lg border border-violet-400/50 px-3 py-1.5 text-xs font-medium text-violet-200 hover:bg-violet-500/10 disabled:opacity-50">
           {busy ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Add media
         </button>
       </div>
+      )}
       <input ref={input} type="file" multiple accept={ACCEPT_ATTRIBUTE} hidden onChange={(e) => { if (e.target.files?.length) onUpload(e.target.files); e.target.value = ""; }} />
 
       <div
@@ -262,8 +354,8 @@ function MediaLibrary({ asset: a, leadId, busy, onUpload, onRemove, compact = fa
         {a.files.length === 0 ? (
           <button type="button" onClick={() => input.current?.click()} className={cn("flex w-full flex-col items-center gap-2 text-center text-xs text-slate-500 hover:text-slate-300", compact ? "py-5" : "py-8")}>
             <Upload size={compact ? 18 : 22} className="text-slate-600" />
-            <span><b className="text-slate-300">Drop files here</b> or click to upload on the client&apos;s behalf</span>
-            {!compact && <span className="text-[11px]">Images, PDF, Word, Excel, design files, fonts or ZIP · up to 15 MB each</span>}
+            <span><b className="text-slate-300">{bare ? "Drop a file here" : "Drop files here"}</b> or click to upload{bare ? "" : " on the client&apos;s behalf"}</span>
+            {!compact && !bare && <span className="text-[11px]">Images, PDF, Word, Excel, design files, fonts or ZIP · up to 15 MB each</span>}
           </button>
         ) : (
           <ul className={cn("grid gap-3", compact ? "grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4" : "grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4")}>
@@ -411,18 +503,115 @@ function Editor({ asset: a, leadId, busy, hasPrev, hasNext, onPrev, onNext, onPa
   );
 }
 
-// ---- Brand identity: logo, mobile logo, favicon, colours and fonts in one place ------------------------------------------------------
+// ---- one page: its design and its content side by side ----------------------------------------------------------------------------------
+
+/** One column of a page: a title and status, the review actions, the hint, and the files (and, for content, the typed text). */
+function PageColumn({ title, asset: a, leadId, busy, withText, onPatch, onUpload, onRemove }: {
+  title: string; asset: ClientAsset; leadId: string; busy: boolean; withText?: boolean;
+  onPatch: (b: object) => void; onUpload: (f: FileList) => void; onRemove: (fileId: string) => void;
+}) {
+  const [text, setText] = useState(a.text);
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  return (
+    <section className={cn("min-w-0 overflow-hidden rounded-xl border", a.status === "received" ? "border-emerald-400/20" : a.status === "redo" ? "border-amber-400/30" : "border-white/[.09]")} data-testid={`page-column-${title.toLowerCase().split(" ")[0]}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[.07] bg-black/20 px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <h5 className="truncate text-sm font-semibold text-slate-100">{title}</h5>
+          <span className={cn("shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium", PILL[a.status])}>{ASSET_STATUS_LABELS[a.status]}</span>
+        </div>
+        <ReviewActions asset={a} busy={busy} onPatch={onPatch} compact />
+      </div>
+      <div className="space-y-3 p-4">
+        <p className="text-xs leading-5 text-slate-400">{a.hint}</p>
+        {a.status === "redo" && a.note && <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-200">You asked: {a.note}</p>}
+        {withText && (
+          <div>
+            <div className="overflow-hidden rounded-lg border border-white/[.09] bg-white/[.02] focus-within:border-violet-400/60">
+              <div className="flex items-center justify-between border-b border-white/[.07] bg-black/20 px-3 py-1.5 text-[11px] text-slate-500"><span>Typed content</span><span>{words} word{words === 1 ? "" : "s"}</span></div>
+              <textarea value={text} onChange={(e) => setText(e.target.value)} rows={5} maxLength={20000} aria-label={`${a.label} content`} placeholder="Or type / paste the content here." className="w-full resize-y bg-transparent px-3 py-2 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-600" />
+            </div>
+            <button type="button" disabled={busy || text === a.text} onClick={() => onPatch({ text })} className="mt-2 flex items-center gap-2 rounded-lg bg-violet-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-400 disabled:opacity-40">
+              {busy && <Loader2 size={13} className="animate-spin" />} Save content
+            </button>
+          </div>
+        )}
+        <MediaLibrary asset={a} leadId={leadId} busy={busy} compact bare onUpload={onUpload} onRemove={onRemove} />
+      </div>
+    </section>
+  );
+}
+
+function PageEditor({ page, name, leadId, busy, hasPrev, hasNext, onPrev, onNext, onPatch, onUpload, onRemove }: {
+  page: NonNullable<Entry["page"]>; name: string; leadId: string; busy: string; hasPrev: boolean; hasNext: boolean; onPrev: () => void; onNext: () => void;
+  onPatch: (assetId: string, body: object) => void; onUpload: (assetId: string, files: FileList) => void; onRemove: (assetId: string, fileId: string) => void;
+}) {
+  const { content, design } = page;
+  return (
+    <div className="min-w-0">
+      <article className="min-w-0 space-y-5 p-5 sm:p-6">
+        <header>
+          <p className="text-[11px] uppercase tracking-[.16em] text-slate-500">Page</p>
+          <h4 className="mt-1 text-xl font-semibold tracking-tight text-slate-50">{name}</h4>
+        </header>
+        <div className={cn("grid gap-5", design && "xl:grid-cols-2")}>
+          {design && <PageColumn title="Design" asset={design} leadId={leadId} busy={busy === design.id} onPatch={(b) => onPatch(design.id, b)} onUpload={(f) => onUpload(design.id, f)} onRemove={(fid) => onRemove(design.id, fid)} />}
+          <PageColumn title="Content document" withText asset={content} leadId={leadId} busy={busy === content.id} onPatch={(b) => onPatch(content.id, b)} onUpload={(f) => onUpload(content.id, f)} onRemove={(fid) => onRemove(content.id, fid)} />
+        </div>
+        <Pager hasPrev={hasPrev} hasNext={hasNext} onPrev={onPrev} onNext={onNext} />
+      </article>
+    </div>
+  );
+}
+
+// ---- Brand identity: logos, fonts and colours as three tabs ------------------------------------------------------------------------
+
+type BrandTab = "logos" | "fonts" | "colors";
+
+/** One logo-type item (logo, mobile logo, favicon): its status and one place to drop the file. */
+function LogoSlot({ asset: a, leadId, busy, onPatch, onUpload, onRemove }: { asset: ClientAsset; leadId: string; busy: boolean; onPatch: (b: object) => void; onUpload: (f: FileList) => void; onRemove: (fileId: string) => void }) {
+  return (
+    <section className={cn("overflow-hidden rounded-xl border", a.status === "received" ? "border-emerald-400/20" : a.status === "redo" ? "border-amber-400/30" : "border-white/[.09]")}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[.07] bg-black/20 px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <h5 className="truncate text-sm font-semibold text-slate-100">{a.label}</h5>
+          <span className={cn("shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium", PILL[a.status])}>{ASSET_STATUS_LABELS[a.status]}</span>
+        </div>
+        <ReviewActions asset={a} busy={busy} onPatch={onPatch} compact />
+      </div>
+      <div className="space-y-3 p-4">
+        <p className="text-xs leading-5 text-slate-400">{a.hint}</p>
+        {a.status === "redo" && a.note && <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-200">You asked: {a.note}</p>}
+        <MediaLibrary asset={a} leadId={leadId} busy={busy} compact bare onUpload={onUpload} onRemove={onRemove} />
+      </div>
+    </section>
+  );
+}
 
 function BrandIdentity({ assets, leadId, busy, hasPrev, hasNext, onPrev, onNext, onPatch, onPatchMany, onUpload, onRemove }: {
   assets: ClientAsset[]; leadId: string; busy: string; hasPrev: boolean; hasNext: boolean; onPrev: () => void; onNext: () => void;
   onPatch: (assetId: string, body: object) => void; onPatchMany: (ids: string[], body: object) => void;
   onUpload: (assetId: string, files: FileList) => void; onRemove: (assetId: string, fileId: string) => void;
 }) {
+  const [tab, setTab] = useState<BrandTab>("logos");
   const status = entryStatus(assets);
-  const received = assets.filter((a) => a.status === "received" && hasContent(a)).length;
   const withContent = assets.filter(hasContent);
   const toMark = withContent.filter((a) => a.status !== "received");
+  const received = assets.filter((a) => a.status === "received" && hasContent(a)).length;
   const brandBusy = busy === "brand";
+
+  const logos = assets.filter((a) => a.key !== "brand-style");
+  const style = assets.find((a) => a.key === "brand-style");
+  const parsed = style && isBrandStyleText(style.text) ? parseBrandStyle(style.text) : null;
+  const colorCount = parsed ? parsed.colors.slice(0, MIN_BRAND_COLORS).filter(Boolean).length : 0;
+  const fontCount = parsed ? parsed.fonts.filter((f) => f.name).length : 0;
+  // Font files only matter for an imported font; they are offered there, not as a general upload.
+  const showFontFiles = !!style && (style.files.length > 0 || !!parsed?.fonts.some((f) => f.source === "imported"));
+
+  const tabs: { id: BrandTab; label: string; icon: LucideIcon; note: string }[] = [
+    { id: "logos", label: "Logos", icon: Images, note: `${logos.filter(hasContent).length}/${logos.length}` },
+    { id: "fonts", label: "Fonts", icon: Type, note: fontCount ? String(fontCount) : "none" },
+    { id: "colors", label: "Colours", icon: Palette, note: `${colorCount}/${MIN_BRAND_COLORS}` },
+  ];
 
   return (
     <div className="grid min-w-0 xl:grid-cols-[1fr_270px]">
@@ -431,26 +620,47 @@ function BrandIdentity({ assets, leadId, busy, hasPrev, hasNext, onPrev, onNext,
           <p className="text-[11px] uppercase tracking-[.16em] text-slate-500">Brand</p>
           <h4 className="mt-1 text-xl font-semibold tracking-tight text-slate-50">Brand identity</h4>
         </header>
-        <Notice>Your client&apos;s logo, mobile logo, favicon, colours and fonts, all in one place. Each part has its own status, so you can confirm one and ask for another again.</Notice>
 
-        {assets.map((a, i) => (
-          <section key={a.id} className={cn("overflow-hidden rounded-xl border", a.status === "received" ? "border-emerald-400/20" : a.status === "redo" ? "border-amber-400/30" : "border-white/[.09]")}>
+        <div role="tablist" aria-label="Brand identity" className="flex gap-1 rounded-xl border border-white/[.08] bg-black/20 p-1">
+          {tabs.map((t) => {
+            const on = t.id === tab;
+            return (
+              <button key={t.id} role="tab" aria-selected={on} type="button" onClick={() => setTab(t.id)} className={cn("flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition", on ? "bg-violet-500/20 text-white ring-1 ring-violet-400/40" : "text-slate-400 hover:bg-white/5 hover:text-slate-200")}>
+                <t.icon size={14} /> {t.label}
+                <span className={cn("rounded-full px-1.5 text-[10px]", on ? "bg-violet-400/30" : "bg-white/10")}>{t.note}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {tab === "logos" && (
+          <div className="space-y-4">
+            {logos.map((a) => <LogoSlot key={a.id} asset={a} leadId={leadId} busy={busy === a.id || brandBusy} onPatch={(b) => onPatch(a.id, b)} onUpload={(f) => onUpload(a.id, f)} onRemove={(fid) => onRemove(a.id, fid)} />)}
+          </div>
+        )}
+
+        {(tab === "fonts" || tab === "colors") && style && (
+          <section className="overflow-hidden rounded-xl border border-white/[.09]">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[.07] bg-black/20 px-4 py-2.5">
               <div className="flex min-w-0 items-center gap-2.5">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold text-slate-300">{i + 1}</span>
-                <h5 className="truncate text-sm font-semibold text-slate-100">{a.label}</h5>
-                <span className={cn("shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium", PILL[a.status])}>{ASSET_STATUS_LABELS[a.status]}</span>
+                <h5 className="truncate text-sm font-semibold text-slate-100">{tab === "fonts" ? "Fonts" : "Colours"}</h5>
+                <span className={cn("shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium", PILL[style.status])}>{ASSET_STATUS_LABELS[style.status]}</span>
               </div>
-              <ReviewActions asset={a} busy={busy === a.id || brandBusy} onPatch={(b) => onPatch(a.id, b)} compact />
+              <ReviewActions asset={style} busy={busy === style.id || brandBusy} onPatch={(b) => onPatch(style.id, b)} compact />
             </div>
             <div className="space-y-4 p-4">
-              <p className="text-xs leading-5 text-slate-400">{a.hint}</p>
-              {a.status === "redo" && a.note && <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-200">You asked: {a.note}</p>}
-              {a.key === "brand-style" && <BrandStyleEditor key={a.updatedAt} value={a.text} busy={busy === a.id} tone="dark" onSave={(t) => onPatch(a.id, { text: t })} />}
-              <MediaLibrary asset={a} leadId={leadId} busy={busy === a.id} compact onUpload={(f) => onUpload(a.id, f)} onRemove={(fid) => onRemove(a.id, fid)} />
+              {style.status === "redo" && style.note && <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-200">You asked: {style.note}</p>}
+              {/* One editor for fonts and colours, so edits in one tab are kept when you switch to the other. */}
+              <BrandStyleEditor key={style.updatedAt} value={style.text} busy={busy === style.id} tone="dark" part={tab} onSave={(t) => onPatch(style.id, { text: t })} />
+              {tab === "fonts" && showFontFiles && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-slate-300">Font files <span className="font-normal text-slate-500">(for an imported font: WOFF2, WOFF, TTF or OTF)</span></p>
+                  <MediaLibrary asset={style} leadId={leadId} busy={busy === style.id} compact bare onUpload={(f) => onUpload(style.id, f)} onRemove={(fid) => onRemove(style.id, fid)} />
+                </div>
+              )}
             </div>
           </section>
-        ))}
+        )}
 
         <Pager hasPrev={hasPrev} hasNext={hasNext} onPrev={onPrev} onNext={onNext} />
       </article>
@@ -467,8 +677,8 @@ function BrandIdentity({ assets, leadId, busy, hasPrev, hasNext, onPrev, onNext,
             {assets.map((a) => (
               <li key={a.id} className="flex items-center gap-2 text-[11px]">
                 <span className={cn("h-2 w-2 shrink-0 rounded-full", DOT[a.status])} />
-                <span className="min-w-0 flex-1 truncate text-slate-300">{a.label.replace(/ \(browser tab icon\)$/, "")}</span>
-                <span className="text-slate-500">{a.files.length + (a.text.trim() ? 1 : 0) > 0 ? ASSET_STATUS_LABELS[a.status] : "Nothing yet"}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-300">{a.key === "brand-style" ? "Fonts and colours" : a.label.replace(/ \(browser tab icon\)$/, "")}</span>
+                <span className="text-slate-500">{hasContent(a) ? ASSET_STATUS_LABELS[a.status] : "Nothing yet"}</span>
               </li>
             ))}
           </ul>
@@ -476,7 +686,7 @@ function BrandIdentity({ assets, leadId, busy, hasPrev, hasNext, onPrev, onNext,
             <button type="button" disabled={brandBusy || toMark.length === 0} onClick={() => onPatchMany(toMark.map((a) => a.id), { status: "received", note: "" })} className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-400 disabled:opacity-40">
               {brandBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Mark everything received
             </button>
-            <p className="mt-2 text-[11px] text-slate-500">{withContent.length === 0 ? "Nothing to check yet. Upload a file or add colours first." : toMark.length === 0 ? "Everything that was sent is received." : `Marks the ${toMark.length} part${toMark.length === 1 ? "" : "s"} that have something uploaded.`}</p>
+            <p className="mt-2 text-[11px] text-slate-500">{withContent.length === 0 ? "Nothing to check yet. Upload a logo or add colours first." : toMark.length === 0 ? "Everything that was sent is received." : `Marks the ${toMark.length} part${toMark.length === 1 ? "" : "s"} that have something uploaded.`}</p>
           </div>
         </section>
       </aside>

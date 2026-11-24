@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Ban, CheckCircle2, CircleDashed, Cpu, Hammer, Loader2, RotateCcw, ShieldCheck } from "lucide-react";
+import { Ban, CheckCircle2, CircleDashed, Cpu, Hammer, Loader2, Lock, ShieldCheck } from "lucide-react";
 
 import { paymentStatus } from "@/lib/business/payment-status";
-import { formatINR } from "@/lib/business/pricing";
 import type { Lead, Stage } from "@/lib/business/types";
 import { jobStatusLabel, type ApiEstimate, type ClaudeStatus, type ExecMode, type ExecutionSettings, type Job, type JobEvent } from "@/lib/execution/types";
 import { cn } from "@/lib/utils";
 
 import { AdminGate } from "./admin-gate";
+import { GenerateConfirmDialog } from "./generate-confirm-dialog";
 import { DEV_START_HEADER, DEV_START_WITHOUT_PAYMENT } from "@/lib/dev-flags"; // TEMP DEV
 import { Card, jsonFetch } from "./ui";
 
@@ -53,22 +53,29 @@ function Step({ done, active, title, children }: { done: boolean; active?: boole
   );
 }
 
-function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; history: History }) => void }) {
+type ContentProps = {
+  contentCount: number | null; contentTotal: number; onGoToFiles?: () => void;
+  /** A design reference picture was uploaded (false = none; undefined = not known yet). */
+  hasDesign?: boolean;
+  /** Goes up by one each time the developer clicks Generate in the Client files tab. That click is the only confirmation. */
+  generateRequest?: number;
+  /** The run was started (or failed to start): show this tab. */
+  onStarted?: () => void;
+};
+
+function Body({ lead, onChanged, contentCount, contentTotal, hasDesign, onGoToFiles, generateRequest = 0, onStarted }: { lead: Lead; onChanged: (r: { lead: Lead; history: History }) => void } & ContentProps) {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [claude, setClaude] = useState<ClaudeStatus | null>(null);
   const [settings, setSettings] = useState<ExecutionSettings | null>(null);
-  const [scopeOk, setScopeOk] = useState(false);
   const [mode, setMode] = useState<ExecMode>("local");
-  const [withoutAdvance, setWithoutAdvance] = useState(false);
-  const [reason, setReason] = useState("");
   const [dialog, setDialog] = useState<ApiEstimate | null>(null);
   const [approveRun, setApproveRun] = useState(false);
   const [acceptUnreliable, setAcceptUnreliable] = useState(false);
   const [note, setNote] = useState("");
   const [override, setOverride] = useState(false);
-  // The panel stays closed until the developer clicks "Generate the project" (it opens by itself when a run already exists).
-  const [open, setOpen] = useState(false);
+  // The one confirmation ("Yes, generate the project") is shown when Generate is clicked in the Client files tab. Nothing starts before it.
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const log = useRef<HTMLDivElement>(null);
@@ -77,6 +84,9 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
   const status = jobs ? (job ? jobStatusLabel(job) : null) : null;
   const pay = paymentStatus(lead.quotation, lead.payments);
   const advanceMissing = lead.stage === "approved" && pay.advanceRemaining > 0;
+  // Confirming the generate dialog (which shows the missing advance) is the developer's decision to start before it; it is recorded in the history.
+  const withoutAdvance = advanceMissing;
+  const reason = advanceMissing ? (DEV_START_WITHOUT_PAYMENT ? DEMO_REASON : "Started from Client files before the advance (confirmed by the developer)") : "";
 
   const refreshLead = useCallback(async () => {
     const r = await jsonFetch<{ lead: Lead; history: History }>(`/api/business/leads/${lead.id}`).catch(() => null);
@@ -138,10 +148,36 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
   };
   const act = (action: string, body: object = {}) => api<{ job: Job }>(`/api/execution/jobs/${job!.id}/${action}`, body);
 
-  const prepare = () => run("prepare", async () => {
-    const r = await api<{ job: Job }>(`/api/execution/leads/${lead.id}/prepare`, { scopeConfirmed: scopeOk });
-    if (!r.ok) throw new Error(r.data.error);
-    await loadJobs();
+  // The click in the Client files tab opens the confirmation (once the jobs are loaded, and never while a run is going).
+  const seenRequest = useRef(generateRequest);
+  useEffect(() => {
+    if (generateRequest === seenRequest.current || !jobs) return;
+    seenRequest.current = generateRequest;
+    if (jobs[0]?.state === "running") { onStarted?.(); return; }
+    setConfirming(true);
+  }, [generateRequest, jobs, onStarted]);
+
+  /** Prepare (or restart), then start: one step for the developer. With the API turned on it stops after preparing, so the API choice and cost approval stay explicit. */
+  const generate = () => run("start", async () => {
+    try {
+      let target: Job | null = job && (job.state === "prepared" || job.state === "waiting-approval") ? job : null;
+      if (!target) {
+        const r = job
+          ? await act("restart", { scopeConfirmed: true, ...(job.state === "completed" ? { changes: job.review?.note ?? "" } : {}) })
+          : await api<{ job: Job }>(`/api/execution/leads/${lead.id}/prepare`, { scopeConfirmed: true });
+        if (!r.ok) throw new Error(r.data.error);
+        target = r.data.job;
+      }
+      await loadJobs();
+      if (settings?.apiEnabled) return;
+      const s = await api<{ job: Job }>(`/api/execution/jobs/${target.id}/start`, { mode: "local", withoutAdvance, reason });
+      await loadJobs();
+      await refreshLead();
+      if (!s.ok) throw new Error(s.data.error);
+    } finally {
+      setConfirming(false);
+      onStarted?.();
+    }
   });
   const start = (chosen: ExecMode, approval?: { estimate: ApiEstimate; accept: boolean }) => run("start", async () => {
     const body = { mode: chosen, withoutAdvance, reason, ...(approval ? { apiApproval: { confirmed: true, estimateUsd: approval.estimate.estimatedUsd, limitUsd: approval.estimate.limitUsd, acceptUnreliable: approval.accept } } : {}) };
@@ -157,17 +193,6 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
     await loadJobs();
   });
   const cancel = () => run("cancel", async () => { const r = await act("cancel"); if (!r.ok) throw new Error(r.data.error); await loadJobs(); await refreshLead(); });
-  const restart = (thenApi = false) => run("restart", async () => {
-    const r = await act("restart", { scopeConfirmed: scopeOk });
-    if (!r.ok) throw new Error(r.data.error);
-    await loadJobs();
-    if (thenApi) {
-      const s = await api<{ job: Job }>(`/api/execution/jobs/${r.data.job.id}/start`, { mode: "api", withoutAdvance, reason });
-      if (s.data.code === "approval-required" && s.data.estimate) setDialog(s.data.estimate);
-      else if (!s.ok) throw new Error(s.data.error);
-      await loadJobs();
-    }
-  });
   const review = (decision: "approved" | "changes-requested") => run("review", async () => { const r = await act("review", { decision, note, overrideVerification: override }); if (!r.ok) throw new Error(r.data.error); await loadJobs(); });
   const markReady = () => run("ready", async () => { const r = await act("ready"); if (!r.ok) throw new Error(r.data.error); await loadJobs(); await refreshLead(); });
 
@@ -176,81 +201,65 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
   const prepared = job && (job.state === "prepared" || job.state === "waiting-approval");
   const finished = job && ["completed", "failed", "cancelled"].includes(job.state);
   const reviewed = job?.review?.status === "approved";
-  const ready = lead.stage === "demo_ready";
+  // A rebuilt project stays "demo ready", so "ready" also needs this run to be the approved one.
+  const ready = lead.stage === "demo_ready" && reviewed;
   const localReady = claude?.ready === true;
+  // A project is built from the client's content: with none uploaded, Generate stays locked (partial is fine).
+  const noContent = contentCount === 0;
   const apiOn = settings?.apiEnabled === true;
 
-  // Hidden until the developer asks for it: one button, then the whole panel.
-  if (!open && !job) {
+  // The one confirmation. It opens when Generate is clicked in the Client files tab, on top of whichever tab is showing.
+  const confirmDialog = confirming ? (
+    <GenerateConfirmDialog
+      project={lead.requirement.title}
+      client={lead.client.company || lead.client.name}
+      content={contentCount !== null ? { uploaded: contentCount, total: contentTotal } : null}
+      advanceMissing={advanceMissing ? pay.advanceRemaining : null}
+      hasDesign={hasDesign}
+      demo={DEV_START_WITHOUT_PAYMENT}
+      mode={apiOn ? "api" : "local"}
+      busy={busy === "start"}
+      onCancel={() => setConfirming(false)}
+      onConfirm={() => void generate()}
+    />
+  ) : null;
+
+  // The build starts from the Client files tab. Until then this tab only explains where to start (no button, no confirmation here).
+  if (!job && busy !== "start") {
     return (
       <div className="flex flex-wrap items-center justify-between gap-3" data-testid="execution-collapsed">
+        {confirmDialog}
         <div>
-          <p className="flex items-center gap-2 text-sm font-semibold text-slate-100"><Hammer size={16} className="text-violet-300" /> Ready to build the website?</p>
-          <p className="mt-1 text-xs text-slate-400">The project is built from whatever the client has uploaded above. Anything not uploaded gets a clearly marked placeholder.</p>
+          <p className="flex items-center gap-2 text-sm font-semibold text-slate-100"><Hammer size={16} className="text-violet-300" /> No project generated yet</p>
+          <p className="mt-1 text-xs text-slate-400">Use &quot;Generate the project&quot; in the Client files tab. The progress and details appear here.</p>
+          {noContent && <p className="mt-2 flex items-center gap-1.5 text-xs text-amber-200" data-testid="generate-locked-note"><Lock size={12} /> Locked: collect the client&apos;s files first.</p>}
         </div>
-        <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition hover:brightness-110" data-testid="open-generate">
-          <Hammer size={15} /> Generate the project
-        </button>
+        {onGoToFiles && <button type="button" onClick={onGoToFiles} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-white/5" data-testid="go-to-files">Go to client files</button>}
       </div>
     );
   }
 
-  // DEMO ONLY (see src/lib/dev-flags.ts): lets a demo build start before the advance. Not for real client work.
-  // Shown wherever the start is blocked by the missing advance: before the workspace is prepared and next to the Start button.
-  const demoBox = DEV_START_WITHOUT_PAYMENT && advanceMissing ? (
-    <label className={cn("flex cursor-pointer items-start gap-3 rounded-xl border p-4 text-xs transition", withoutAdvance ? "border-amber-400/50 bg-amber-500/[.09]" : "border-white/[.09] bg-white/[.02] hover:border-white/20")} data-testid="demo-without-advance">
-      <input
-        type="checkbox"
-        checked={withoutAdvance}
-        onChange={(e) => { setWithoutAdvance(e.target.checked); setReason(e.target.checked ? DEMO_REASON : ""); setError(""); }}
-        className="mt-0.5 h-4 w-4 accent-amber-500"
-        data-testid="demo-without-advance-checkbox"
-      />
-      <span className="min-w-0">
-        <span className="flex flex-wrap items-center gap-2 font-semibold text-slate-100">
-          Generate the project without the advance payment
-          <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-900">Demo only</span>
-        </span>
-        <span className="mt-1 block leading-5 text-slate-400">
-          For showing the tool in a demo. The {formatINR(pay.advanceRemaining)} advance is skipped and the history records &quot;{DEMO_REASON}&quot;. Do not use it for real client work: this option is removed when demo mode is turned off.
-        </span>
-      </span>
-    </label>
-  ) : null;
-
   return (
     <div className="space-y-4" data-testid="execution-panel">
+      {confirmDialog}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="flex items-center gap-2 text-sm font-semibold text-slate-100"><Hammer size={16} className="text-violet-300" /> Generate the project</p>
-          <p className="mt-1 text-xs text-slate-400">The approved quotation does not start anything by itself. You confirm the scope, choose how to run it, and review the result.</p>
+          <p className="mt-1 text-xs text-slate-400">Started from the Client files tab. This tab shows the progress and the result, and is where you review it.</p>
         </div>
         {status && <span className={cn("rounded-full border px-3 py-1 text-[11px] font-semibold", TONE[status])} data-testid="job-status">{status}</span>}
       </div>
 
-      {!job && demoBox}
-
       <ol className="space-y-4">
         <Step done title="1. The client approved the quotation" />
 
-        <Step done={!!job} active={!job} title="2. Confirm the approved scope">
-          {!job && (
-            <>
-              <label className="flex items-start gap-2 text-xs text-slate-300">
-                <input type="checkbox" checked={scopeOk} onChange={(e) => setScopeOk(e.target.checked)} className="mt-0.5 accent-violet-500" data-testid="confirm-scope" />
-                I confirm the approved scope of quotation {lead.quotation?.number}: exactly the pages, features and technology the client approved, and nothing from Phase 2.
-              </label>
-              <button type="button" onClick={prepare} disabled={!scopeOk || !!busy} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-400 disabled:opacity-40" data-testid="prepare">
-                {busy === "prepare" && <Loader2 size={13} className="animate-spin" />} Prepare workspace and brief
-              </button>
-            </>
-          )}
-        </Step>
+        <Step done={!!job} active={!job} title="2. Approved scope confirmed when Generate was clicked" />
 
         <Step done={!!job} title="3. Workspace and development brief prepared">
           {job && <p className="text-[11px] text-slate-400">Folder <span className="font-mono text-slate-200">{job.projectName}</span> · approved brief {job.briefBytes} bytes (locked: it is checked again before every run).</p>}
         </Step>
 
+        {apiOn && (
         <Step done={!!job && job.state !== "prepared" && job.state !== "waiting-approval"} active={!!prepared} title="4. Choose how to run it">
           {prepared && settings && (
             <div className="space-y-3">
@@ -263,33 +272,22 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
                     <span className={cn("mt-1 block text-[11px]", localReady ? "text-emerald-300" : "text-amber-200")}>{claude ? claude.message : "Checking Claude Code..."}</span>
                   </span>
                 </label>
-                <label className={cn("flex gap-2 rounded-lg border p-3 text-xs", apiOn ? "cursor-pointer" : "cursor-not-allowed opacity-60", mode === "api" ? "border-amber-400/50 bg-amber-500/[.07]" : "border-white/[.08]")}>
-                  <input type="radio" name="mode" checked={mode === "api"} disabled={!apiOn} onChange={() => setMode("api")} className="mt-0.5 accent-amber-500" aria-label="Anthropic API" />
+                <label className={cn("flex cursor-pointer gap-2 rounded-lg border p-3 text-xs", mode === "api" ? "border-amber-400/50 bg-amber-500/[.07]" : "border-white/[.08]")}>
+                  <input type="radio" name="mode" checked={mode === "api"} onChange={() => setMode("api")} className="mt-0.5 accent-amber-500" aria-label="Anthropic API" />
                   <span>
                     <span className="flex items-center gap-1.5 font-semibold text-slate-100"><ShieldCheck size={13} /> Anthropic API <span className="rounded-full bg-white/10 px-1.5 text-[9px] text-slate-300">Optional</span></span>
                     <span className="mt-0.5 block text-[11px] text-slate-400">Paid per use. Asks for your approval of the estimated cost before it starts.</span>
-                    {!apiOn && <span className="mt-1 block text-[11px] text-slate-500">Turned off in Execution settings.</span>}
                   </span>
                 </label>
               </div>
-
-              {demoBox}
-
-              {advanceMissing && !DEV_START_WITHOUT_PAYMENT && (
-                <div className="space-y-2 rounded-lg border border-amber-400/25 bg-amber-500/[.07] p-3 text-xs">
-                  <p className="flex items-center gap-1.5 font-medium text-amber-100"><AlertTriangle size={14} /> Advance of {formatINR(pay.advanceRemaining)} not received yet.</p>
-                  <label className="flex items-center gap-2 text-slate-300"><input type="checkbox" checked={withoutAdvance} onChange={(e) => setWithoutAdvance(e.target.checked)} className="accent-violet-500" /> Start without advance (your decision)</label>
-                  {withoutAdvance && <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="Why? e.g. regular client, paying on Friday" className="w-full rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400/60" />}
-                </div>
-              )}
-
-              <button type="button" onClick={() => void start(mode)} disabled={!!busy || (mode === "local" && !localReady)} className={cn("flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:opacity-40", mode === "api" ? "bg-amber-600 hover:bg-amber-500" : "bg-emerald-600 hover:bg-emerald-500")} data-testid="start">
+              <button type="button" onClick={() => void start(mode)} disabled={!!busy || noContent || (mode === "local" && !localReady)} className={cn("flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:opacity-40", mode === "api" ? "bg-amber-600 hover:bg-amber-500" : "bg-emerald-600 hover:bg-emerald-500")} data-testid="start">
                 {busy === "start" ? <Loader2 size={13} className="animate-spin" /> : <Hammer size={13} />} {mode === "local" ? "Start with Local Claude Code" : "Review cost and run with the API"}
               </button>
               {mode === "local" && !localReady && <p className="text-[11px] text-amber-200">Local generation cannot start until Claude Code is installed and signed in. SILPI will not switch to the API by itself.</p>}
             </div>
           )}
         </Step>
+        )}
 
         <Step done={!!finished && job!.state === "completed"} active={job?.state === "running"} title="5. Generation">
           {job && job.state !== "prepared" && job.state !== "waiting-approval" && (
@@ -330,17 +328,20 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
               {!job.review ? (
                 <>
                   <p className="text-slate-300">Open the generated project and check it against the quotation before approving.</p>
-                  <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Review note (optional)" className="min-h-14 w-full rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400/60" />
+                  <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Review note. Required to request changes: describe exactly what to change." className="min-h-14 w-full rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2 text-xs text-slate-100 outline-none focus:border-violet-400/60" />
                   {job.verification && !job.verification.passed && (
                     <label className="flex items-center gap-2 text-amber-200"><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} className="accent-amber-500" /> The build or tests failed. Approve anyway (needs a note of at least 10 characters).</label>
                   )}
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => void review("approved")} disabled={!!busy} className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-500 disabled:opacity-50" data-testid="review-approve">Approve the generated project</button>
-                    <button type="button" onClick={() => void review("changes-requested")} disabled={!!busy} className="rounded-lg border border-white/10 px-3 py-1.5 text-slate-300 hover:bg-white/5 disabled:opacity-50">Request changes</button>
+                    <button type="button" onClick={() => void review("changes-requested")} disabled={!!busy || note.trim().length < 3} title={note.trim().length < 3 ? "Describe the changes in the review note first" : undefined}className="rounded-lg border border-white/10 px-3 py-1.5 text-slate-300 hover:bg-white/5 disabled:opacity-50">Request changes</button>
                   </div>
                 </>
               ) : (
-                <p className={cn("font-medium", job.review.status === "approved" ? "text-emerald-300" : "text-amber-200")}>{job.review.status === "approved" ? "Review approved." : "Changes requested."}{job.review.note ? ` ${job.review.note}` : ""}</p>
+                <>
+                  <p className={cn("font-medium", job.review.status === "approved" ? "text-emerald-300" : "text-amber-200")}>{job.review.status === "approved" ? "Review approved." : "Changes requested."}{job.review.note ? ` ${job.review.note}` : ""}</p>
+                  {job.review.status === "changes-requested" && <p className="text-[11px] text-slate-400" data-testid="apply-hint">To apply these changes, click &quot;Generate again with new content&quot; in the Client files tab.</p>}
+                </>
               )}
             </div>
           )}
@@ -355,16 +356,7 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
       </ol>
 
       {(job?.state === "failed" || job?.state === "cancelled") && (
-        <div className="space-y-2 rounded-lg border border-white/[.08] bg-white/[.03] p-3 text-xs">
-          <p className="font-medium text-slate-200">{job.state === "failed" ? "The run failed." : "The run was cancelled."} Nothing was run with the API. You decide what happens next.</p>
-          <label className="flex items-start gap-2 text-slate-300"><input type="checkbox" checked={scopeOk} onChange={(e) => setScopeOk(e.target.checked)} className="mt-0.5 accent-violet-500" /> I confirm the approved scope again.</label>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => void restart(false)} disabled={!scopeOk || !!busy} className="flex items-center gap-1.5 rounded-lg bg-violet-500 px-3 py-1.5 font-semibold text-white hover:bg-violet-400 disabled:opacity-40" data-testid="restart"><RotateCcw size={12} /> Restart (choose how to run it)</button>
-            {job.mode === "local" && settings?.apiEnabled && settings.apiFallbackOffer && (
-              <button type="button" onClick={() => void restart(true)} disabled={!scopeOk || !!busy} className="rounded-lg border border-amber-400/40 px-3 py-1.5 text-amber-100 hover:bg-amber-500/10 disabled:opacity-40" data-testid="offer-api">Restart and run with the API instead (asks for cost approval)</button>
-            )}
-          </div>
-        </div>
+        <p className="rounded-lg border border-white/[.08] bg-white/[.03] p-3 text-xs text-slate-300" data-testid="run-hint">{job.state === "failed" ? "The run failed." : "The run was cancelled."} Nothing was run with the API. To try again, click &quot;Generate again with new content&quot; in the Client files tab.</p>
       )}
 
       {error && <p className="rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-200" data-testid="exec-error">{error}</p>}
@@ -396,14 +388,14 @@ function Body({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; hi
 }
 
 /** Project generation for an approved quotation. Admin only. Replaces the old one-click "Start development". */
-export function ExecutionPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; history: History }) => void }) {
+export function ExecutionPanel({ lead, onChanged, contentCount, contentTotal, hasDesign, onGoToFiles, generateRequest, onStarted }: { lead: Lead; onChanged: (r: { lead: Lead; history: History }) => void } & ContentProps) {
   return (
     <Card className="no-print space-y-3 border-violet-400/25">
       {DEV_START_WITHOUT_PAYMENT ? (
-        <Body lead={lead} onChanged={onChanged} />
+        <Body lead={lead} onChanged={onChanged} contentCount={contentCount} contentTotal={contentTotal} hasDesign={hasDesign} onGoToFiles={onGoToFiles} generateRequest={generateRequest} onStarted={onStarted} />
       ) : (
         <AdminGate label="project generation">
-          <Body lead={lead} onChanged={onChanged} />
+          <Body lead={lead} onChanged={onChanged} contentCount={contentCount} contentTotal={contentTotal} hasDesign={hasDesign} onGoToFiles={onGoToFiles} generateRequest={generateRequest} onStarted={onStarted} />
         </AdminGate>
       )}
     </Card>

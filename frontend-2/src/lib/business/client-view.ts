@@ -1,4 +1,5 @@
 import { paymentStatus } from "./payment-status";
+import { deferredTexts, estimateStatus } from "./clarifications";
 import type { PublicRunningServices } from "./running-services";
 import type { Lead, Quotation, RateCard, Requirement } from "./types";
 
@@ -14,6 +15,10 @@ export type ClientView = {
   quotation: Quotation;
   requirement: Pick<Requirement, "title" | "summary" | "pages">;
   response?: Lead["clientResponse"];
+  /** True while open questions or proposals remain: the price is a preliminary estimate and cannot be approved yet. */
+  preliminary?: boolean;
+  /** Items deliberately left out of the price: the client must be told, and confirm they understand, before approving. */
+  deferred?: string[];
   /** Running services the admin approved for the client (already reduced to client-safe fields). Absent when none. */
   running?: PublicRunningServices;
   /** A private preview of the website the team made for them (only when it can be opened from outside the team's computer). */
@@ -38,6 +43,8 @@ export function clientView(lead: Lead, business: RateCard["business"], running?:
     quotation: { ...q, budgetCheck: undefined, requirement: publicScope as Requirement, proposals: q.proposals?.map(({ budgetNote: _n, ...p }) => p) },
     requirement: { title: scope.title, summary: scope.summary, pages: scope.pages },
     response: lead.clientResponse,
+    ...(estimateStatus(lead.requirement.insights?.tracker ?? []).level === "preliminary" ? { preliminary: true } : {}),
+    ...(deferredTexts(lead.requirement.insights?.tracker ?? []).length ? { deferred: deferredTexts(lead.requirement.insights?.tracker ?? []) } : {}),
     ...(running && running.services.length ? { running } : {}),
     ...(demo ? { demo } : {}),
     payment: ["approved", "advance_paid", "in_development", "testing", "demo_ready"].includes(lead.stage)

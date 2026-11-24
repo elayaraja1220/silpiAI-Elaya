@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowRight, Check, CheckCircle2, Circle } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Circle, Lock } from "lucide-react";
 
 import { formatINR } from "@/lib/business/pricing";
 import { paymentStatus } from "@/lib/business/payment-status";
+import { BILLING_CYCLE_LABELS } from "@/lib/business/types";
 import type { Lead, Stage } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
 
@@ -89,9 +90,12 @@ export function JourneyStepper({ stage }: { stage: Stage }) {
 
 // ---- what to do next --------------------------------------------------------------------------------------------------------------
 
-type Row = { label: string; hint: string; done: boolean; cta?: string; tab?: TabId };
+/** How much of the client's content has been uploaded (any amount counts: partial is fine). */
+export type FilesProgress = { withContent: number; total: number; /** A design reference picture has been uploaded. */ hasDesign?: boolean };
 
-function rowsFor(lead: Lead, files: { sent: number; total: number } | null): Row[] {
+type Row = { label: string; hint: string; done: boolean; cta?: string; tab?: TabId; locked?: string };
+
+function rowsFor(lead: Lead, files: FilesProgress | null): Row[] {
   const pay = paymentStatus(lead.quotation, lead.payments);
   switch (lead.stage) {
     case "requirement":
@@ -103,15 +107,31 @@ function rowsFor(lead: Lead, files: { sent: number; total: number } | null): Row
     case "in_development":
     case "testing":
     case "demo_ready": {
+      const uploaded = files?.withContent ?? 0;
+      const started = lead.stage !== "approved" && lead.stage !== "advance_paid";
+      // Generating needs some of the client's content first. Partial is enough; nothing is not. (Once a project exists this no longer applies.)
+      const lockReason = started ? undefined : files === null ? "Checking the client's files..." : uploaded === 0 ? "Locked until the client's files are collected. Upload at least one file or some content (partial is fine)." : undefined;
+      // Hourly engagement: the team does the work and logs hours; SILPI AI generation is only an optional helper.
+      const hourly = lead.quotation?.hourly;
+      const worked = lead.workLog.reduce((t, e) => t + e.hours, 0);
+      const opt = hourly ? " (optional)" : "";
       const rows: Row[] = [
         { label: "Advance payment", hint: pay.advanceRemaining <= 0 ? `Received ${formatINR(pay.advancePaid)}.` : `${formatINR(pay.advanceRemaining)} still to receive.`, done: pay.advanceRemaining <= 0, cta: "Record payment", tab: "payments" },
-        { label: "Client's files and content", hint: files ? `${files.sent} of ${files.total} items uploaded. Nothing is mandatory.` : "Logo, images and page content from the client.", done: !!files && files.total > 0 && files.sent === files.total, cta: "Collect files", tab: "files" },
+        ...(hourly ? [{ label: "Do the work and log your hours", hint: `${Math.round(worked * 10) / 10} of ${hourly.capHours} cap hours used (${hourly.expectedHours} estimated). Bill the client ${BILLING_CYCLE_LABELS[hourly.cycle]} for the hours worked.`, done: false, cta: "Log hours", tab: "payments" as TabId }] : []),
         {
-          label: "Generate the project",
-          hint: lead.stage === "demo_ready" ? "Built and ready for the client's demo." : lead.stage === "in_development" || lead.stage === "testing" ? "In progress." : "Not started. It uses whatever the client has uploaded.",
+          label: `Collect the client's files and content${opt}`,
+          hint: files ? (uploaded > 0 ? `${uploaded} of ${files.total} items uploaded. Partial is fine, and you can add more any time.` : "Nothing uploaded yet. Upload at least one file or some content to unlock the next step.") : "Logo, images and page content from the client.",
+          done: !!files && files.total > 0 && uploaded === files.total,
+          cta: uploaded > 0 ? "Add more" : "Collect files",
+          tab: "files",
+        },
+        {
+          label: hourly ? "Generate with SILPI AI (optional)" : "Generate the project",
+          hint: lead.stage === "demo_ready" ? "Built and ready for the client's demo." : lead.stage === "in_development" || lead.stage === "testing" ? "In progress." : "Builds the website from whatever the client uploaded. You will be asked to confirm first.",
           done: lead.stage === "demo_ready",
           cta: lead.stage === "in_development" || lead.stage === "testing" ? "Open build" : "Generate",
           tab: "build",
+          locked: lockReason,
         },
       ];
       if (lead.projectName) rows.push({ label: "Show the client a demo", hint: "A private link that ends by itself. Nothing is sent to them until you share it.", done: false, cta: "Demo preview", tab: "demo" });
@@ -127,32 +147,45 @@ function rowsFor(lead: Lead, files: { sent: number; total: number } | null): Row
   }
 }
 
-/** One calm card that says what is left to do and where to do it. */
-export function NextSteps({ lead, files, onGo, onApprove, busy }: { lead: Lead; files: { sent: number; total: number } | null; onGo: (tab: TabId) => void; onApprove: () => void; busy: boolean }) {
+/** One calm card: numbered steps, only the step to do now is highlighted, and a step that cannot be done yet is locked and says why. */
+export function NextSteps({ lead, files, onGo, onApprove, busy }: { lead: Lead; files: FilesProgress | null; onGo: (tab: TabId) => void; onApprove: () => void; busy: boolean }) {
   const rows = rowsFor(lead, files);
   const open = rows.filter((r) => !r.done).length;
+  // The step to do now: the first one that is not done and not locked.
+  const current = rows.findIndex((r) => !r.done && !r.locked);
   return (
     <section className="no-print rounded-2xl border border-violet-400/25 bg-gradient-to-br from-violet-600/15 via-[#141927] to-[#10141f] p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-100">What to do next</h3>
         {rows.length > 1 && <span className="text-[11px] text-slate-400">{open === 0 ? "All done" : `${open} of ${rows.length} to do`}</span>}
       </div>
-      <ul className="mt-3 divide-y divide-white/[.06]">
-        {rows.map((r) => (
-          <li key={r.label} className="flex flex-wrap items-center gap-3 py-3 first:pt-1 last:pb-1">
-            {r.done ? <CheckCircle2 size={18} className="shrink-0 text-emerald-400" /> : <Circle size={18} className="shrink-0 text-slate-600" />}
-            <div className="min-w-0 flex-1">
-              <p className={cn("text-sm font-medium", r.done ? "text-slate-400" : "text-slate-100")}>{r.label}</p>
-              <p className="mt-0.5 text-xs text-slate-500">{r.hint}</p>
-            </div>
-            {r.cta && r.tab && (
-              <button type="button" onClick={() => onGo(r.tab!)} className={cn("flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold transition", r.done ? "border border-white/10 text-slate-300 hover:bg-white/5" : "bg-violet-500 text-white hover:bg-violet-400")}>
-                {r.cta} <ArrowRight size={13} />
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
+      <ol className="mt-3 divide-y divide-white/[.06]">
+        {rows.map((r, i) => {
+          const isCurrent = i === current;
+          return (
+            <li key={r.label} className={cn("flex flex-wrap items-center gap-3 py-3 first:pt-1 last:pb-1", r.locked && "opacity-80")} aria-current={isCurrent ? "step" : undefined}>
+              <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold", r.done ? "bg-emerald-500/20 text-emerald-300" : r.locked ? "bg-white/[.06] text-slate-500" : isCurrent ? "bg-violet-500 text-white" : "bg-white/10 text-slate-300")}>
+                {r.done ? <Check size={14} strokeWidth={3} /> : r.locked ? <Lock size={12} /> : rows.length > 1 ? i + 1 : <Circle size={12} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className={cn("text-sm font-medium", r.done ? "text-slate-400" : r.locked ? "text-slate-400" : "text-slate-100")}>{r.label}</p>
+                <p className={cn("mt-0.5 text-xs", r.locked ? "text-amber-200/80" : "text-slate-500")}>{r.locked ?? r.hint}</p>
+              </div>
+              {r.cta && r.tab && (
+                r.locked ? (
+                  <button type="button" disabled aria-disabled="true" className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-white/[.07] px-3.5 py-2 text-xs font-medium text-slate-600" data-testid="step-locked">
+                    <Lock size={12} /> {r.cta}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => onGo(r.tab!)} className={cn("flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold transition", isCurrent ? "bg-violet-500 text-white hover:bg-violet-400" : "border border-white/10 text-slate-300 hover:bg-white/5")}>
+                    {r.cta} <ArrowRight size={13} />
+                  </button>
+                )
+              )}
+            </li>
+          );
+        })}
+      </ol>
       {lead.stage === "quoted" && (
         <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-white/[.06] pt-3">
           <p className="min-w-0 flex-1 text-xs text-slate-500">Client confirmed by phone or message?</p>

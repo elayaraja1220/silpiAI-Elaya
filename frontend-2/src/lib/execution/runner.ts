@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
-import { exportContent, type ContentExport } from "@/lib/business/asset-store";
+import { contentItemCount, exportContent, type ContentExport } from "@/lib/business/asset-store";
 import { buildBrief, projectNameFor } from "@/lib/business/brief";
 import { getLead, getRateCard, markReadyForDelivery, StageError, startDevelopment } from "@/lib/business/store";
 import type { Lead } from "@/lib/business/types";
@@ -13,7 +15,9 @@ import { localArgs, locateClaude, readAuth, runClaude, type ClaudeEvent, type Cl
 import { activeJobFor, appendEvent, completedApiCosts, createJob, getExecutionSettings, getJob, interruptOrphans, listEvents, listJobs, updateJob } from "./jobs";
 import { ExecError, type ApiApprovalRequest, type AuthState, type ExecMode, type ExecutionSettings, type Job, type JobEvent, type Verification, type VerificationStep } from "./types";
 import { runVerification } from "./verify";
-import { prepareWorkspace, verifyJobWorkspace, workspaceRoot, type BriefPayload } from "./workspace";
+import { sliceDesignImages } from "./design-images";
+import { renderSite, type RenderResult } from "./render";
+import { prepareWorkspace, resolveWorkspace, verifyJobWorkspace, workspaceRoot, type BriefPayload } from "./workspace";
 
 /**
  * Project generation workflow (server-only).
@@ -38,8 +42,14 @@ export type RunnerDeps = {
   verify: (dir: string, signal: AbortSignal, onStep: (step: VerificationStep) => void) => Promise<Verification>;
   assertAgentReady: () => Promise<unknown>;
   workspaceRoot: () => string | null;
+  /** How many content items the client (or the team for them) has uploaded. */
+  contentCount: (leadId: string) => number;
   /** Copies the client's content into the project folder for the generator to use. */
   exportContent: (leadId: string, dir: string) => ContentExport;
+  /** Pictures of the built site (desktop and phone), for the design check. Null when it cannot be done here. */
+  render?: (dir: string, signal: AbortSignal) => Promise<RenderResult | null>;
+  /** Cuts very tall design pictures into readable parts; returns the list of pictures the generator should open. */
+  sliceDesign?: (dir: string, design: string[]) => Promise<string[]>;
 };
 
 export const realDeps = (): RunnerDeps => ({
@@ -52,7 +62,10 @@ export const realDeps = (): RunnerDeps => ({
   verify: (dir, signal, onStep) => runVerification(dir, signal, onStep),
   assertAgentReady,
   workspaceRoot: () => workspaceRoot(),
+  contentCount: contentItemCount,
   exportContent,
+  render: (dir, signal) => renderSite(dir, signal),
+  sliceDesign: sliceDesignImages,
 });
 
 // ---- processes that are running now (survives hot reloads) -----------------------------------------------
@@ -69,9 +82,19 @@ export function reconcile(): void {
 export const safeText = (text: string, max = 400): string =>
   text.replace(/sk-ant-[\w-]+/g, "[hidden]").replace(/(authorization:\s*)?bearer\s+[\w.-]+/gi, "[hidden]").replace(/\s+/g, " ").trim().slice(0, max);
 
-const STAGES_FOR_GENERATION = ["approved", "advance_paid", "in_development"];
+// "testing" and "demo_ready" are included so a finished project can be built again when the client sends more content.
+const STAGES_FOR_GENERATION = ["approved", "advance_paid", "in_development", "testing", "demo_ready"];
 
 // ---- 1. prepare ---------------------------------------------------------------------------------------------
+
+/**
+ * A project is built from the client's own content, so there has to be some before anything is prepared or started. Partial is fine:
+ * what is missing becomes a placeholder. Nothing at all is refused.
+ */
+function assertHasContent(leadId: string, deps: RunnerDeps): void {
+  if (deps.contentCount(leadId) > 0) return;
+  throw new ExecError("content-needed", "Collect the client's files first. Upload at least one file or some content (partial is fine), then generate the project.", 409);
+}
 
 export function prepareJob(leadId: string, options: { scopeConfirmed: boolean; restartOf?: string }, deps: RunnerDeps = realDeps()): Job {
   reconcile();
@@ -85,6 +108,7 @@ export function prepareJob(leadId: string, options: { scopeConfirmed: boolean; r
   }
   const existing = activeJobFor(leadId);
   if (existing && !options.restartOf) return existing;
+  assertHasContent(leadId, deps);
   if (existing && options.restartOf) throw new ExecError("busy", "Another run for this project is still active.", 409);
 
   const root = deps.workspaceRoot();
@@ -159,12 +183,15 @@ export async function startJob(jobId: string, input: StartInput, deps: RunnerDep
   if (!root) throw new ExecError("no-workspace-root", "The projects folder is not configured.", 409);
   const { dir, brief } = verifyJobWorkspace(root, job.projectName, job.briefSha);
 
-  // Whatever the client uploaded goes into the project; nothing is required, missing items get placeholders.
-  const content = deps.exportContent(lead.id, dir);
+  // Whatever the client uploaded goes into the project; the rest gets placeholders. With nothing uploaded, nothing starts.
+  assertHasContent(lead.id, deps);
+  const exported = deps.exportContent(lead.id, dir);
+  const content = exported.design?.length && deps.sliceDesign ? { ...exported, design: await deps.sliceDesign(dir, exported.design) } : exported;
 
   // The same advance-payment rules as before apply when the work starts.
   try {
-    startDevelopment(lead.id, { withoutAdvance: input.withoutAdvance === true, reason: typeof input.reason === "string" ? input.reason.slice(0, 300) : "", suffix: "", nameFor: () => job.projectName });
+    // A project that is already built (testing or demo ready) is being rebuilt: its stage does not move backwards.
+    if (lead.stage !== "testing" && lead.stage !== "demo_ready") startDevelopment(lead.id, { withoutAdvance: input.withoutAdvance === true, reason: typeof input.reason === "string" ? input.reason.slice(0, 300) : "", suffix: "", nameFor: () => job.projectName });
   } catch (e) {
     if (e instanceof StageError) throw new ExecError("advance-required", e.message, 409);
     throw e;
@@ -175,6 +202,12 @@ export async function startJob(jobId: string, input: StartInput, deps: RunnerDep
 
   const placeholders = content.missing.length ? ` ${content.missing.length} not provided yet; placeholders will be used.` : "";
   appendEvent(job.id, "status", `Client content: ${content.items} item${content.items === 1 ? "" : "s"} and ${content.files} file${content.files === 1 ? "" : "s"} copied into the project.${placeholders}`);
+  if (content.design?.length) {
+    const cut = exported.design && content.design.length !== exported.design.length;
+    appendEvent(job.id, "status", `Design reference: ${content.design.length} picture${content.design.length === 1 ? "" : "s"} will be followed${cut ? " (long pictures were cut into readable parts)" : ""}.`);
+  } else {
+    appendEvent(job.id, "status", "No design reference was uploaded, so the website gets a generic modern design. Upload the design under Client files, Design, to make it look like a specific design.");
+  }
 
   const controller = new AbortController();
   live().set(job.id, controller);
@@ -184,7 +217,63 @@ export async function startJob(jobId: string, input: StartInput, deps: RunnerDep
 
 // ---- local run --------------------------------------------------------------------------------------------------------
 
-export function buildLocalPrompt(brief: BriefPayload, content?: { items: number; files: number; missing: string[] }): string {
+/** The look every generated site must have: current design practice, applied with the client's own brand. */
+export const DESIGN_STANDARD: string[] = [
+  "Design standard (the site must look like a modern, premium product made this year, never like a template or a 2015 website):",
+  "- Use the client's brand colours and fonts as design tokens (CSS variables). If none were supplied, choose one refined palette: a confident primary, a neutral scale, one accent, with AA contrast.",
+  "- Layout: mobile-first and fully responsive; a clear grid; generous whitespace; bento-style card grids and asymmetric sections where they help; sticky, slightly translucent header with a clear primary call to action; a strong hero with a real headline, supporting text and two actions.",
+  "- Type: a large, expressive heading scale using fluid sizes (clamp), tight tracking on headings, comfortable line length and line height for body text; at most two font families.",
+  "- Surfaces: rounded corners, soft layered shadows, subtle gradients or glass effects used sparingly, consistent 8px spacing, consistent icon set (no emoji as icons).",
+  "- Motion: small, purposeful micro-interactions (hover, focus, scroll-reveal) with CSS or IntersectionObserver, and respect prefers-reduced-motion.",
+  "- Support light and dark appearance where the brand allows, via prefers-color-scheme and the same tokens.",
+  "- Quality: semantic HTML, visible focus states, alt text, optimised images (next/image for Next.js), no layout shift, empty/loading/error states for every data view, and real-looking sample data (never lorem ipsum) clearly marked as sample.",
+  "- Everything must be visible and aligned: text and icons need at least 4.5:1 contrast against their background (never blue icons on a blue bar), and grids fill their rows with no empty cells or uneven edges.",
+  "- Every page has a distinct, finished layout; do not repeat one template across pages. Dashboards and portals use a clean sidebar or top-nav shell, data tables with filters, and clear status badges.",
+];
+
+/**
+ * What the agent does with a design reference. A reference built from only by glancing at it comes out about 60% complete, so the
+ * work is split: list EVERYTHING in the reference first, build every item of that list, then check the list against the reference.
+ */
+export function designRules(design: string[]): string[] {
+  return [
+    "DESIGN REFERENCE: the client chose a design. Reproduce it completely. Building only part of it is a failure.",
+    `- The reference images: ${design.join(", ")}. Open every one with the Read tool and study it in full before writing any code. Each file is a page or a screen (its name says which); a phone-sized image, if given, is the phone layout.`,
+    "- Files named like `name-part-01.png`, `name-part-02.png` are consecutive slices of ONE long page picture: open them in order and treat them together as that one page, top to bottom (each slice starts a little above where the previous one ended, so do not count the overlap twice).",
+    "- Step 1, before any code: write `.silpi/design-spec.md`, a numbered inventory of the reference from top to bottom. For every section list every element: each line of text, link, icon, button, badge, rating, form field, picture and logo; the layout (columns, order, alignment, spacing, card sizes, how cards of different heights fit together); the colours; the fonts (name any script or display font and pick the closest Google Font). Be exhaustive: the utility bar with its links and social icons, navigation items with their dropdown arrows, the hero, promotional banners, product carousels with ratings and badges, brand strips, newsletter, every footer column, payment icons, the back-to-top button.",
+    "- Step 2: build every numbered item. Nothing in the spec may be skipped, merged or simplified. Keep the reference's layout and proportions. Grids and masonry layouts must fill their rows: use explicit CSS grid areas so no cell is left empty or uneven.",
+    "- Words and pages: use the client's real content and the brief's pages for texts and menu labels. Where the reference shows something the client has not supplied, keep the element and fill it with clearly marked sample text; a picture that was not supplied becomes a plain placeholder box with the same size and position as in the reference. Never drop a section.",
+    "- Everything must be visible: text and icons need enough contrast against their background (never blue icons on a blue bar).",
+    "- Step 3, before you finish: open the reference again and go through `.silpi/design-spec.md` item by item. Write `.silpi/design-checklist.md` marking each item done, with the file it is built in, and fix every item that is not done before you end.",
+  ];
+}
+
+/** The second pass: a fresh look at the reference against what was built, to fill whatever the first pass left out. */
+export function buildDesignReviewPrompt(design: string[]): string {
+  return [
+    "A website was just built in this folder from a design reference. Your only job now is to find what is missing or wrong compared with the reference, and fix it.",
+    `Open each reference image (${design.join(", ")}) with the Read tool, then read .silpi/design-spec.md and the site's source files.`,
+    "Go through the reference section by section, from the top. For every element confirm that it exists in the code with the right text, icon, position, size and colour. Look especially for: elements that are missing; sections in the wrong order; grids with empty cells or wrong proportions; links, icons, badges or buttons that are absent; low contrast (invisible icons or text); sections that were simplified.",
+    "Write the result in `.silpi/design-checklist.md` as numbered items marked done, fixed, or not possible (with the reason). Fix every item that is not done. Do not remove or redesign anything that already matches the reference.",
+    "Then run the build once, as one simple command such as `npm --prefix frontend run build` (never chained, never with cd), and fix any error you caused. Work only inside this folder.",
+    "Finish with one short paragraph: how many items were missing and what you fixed.",
+  ].join("\n");
+}
+
+/** The check with real pictures: the page as it looks now, set beside the reference. This is what finds overlaps, gaps and wrong sizes. */
+export function buildVisualReviewPrompt(design: string[], shots: string[]): string {
+  return [
+    "A website was just built in this folder from a design reference, and it was started and photographed. Your only job now is to compare the real page with the reference, and fix every difference.",
+    `Open the reference images (${design.join(", ")}) and the pictures of the built site (${shots.join(", ")}) with the Read tool. Also read .silpi/design-spec.md.`,
+    "Compare them section by section, from the top, as a person would put the two pictures side by side. Write down every difference: a section or element that is missing; a card or banner that is missing from a grid; empty areas where the reference shows a picture (each needs a visible placeholder box of the same size); a different layout, order, proportion or alignment; text, icons or buttons that are hidden, cut off, overlapping or covered by something (a hover-only bar must stay hidden until hover); headings, text or buttons that are much larger or smaller than in the reference; links, icons, badges, ratings, carousel dots, social icons or payment icons that are absent; colours that are different without a reason; low contrast.",
+    "Where the client's brand colours or fonts are given in .silpi/client-content.md they win; everything else follows the reference. The reference's words are only sample text: keep the client's own content and the brief's pages.",
+    "Write the list in `.silpi/design-checklist.md` as numbered items marked fixed or not possible (with the reason), and fix every item. Do not remove or redesign anything that already matches the reference.",
+    "Then run the build once, as one simple command such as `npm --prefix frontend run build` (never chained, never with cd), and fix any error you caused. Work only inside this folder.",
+    "Finish with one short paragraph: how many differences you found and what you fixed.",
+  ].join("\n");
+}
+
+export function buildLocalPrompt(brief: BriefPayload, content?: { items: number; files: number; missing: string[]; design?: string[] }, changes = false): string {
   const tech = [
     brief.frontend.length ? `frontend ${brief.frontend.join(", ")}` : "",
     brief.backend.length ? `backend ${brief.backend.join(", ")}` : "",
@@ -202,6 +291,11 @@ export function buildLocalPrompt(brief: BriefPayload, content?: { items: number;
       ? ["- The client supplied their original content: read .silpi/client-content.md and use it exactly (their wording, logo, favicon and images from .silpi/client-assets). Copy the files you need into the site; do not invent replacements for anything they supplied. If it lists brand colours and fonts, use them as the site's palette and typography (define them once as CSS variables and load the fonts as described)."]
       : []),
     ...(content && content.missing.length > 0 ? [`- These required items were not supplied: ${content.missing.join("; ")}. Use clearly marked placeholders for them, never invented real-looking content.`] : []),
+    ...(changes ? ["- This project already exists in this folder. Read .silpi/change-request.md: the developer reviewed the earlier result and asked for those changes. Apply them to the existing code, keep everything else, and do not start over."] : []),
+    ...(content?.design?.length ? designRules(content.design) : []),
+    ...DESIGN_STANDARD,
+    "- Build with ONE simple command per step, run from this folder, for example `npm --prefix frontend run build`. Never chain commands with ; or &&, never use cd or Set-Location, and never pipe the output: chained commands are refused and then the build is never verified.",
+    "- Never hard-code a port in package.json scripts (no `next start -p 3000`, no `--port 3000`): servers must read the port from the PORT environment variable, because the site is started on a port chosen at run time.",
     "- Work only inside this folder. Never write real secrets: use a .env.example with placeholders.",
     "- Install dependencies, run the build (and the tests if the project has them), and fix every error you caused before you finish.",
     "- Include a README.md (what it is, the stack, how to run it) and a .gitignore.",
@@ -219,15 +313,16 @@ function finish(jobId: string, patch: Parameters<typeof updateJob>[1]): void {
 
 async function executeLocal(job: Job, dir: string, brief: BriefPayload, location: ClaudeLocation, settings: ExecutionSettings, signal: AbortSignal, deps: RunnerDeps, content?: ContentExport): Promise<void> {
   try {
+    const onEvent = (e: ClaudeEvent) => { if (e.kind !== "ignore") appendEvent(job.id, eventKind(e), e.text); };
     const out = await deps.runClaude({
       location,
       cwd: dir,
-      prompt: buildLocalPrompt(brief, content),
+      prompt: buildLocalPrompt(brief, content, existsSync(path.join(dir, CHANGE_REQUEST_FILE)) && readFileSync(path.join(dir, CHANGE_REQUEST_FILE), "utf8").trim().length > 0),
       args: localArgs(settings.localMaxTurns),
       env: deps.env,
       timeoutMs: settings.localTimeoutMinutes * 60_000,
       signal,
-      onEvent: (e) => { if (e.kind !== "ignore") appendEvent(job.id, eventKind(e), e.text); },
+      onEvent,
     });
     if (out.cancelled || signal.aborted) return;
     if (out.spawnError) return finish(job.id, { state: "failed", error: "Claude Code could not be started on this computer.", exitCode: out.exitCode });
@@ -238,10 +333,40 @@ async function executeLocal(job: Job, dir: string, brief: BriefPayload, location
       // A failure stays a failure. SILPI does not try the API; the developer decides what to do next.
       return finish(job.id, { state: "failed", error: `Claude Code stopped with exit code ${out.exitCode ?? "unknown"}.${detail ? ` ${detail}` : ""}`, exitCode: out.exitCode });
     }
+    const logStep = (step: VerificationStep) => appendEvent(job.id, step.status === "failed" ? "error" : "status", `${step.name}: ${step.status}${step.note ? ` (${safeText(step.note, 120)})` : ""}`);
     updateJob(job.id, { phase: "verifying" });
     appendEvent(job.id, "status", "Claude Code finished. Building and testing the project.");
-    const verification = await deps.verify(dir, signal, (step) => appendEvent(job.id, step.status === "failed" ? "error" : "status", `${step.name}: ${step.status}${step.note ? ` (${safeText(step.note, 120)})` : ""}`));
+    let verification = await deps.verify(dir, signal, logStep);
     if (signal.aborted) return;
+
+    // With a design reference, the real page is photographed and compared with the reference, and whatever was left out or looks
+    // wrong is fixed. Without a browser the same check reads the code against the reference.
+    if (content?.design?.length) {
+      const shots = verification.passed && deps.render ? await deps.render(dir, signal) : null;
+      if (signal.aborted) return;
+      appendEvent(job.id, "status", shots?.files.length ? "Built. Comparing the real page with the design reference and filling any gaps." : "Checking the build against the design reference and filling any gaps.");
+      updateJob(job.id, { phase: "generating" });
+      const review = await deps.runClaude({
+        location,
+        cwd: dir,
+        prompt: shots?.files.length ? buildVisualReviewPrompt(content.design, shots.files) : buildDesignReviewPrompt(content.design),
+        args: localArgs(Math.min(settings.localMaxTurns, 40)),
+        env: deps.env,
+        timeoutMs: settings.localTimeoutMinutes * 60_000,
+        signal,
+        onEvent,
+      });
+      if (review.cancelled || signal.aborted) return;
+      // The first build already works, so a check that fails does not fail the job: it says so and the team reviews as usual.
+      if (review.spawnError || review.timedOut || review.exitCode !== 0 || review.result?.ok === false) {
+        appendEvent(job.id, "error", "The design check did not finish. The first build is kept; compare the site with the reference before approving.");
+      }
+      // The fixes must still build and pass.
+      updateJob(job.id, { phase: "verifying" });
+      appendEvent(job.id, "status", "Building and testing again after the design fixes.");
+      verification = await deps.verify(dir, signal, logStep);
+      if (signal.aborted) return;
+    }
     finish(job.id, {
       state: "completed",
       exitCode: out.exitCode,
@@ -317,12 +442,37 @@ export function declineApi(jobId: string): Job {
   return updateJob(jobId, { state: "prepared", mode: null });
 }
 
-export function restartJob(jobId: string, scopeConfirmed: boolean, deps: RunnerDeps = realDeps()): Job {
+/** Always added when a finished project is built again: the client may have uploaded more since. */
+const REFRESH_NOTE = "The client's content may have been added to or changed since the last run. Read .silpi/client-content.md again. Wherever a page, section, logo or image was a placeholder and real content now exists, replace the placeholder with it. Pages that were built from earlier content must follow the updated content.";
+
+/** Where the developer's requested changes are written, inside the project folder, for the next run to read. */
+export const CHANGE_REQUEST_FILE = path.join(".silpi", "change-request.md");
+
+export function restartJob(jobId: string, scopeConfirmed: boolean, deps: RunnerDeps = realDeps(), changes?: string): Job {
   reconcile();
   const job = getJob(jobId);
   if (!job) throw new ExecError("job-not-found", "That job does not exist.", 404);
-  if (job.state !== "failed" && job.state !== "cancelled") throw new ExecError("bad-state", "Only a failed or cancelled run can be restarted.", 409);
-  return prepareJob(job.leadId, { scopeConfirmed, restartOf: job.id }, deps);
+  // A finished run can be built again: with requested changes, or because the client added or changed content.
+  const rebuild = job.state === "completed";
+  const applyChanges = rebuild && job.review?.status === "changes-requested";
+  if (job.state !== "failed" && job.state !== "cancelled" && !rebuild) {
+    throw new ExecError("bad-state", "Only a failed, cancelled or finished run can be started again.", 409);
+  }
+  const asked = (typeof changes === "string" && changes.trim() ? changes : job.review?.note ?? "").trim().slice(0, 2000);
+  if (applyChanges && asked.length < 3) throw new ExecError("note-required", "Describe the changes you want so they can be applied.", 400);
+  const wanted = rebuild ? [asked, REFRESH_NOTE].filter(Boolean).join("\n\n") : asked;
+  const next = prepareJob(job.leadId, { scopeConfirmed, restartOf: job.id }, deps);
+  if (rebuild) {
+    // The requested changes travel with the project folder; the next run reads them (see buildLocalPrompt).
+    const root = deps.workspaceRoot();
+    if (root) {
+      const dir = resolveWorkspace(root, job.projectName);
+      mkdirSync(path.join(dir, ".silpi"), { recursive: true });
+      writeFileSync(path.join(dir, CHANGE_REQUEST_FILE), `# Changes requested by the developer\n\n${wanted}\n`, "utf8");
+      appendEvent(next.id, "status", applyChanges ? "Requested changes and the latest client content will be applied to the existing project in this run." : "The latest client content will be applied to the existing project in this run.");
+    }
+  }
+  return next;
 }
 
 // ---- 3. review, then ready for delivery ----------------------------------------------------------------------------------------------
@@ -339,6 +489,7 @@ export function reviewJob(jobId: string, input: { decision: "approved" | "change
       throw new ExecError("verification-failed", "The build or tests failed. Fix the project, or approve anyway with a note of at least 10 characters explaining why.", 409);
     }
   }
+  if (input.decision === "changes-requested" && note.length < 3) throw new ExecError("note-required", "Describe the changes you want so they can be applied.", 400);
   appendEvent(jobId, "status", input.decision === "approved" ? "Developer review: approved." : "Developer review: changes requested.");
   return updateJob(jobId, { review: { status: input.decision, at: new Date().toISOString(), note, ...(input.decision === "approved" && failedChecks ? { overrodeVerification: true } : {}) } });
 }

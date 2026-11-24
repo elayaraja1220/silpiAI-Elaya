@@ -1,21 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Check, Copy, ExternalLink, Eye, Lock, MonitorPlay } from "lucide-react";
 
-import { demoApi } from "@/components/business/demo-panel";
 import type { DemoView } from "@/lib/demo/service";
 import { formatRelativeTime } from "@/lib/utils";
 
 /** Overview: every demo that is open right now, across all projects. Hidden when there are none. */
-export function LiveDemosCard() {
-  const [demos, setDemos] = useState<DemoView[] | null>(null);
-  const [local, setLocal] = useState(true);
+export function LiveDemosCard({ demos, local }: { demos: DemoView[] | null; local: boolean }) {
   const [copied, setCopied] = useState("");
-
-  useEffect(() => {
-    demoApi("/api/demo").then((r) => { setDemos(r.demos); setLocal(r.local); }).catch(() => setDemos([]));
-  }, []);
 
   if (!demos || demos.length === 0) return null;
   const copy = async (d: DemoView) => { try { await navigator.clipboard.writeText(d.url); setCopied(d.id); setTimeout(() => setCopied(""), 1500); } catch { /* ignore */ } };

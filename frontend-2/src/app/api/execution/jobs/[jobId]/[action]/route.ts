@@ -45,7 +45,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
       case "decline-api":
         return { job: declineApi(jobId) };
       case "restart":
-        return { job: restartJob(jobId, body.scopeConfirmed === true) };
+        return { job: restartJob(jobId, body.scopeConfirmed === true, undefined, typeof body.changes === "string" ? body.changes : undefined) };
       case "review":
         return { job: reviewJob(jobId, { decision: body.decision as "approved", note: typeof body.note === "string" ? body.note : "", overrideVerification: body.overrideVerification === true }) };
       default:

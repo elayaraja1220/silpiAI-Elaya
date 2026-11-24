@@ -17,6 +17,8 @@ import {
   type AssetKind,
   type AssetStatus,
   type ClientAsset,
+  isDesignKey,
+  isPageDesignKey,
   brandStyleLines,
   isBrandStyleText,
   parseBrandStyle,
@@ -207,7 +209,7 @@ export function removeLeadFiles(leadId: string): void {
 
 // ---- readiness and hand-over to the generator ------------------------------------------------------------------------
 
-export type ContentExport = { items: number; files: number; missing: string[] };
+export type ContentExport = { items: number; files: number; missing: string[]; /** The design reference images and PDFs, as paths inside the project folder. */ design?: string[] };
 
 const folder = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item";
 
@@ -229,16 +231,43 @@ export function exportContent(leadId: string, projectDir: string): ContentExport
     "",
   ];
   const missing: string[] = [];
+  const design: string[] = [];
+  // The design section lists the general reference and each page's design, under one heading.
+  const designBody: string[] = [];
+  const headerLength = lines.length;
   let files = 0;
   let items = 0;
   let group = "";
   for (const a of assets) {
     const has = a.files.length > 0 || a.text.trim().length > 0;
     if (!has) {
-      if (a.key !== "other-files") missing.push(a.label);
+      if (a.key !== "other-files" && !isDesignKey(a.key)) missing.push(a.label);
       continue;
     }
     items += 1;
+    if (isDesignKey(a.key)) {
+      const forPage = isPageDesignKey(a.key) ? a.label.replace(/ page: design$/, "") : "";
+      // The design to follow gets its own section at the top of the file. Its images are listed first and are never "pictures to place on a page".
+      const dir = path.join(base, folder(a.group), folder(a.key));
+      mkdirSync(dir, { recursive: true });
+      const used = new Set<string>();
+      for (const f of a.files) {
+        let name = safeFileName(f.name);
+        while (used.has(name.toLowerCase())) name = `${used.size}-${name}`;
+        used.add(name.toLowerCase());
+        const stored = (getDb().prepare("SELECT stored FROM asset_files WHERE id = ?").get(f.id) as { stored: string } | undefined)?.stored;
+        const source = stored ? path.join(leadDir(leadId), stored) : "";
+        if (source && existsSync(source)) {
+          writeFileSync(path.join(dir, name), readFileSync(source));
+          const rel = `.silpi/client-assets/${folder(a.group)}/${folder(a.key)}/${name}`;
+          files += 1;
+          if (/\.(png|jpe?g|webp|gif|pdf)$/i.test(name)) design.push(rel);
+          designBody.push(`- \`${rel}\`${forPage ? ` (the design of the ${forPage} page)` : ""}`);
+        }
+      }
+      if (a.text.trim()) designBody.push("", `Note about the design${forPage ? ` of the ${forPage} page` : ""}:`, "", a.text.trim(), "");
+      continue;
+    }
     if (a.group !== group) { group = a.group; lines.push(`## ${a.group}`, ""); }
     lines.push(`### ${a.label}`, `Status: ${a.status === "received" ? "received and checked" : "sent by the client, not yet checked"}.`);
     if (a.files.length) {
@@ -271,6 +300,19 @@ export function exportContent(leadId: string, projectDir: string): ContentExport
     for (const m of missing) lines.push(`- ${m}`);
     lines.push("");
   }
+  if (designBody.length > 0) {
+    lines.splice(
+      headerLength, 0,
+      "## Design reference: reproduce this design completely", "",
+      "These images are the design the client chose. Do not place them on a page as pictures. Open each one and build the website to look and work like it: every section, every element, the same layout and proportions. A file marked as the design of a page is the design of that page only: build that page from it. See the design rules in your instructions.", "",
+      "Files:", ...designBody, "",
+    );
+  }
   writeFileSync(path.join(projectDir, ".silpi", "client-content.md"), lines.join("\n"));
-  return { items, files, missing };
+  return { items, files, missing, ...(design.length ? { design } : {}) };
+}
+
+/** How many checklist items have something uploaded or typed (partial is enough to start a project, none is not). */
+export function contentItemCount(leadId: string): number {
+  return listAssets(leadId).filter((a) => a.files.length > 0 || a.text.trim().length > 0).length;
 }

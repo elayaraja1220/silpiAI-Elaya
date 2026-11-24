@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { appDirOf } from "./app-dir";
 import { killTree, scrubbedEnv } from "./claude-cli";
 import type { Verification, VerificationStep } from "./types";
 
@@ -50,6 +51,11 @@ export async function runVerification(
 ): Promise<Verification> {
   const steps: VerificationStep[] = [];
   const add = (step: VerificationStep) => { steps.push(step); onStep(step); };
+
+  // A full-stack project keeps its website in a sub-folder such as frontend/: build that one.
+  const root = dir;
+  dir = appDirOf(root);
+  if (dir !== root) add({ name: "Website folder", status: "passed", note: `Building ${path.basename(dir)}/ (the project has no package.json at its top).` });
 
   const file = path.join(dir, "package.json");
   if (!existsSync(file)) {

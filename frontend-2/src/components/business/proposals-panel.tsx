@@ -6,6 +6,7 @@ import { Check, CheckCircle2, Copy, FileDown, Hammer, Link2, Loader2, Mail, Mess
 import { ComparisonTable } from "@/components/business/comparison-table";
 import { DEV_START_HEADER } from "@/lib/dev-flags"; // TEMP DEV
 import { JOBS_CHANGED } from "@/components/business/execution-panel";
+import { GenerateConfirmDialog } from "@/components/business/generate-confirm-dialog";
 import { Card, jsonFetch } from "@/components/business/ui";
 import { formatINR } from "@/lib/business/pricing";
 import type { Proposal } from "@/lib/business/proposals";
@@ -255,6 +256,8 @@ export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: {
   const [skipBusy, setSkipBusy] = useState(false);
   const [skipError, setSkipError] = useState("");
   const [skipChecked, setSkipChecked] = useState(false);
+  // Nothing is generated until this is confirmed.
+  const [confirmSkip, setConfirmSkip] = useState(false);
   const startWithoutPayment = async () => {
     setSkipBusy(true);
     setSkipError("");
@@ -325,8 +328,21 @@ export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: {
               <span className="mt-0.5 block text-[11px] text-slate-500">For development: generate the project now, without the advance. Runs on Local Claude Code, confirms the approved scope, and is recorded in the history.</span>
             </span>
           </label>
+          {confirmSkip && (
+            <GenerateConfirmDialog
+              project={lead.requirement.title}
+              client={lead.client.company || lead.client.name}
+              content={null}
+              advanceMissing={remaining > 0 ? remaining : null}
+              demo
+              mode="local"
+              busy={skipBusy}
+              onCancel={() => setConfirmSkip(false)}
+              onConfirm={() => { setConfirmSkip(false); void startWithoutPayment(); }}
+            />
+          )}
           {skipChecked && (
-            <button type="button" onClick={startWithoutPayment} disabled={skipBusy} className="flex w-full items-center justify-center gap-2 rounded-lg border border-violet-400/50 bg-violet-500/15 px-3 py-2 text-sm font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-50" data-testid="start-without-payment">
+            <button type="button" onClick={() => setConfirmSkip(true)} disabled={skipBusy} className="flex w-full items-center justify-center gap-2 rounded-lg border border-violet-400/50 bg-violet-500/15 px-3 py-2 text-sm font-semibold text-violet-100 hover:bg-violet-500/25 disabled:opacity-50" data-testid="start-without-payment">
               {skipBusy ? <Loader2 size={15} className="animate-spin" /> : <Hammer size={15} />} Start generating the project
             </button>
           )}

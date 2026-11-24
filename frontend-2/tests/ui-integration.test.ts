@@ -474,7 +474,7 @@ describe("10. the workflow is connected end to end", () => {
     const runner = read("src/lib/execution/runner.ts");
     assert.ok(runner.includes("buildBrief(lead, getRateCard())"));
     assert.ok(runner.includes("...brief"), "the API task carries the approved technology lists");
-    assert.ok(runner.includes("buildLocalPrompt(brief, content)"), "the local run is told to use exactly the approved technology");
+    assert.ok(runner.includes("buildLocalPrompt(brief, content,"), "the local run is told to use exactly the approved technology");
     assert.ok(!read("src/app/api/business/leads/[id]/build/route.ts").includes("streamAgentRun"), "the old direct route no longer starts a run");
   });
 });

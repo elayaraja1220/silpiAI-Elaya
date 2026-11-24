@@ -1,4 +1,5 @@
 import {
+  BILLING_CYCLES,
   COMPLEXITIES,
   DESIGN_SOURCES,
   HOSTING_PLANS,
@@ -15,6 +16,7 @@ import {
   type RateCard,
   type Requirement,
 } from "./types";
+import { parseItems } from "./clarifications";
 import { HANDOVER_LABEL, INDIAN_STATES } from "./rate-card";
 import { autoComplexity, billablePages, splitPages } from "./scope";
 import { parseClientTechInput, parseSelectedStack } from "./tech-preference";
@@ -131,11 +133,30 @@ export function parseRequirement(input: unknown, rates: RateCard): Requirement {
     externalServices: strList(r.externalServices, 20, 120),
     seoKeywords: strList(r.seoKeywords, 12, 80),
     insights: {
-      confirmed: strList(insights.confirmed, 40, 300),
-      assumptions: strList(insights.assumptions, 40, 300),
-      questions: strList(insights.questions, 40, 300),
+      confirmed: strList(insights.confirmed, 400, 400),
+      assumptions: strList(insights.assumptions, 100, 400),
+      questions: strList(insights.questions, 100, 400),
+      ...(Array.isArray(insights.tracker) ? { tracker: parseItems(insights.tracker) } : {}),
+      ...(obj(insights.lastChange).newlyDiscovered !== undefined
+        ? { lastChange: { newlyDiscovered: Math.max(0, Math.round(Number(obj(insights.lastChange).newlyDiscovered)) || 0), duplicatesRemoved: Math.max(0, Math.round(Number(obj(insights.lastChange).duplicatesRemoved)) || 0) } }
+        : {}),
     },
   };
+
+  // Hourly engagement (freelancer / consultant style): priced from rate x estimated hours, not from pages and features.
+  if (r.billing === "hourly") {
+    const h = obj(r.hourly);
+    const rate = Math.round(Number(h.rate));
+    const hours = Math.round(Number(h.estimatedHours) * 2) / 2;
+    if (!Number.isFinite(rate) || rate < 1 || rate > 1_000_000) throw new ValidationError("Enter the price of one hour (more than zero).");
+    if (!Number.isFinite(hours) || hours < 1 || hours > 5000) throw new ValidationError("Enter the estimated hours (1 to 5000).");
+    req.billing = "hourly";
+    req.hourly = { role: str(h.role, 80) || "Specialist", rate, estimatedHours: hours, rangePct: int(h.rangePct, 0, 100, 20), cycle: oneOf(h.cycle, BILLING_CYCLES, "monthly") };
+    req.scope = "full";
+    if (!req.title) throw new ValidationError("Project title is required.");
+    if (req.summary.length < 20) throw new ValidationError("Describe the work in at least a sentence or two.");
+    return req;
+  }
 
   // Complexity follows the project type and features (never typed in by hand).
   req.complexity = autoComplexity(req, rates);

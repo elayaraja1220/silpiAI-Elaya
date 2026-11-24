@@ -1,3 +1,5 @@
+import type { ClarificationItem, RawDiscovered, RawQuestion, RawRequirement } from "./clarifications";
+
 /**
  * Business workflow types: requirement -> quotation -> payments -> delivery.
  * Shared by the server (API routes, database) and the browser (forms, live estimate).
@@ -118,6 +120,13 @@ export type RequirementInsights = {
   assumptions: string[];
   /** Still unanswered; ask before the final price. */
   questions: string[];
+  /**
+   * Every clarification question and assumption, each with a stable id and a status (see clarifications.ts). The three lists above
+   * are derived from it. Missing on older records.
+   */
+  tracker?: ClarificationItem[];
+  /** What the last upload changed, for the analysis summary. */
+  lastChange?: { newlyDiscovered: number; duplicatesRemoved: number };
 };
 
 /**
@@ -129,6 +138,27 @@ export type ClientTech = { stated: string[]; ids: string[]; confirmedIds?: strin
 
 /** A stack the team picked from the recommendations (catalog ids). Kept apart from what the client asked for. */
 export type SelectedStack = { ids: string[] };
+
+/** How a project is billed: one fixed price for the whole project, or by the hours worked (freelancer / consultant style). */
+export const BILLING_MODES = ["fixed", "hourly"] as const;
+export type BillingMode = (typeof BILLING_MODES)[number];
+
+export const BILLING_CYCLES = ["weekly", "fortnightly", "monthly", "on-completion"] as const;
+export type BillingCycle = (typeof BILLING_CYCLES)[number];
+export const BILLING_CYCLE_LABELS: Record<BillingCycle, string> = { weekly: "every week", fortnightly: "every two weeks", monthly: "every month", "on-completion": "when the work is complete" };
+
+/** The terms of an hourly engagement: the people doing the work bill their hours, up to an agreed cap. */
+export type HourlyEngagement = {
+  /** Who works, e.g. "Senior developer" or "Technical consultant". */
+  role: string;
+  /** Price of one hour (INR, before GST). */
+  rate: number;
+  /** The estimate of the hours needed. */
+  estimatedHours: number;
+  /** The estimate can be this percent lower or higher; the higher end is the cap. */
+  rangePct: number;
+  cycle: BillingCycle;
+};
 
 export type Requirement = {
   title: string;
@@ -182,6 +212,10 @@ export type Requirement = {
   /** Search phrases the client's customers would use, e.g. "organic rice Chennai". */
   seoKeywords?: string[];
   insights?: RequirementInsights;
+  /** Missing on older records = "fixed". */
+  billing?: BillingMode;
+  /** Only when billing is "hourly". */
+  hourly?: HourlyEngagement;
 };
 
 export type RateCard = {
@@ -299,7 +333,24 @@ export type SeoAdvice = {
   keywords: string[];
 };
 
+/** What the client is quoted for an hourly engagement (every amount includes GST, like the fixed price). */
+export type HourlyTerms = {
+  role: string;
+  rate: number;
+  cycle: BillingCycle;
+  rangePct: number;
+  minHours: number;
+  expectedHours: number;
+  /** Not to be exceeded without the client's written approval. */
+  capHours: number;
+  minTotal: number;
+  expectedTotal: number;
+  capTotal: number;
+};
+
 export type Quote = {
+  /** Present only for an hourly engagement: grandTotal is then the estimate, not a fixed price. */
+  hourly?: HourlyTerms;
   items: LineItem[];
   totalHours: number;
   subtotal: number;
@@ -457,6 +508,17 @@ export type RequirementDraft = {
   confirmed: string[];
   missingInfo: string[];
   assumptions: string[];
+  /** Every clarification question in the documents, with the client's answer. Missing on older agent versions. */
+  questionnaire?: RawQuestion[];
+  /** Every requirement the document states, with where it is written. */
+  requirements?: RawRequirement[];
+  /** Gaps the AI found: proposals for the team to review, never scope. */
+  discovered?: RawDiscovered[];
+  /** Left out of the scope by the client. */
+  exclusions?: string[];
+  /** Assumptions the client approved in the document. */
+  approvedAssumptions?: string[];
+  approvalInfo?: string[];
 };
 
 export const PAYMENT_KINDS = ["advance", "balance"] as const;
@@ -482,6 +544,8 @@ export type ClientResponse = {
   name: string;
   message: string;
   at: string;
+  /** When approving: the items the client was told are NOT in the price (to be quoted separately). Recorded as proof they were told. */
+  acknowledgedDeferred?: string[];
 };
 
 /** Time actually spent on a project, logged by the owner (the basis of their own price history). */

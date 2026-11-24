@@ -33,6 +33,10 @@ const draft: RequirementDraft = {
   technologyPreference: [],
   confirmed: ["UPI payments"],
   missingInfo: ["How many products at launch?"],
+  questionnaire: [{ question: "How many products at launch?", answer: "", status: "unanswered", critical: true, origin: "document" }],
+  exclusions: [],
+  approvedAssumptions: [],
+  approvalInfo: [],
   assumptions: [],
 };
 
@@ -96,8 +100,9 @@ describe("analyzeRequirement", () => {
     const { client, calls } = fakeClient({});
     const result = await analyzeRequirement(AnalyzeInputSchema.parse({ attachments: [pdf], notes: "Client wants Tamil too" }), client);
     expect(result).toMatchObject({ success: true, draft: { projectType: "ecommerce" }, model: "claude-haiku-5-5" });
-    // 20K in * $0.10/M + 1K out * $0.50/M = $0.0025
-    expect(result.success && result.costUsd).toBeCloseTo(0.0025, 6);
+    // Two reads of the document (form draft + requirement inventory), each 20K in * $0.10/M + 1K out * $0.50/M = $0.0025
+    expect(calls).toHaveLength(2);
+    expect(result.success && result.costUsd).toBeCloseTo(0.005, 6);
     const content = (calls[0]!.messages as Array<{ content: Array<{ type: string; text?: string }> }>)[0]!.content;
     expect(content[0]!.type).toBe("document");
     expect(content.at(-1)!.text).toContain("Client wants Tamil too");
@@ -154,6 +159,10 @@ describe("technology preference and demo forms", () => {
     technologyPreference: ["HTML", "CSS", "JavaScript"],
     confirmed: ["Built with HTML, CSS and vanilla JavaScript only", "Contact page includes a demo form that does not send or store messages"],
     missingInfo: [],
+    questionnaire: [],
+    exclusions: [],
+    approvedAssumptions: [],
+    approvalInfo: [],
     assumptions: [],
   };
 

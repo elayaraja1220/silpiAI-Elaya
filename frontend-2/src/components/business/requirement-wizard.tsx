@@ -40,17 +40,25 @@ import {
   type RateCard,
   type Requirement,
   type RequirementDraft,
+  type RequirementInsights,
   type Scope,
   type Tier,
 } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
 
 import { BudgetSummary } from "./budget-summary";
+import { estimateStatus, mergeInsights } from "@/lib/business/clarifications";
+import { estimateBasis } from "@/lib/business/estimate-ledger";
+import { EstimateBreakdown } from "./estimate-breakdown";
+import { ClarificationSummary } from "./clarification-summary";
 import { DocumentAnalyzer, type AnalysisOutcome } from "./document-analyzer";
 import { PackageDetails } from "./package-details";
 import { ScopeSummary } from "./scope-summary";
 import { WizardCostPanel } from "./cost-panel";
+import { BudgetInput } from "./budget-input";
 import { TechnologyRecommendations } from "./technology-recommendations";
+import { TechnologyChooser } from "./technology-chooser";
+import { applyClientTech } from "@/lib/business/client-tech";
 import { Card, Choice, Field, Input, Section, Select, Textarea, jsonFetch } from "./ui";
 
 const STEPS = ["Requirement", "Pages & features", "Package", "Client & services", "Review"] as const;
@@ -124,7 +132,7 @@ function mergeDraft(d: RequirementDraft, files: string[], client: Client, req: R
     seoKeywords: d.seoKeywords.slice(0, 12),
     // Technology the client named is kept exactly as stated; it is never replaced silently.
     clientTech: parseClientTech(d.technologyPreference) ?? req.clientTech,
-    insights: { confirmed: d.confirmed, assumptions: d.assumptions, questions: d.missingInfo },
+    insights: mergeInsights(d, req.insights),
     design: pick(d.design, DESIGN_SOURCES, req.design),
     references: [d.references, source].filter(Boolean).join("\n"),
     // The client already owns a named domain unless they asked us to register it.
@@ -195,6 +203,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   const [beforeFit, setBeforeFit] = useState<Pick<Requirement, "pages" | "modules"> & { mustHave: ModuleId[]; deferredModules: ModuleId[]; deferredPages: string[] } | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [techOpen, setTechOpen] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisOutcome | null>(null);
 
   useEffect(() => {
@@ -240,6 +249,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   const shownTier = tier ?? suggested;
   const shown = proposals?.find((p) => p.tier === shownTier) ?? null;
   const estimate = shown?.quote ?? quote;
+  const preliminary = estimateStatus(req.insights?.tracker ?? []).level === "preliminary";
   // Budget is compared with the shown package; the price itself is never changed to fit.
   const budgetCheck = useMemo(
     () => (rates && estimate && budget > 0 ? checkBudget(shown?.requirement ?? priced, estimate, client, rates, proposals ?? undefined) : null),
@@ -378,9 +388,11 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   // Budget question: sits right above the "Analyse & fill the form" button (or at the top once a document is analysed).
   const budgetBlock = (
     <>
-      <Field label="Client budget (₹, incl. GST)" hint="The most the client can pay for development. We suggest Basic, Standard or Premium from this. Leave empty if not known.">
-        <Input type="number" min={0} value={budget || ""} onChange={(e) => setR("budget", Math.max(0, Math.round(Number(e.target.value) || 0)))} placeholder="e.g. 10000" className="text-base" />
-      </Field>
+      <BudgetInput
+        value={budget}
+        onChange={(inr) => setR("budget", Math.max(0, Math.round(inr)))}
+        hint="The most the client can pay for development, including GST. We suggest Basic, Standard or Premium from the rupee amount. Leave empty if not known."
+      />
       {docBudget > 0 && docBudget !== budget && (
         <p className="-mt-3 flex flex-wrap items-center gap-2 text-[11px] text-amber-200">
           The document says {formatINR(docBudget)}; your {formatINR(budget)} is used.
@@ -442,7 +454,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
         <Card className="space-y-5">
           {step === 0 && analysis && budgetBlock}
           {step === 0 && !analysis && <DocumentAnalyzer onDraft={applyAnalysis}>{budgetBlock}</DocumentAnalyzer>}
-          {analysis && (step === 0 || step === STEPS.length - 1) && <AnalysisNotes analysis={analysis} onClear={() => setAnalysis(null)} />}
+          {analysis && (step === 0 || step === STEPS.length - 1) && <AnalysisNotes analysis={analysis} insights={req.insights} onClear={() => setAnalysis(null)} />}
 
           {/* 1. Requirement: what the client wants and the one budget question */}
           {step === 0 && (
@@ -682,7 +694,20 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   onConfirm={(ids) => setReq((r) => (r.clientTech ? { ...r, clientTech: { ...r.clientTech, confirmedIds: ids } } : r))}
                   onUndo={() => setReq((r) => (r.clientTech ? { ...r, clientTech: { stated: r.clientTech.stated, ids: r.clientTech.ids } } : r))}
                   onClearSelection={() => setReq((r) => { const { selectedStack: _s, ...rest } = r; return rest; })}
+                  onChooseTech={() => setTechOpen(true)}
+                  techChosen={Object.keys(req.tech ?? {}).length > 0}
                 />
+                {techOpen && (
+                  <TechnologyChooser
+                    local={{ requirement: priced, client, rates }}
+                    tier={shownTier}
+                    value={null}
+                    intro="Choose the frontend, backend and database. Each option shows how it changes the price compared with the current estimate; the estimate on the right updates when you apply it."
+                    applyLabel="Use this technology"
+                    onClose={() => setTechOpen(false)}
+                    onApply={(tech) => { setReq((r) => applyClientTech(r, tech, rates)); setTechOpen(false); }}
+                  />
+                )}
                 <PackageDetails proposals={proposals} rates={rates} selected={shownTier} suggested={suggested} budget={budget} onSelect={setTier} />
               </>
             ) : (
@@ -864,6 +889,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
             </p>
             <p className="mt-3 text-[34px] font-semibold leading-none tracking-tight tabular-nums text-white">{formatINR(estimate ? estimate.grandTotal : 0)}</p>
             <p className="mt-1.5 text-xs text-slate-400">Grand total incl. GST</p>
+            {preliminary && <p data-testid="wizard-preliminary" className="mt-2 inline-block rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] text-amber-100">Preliminary estimate: open questions or approvals remain</p>}
           </div>
           <div className="px-6 pb-6 pt-4">
           {estimate ? (
@@ -921,6 +947,17 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
           )}
           </div>
         </Card>
+        {estimate && rates && (
+          <details className="group mt-4 rounded-2xl border border-white/[.07] bg-white/[.025]" data-testid="wizard-breakdown">
+            <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-3 text-xs font-semibold text-slate-200 [&::-webkit-details-marker]:hidden">
+              How this estimate is calculated
+              <span className="text-[11px] font-normal text-slate-500 group-open:hidden">show</span>
+            </summary>
+            <div className="border-t border-white/[.05] px-5 py-4">
+              <EstimateBreakdown quote={estimate} basis={estimateBasis(shown?.requirement ?? priced, rates)} compact />
+            </div>
+          </details>
+        )}
       </aside>
     </div>
   );
@@ -936,9 +973,7 @@ function ReviewBlock({ title, children }: { title: string; children: React.React
 }
 
 /** What the AI could not tell from the document: ask the client before sending the quotation. */
-function AnalysisNotes({ analysis, onClear }: { analysis: AnalysisOutcome; onClear: () => void }) {
-  const { draft } = analysis;
-  const confirmed = draft.confirmed ?? [];
+function AnalysisNotes({ analysis, insights, onClear }: { analysis: AnalysisOutcome; insights?: RequirementInsights; onClear: () => void }) {
   return (
     <div className="rounded-xl border border-amber-400/20 bg-amber-500/[.06] p-4 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -947,25 +982,17 @@ function AnalysisNotes({ analysis, onClear }: { analysis: AnalysisOutcome; onCle
         </p>
         <button type="button" onClick={onClear} className="text-[11px] text-slate-400 hover:text-white">Analyse another document</button>
       </div>
-      {confirmed.length > 0 && (
-        <div className="mt-3">
-          <p className="flex items-center gap-1.5 text-emerald-200"><CheckCircle2 size={13} /> Confirmed by the client ({confirmed.length}):</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-400">{confirmed.map((c) => <li key={c}>{c}</li>)}</ul>
-        </div>
+      {insights && <div className="mt-3"><ClarificationSummary insights={insights} documents={analysis.files} /></div>}
+      {analysis.files.some((f) => /.(png|jpe?g|webp|gif)$/i.test(f)) && (
+        <p className="mt-3 rounded-lg border border-sky-400/25 bg-sky-500/10 px-3 py-2 text-[11px] leading-5 text-sky-100" data-testid="design-note">
+          You gave pictures. They were read as the requirement only; they are <b>not</b> saved as a design. If the website must look like a design, upload it again after the client approves, under Client files, Design, Design reference.
+        </p>
       )}
-      {draft.missingInfo.length > 0 && (
-        <div className="mt-3">
-          <p className="flex items-center gap-1.5 text-rose-200"><HelpCircle size={13} /> Unanswered: ask the client ({draft.missingInfo.length}):</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-400">{draft.missingInfo.map((q) => <li key={q}>{q}</li>)}</ul>
-        </div>
+      {analysis.cached ? (
+        <p className="mt-2 text-[11px] text-emerald-300" data-testid="analysis-cached">This document was analysed before. The saved result is used, so the estimate is the same as last time (no cost).</p>
+      ) : (
+        <p className="mt-2 text-[11px] text-slate-500">Analysis cost: ${analysis.costUsd.toFixed(4)} USD ({analysis.model}){analysis.runs && analysis.runs > 1 ? ` · agreement of ${analysis.runs} readings` : ""}{analysis.partial ? " · only some readings finished, so this result was not saved" : ""}</p>
       )}
-      {draft.assumptions.length > 0 && (
-        <div className="mt-3">
-          <p className="flex items-center gap-1.5 text-amber-200"><AlertTriangle size={13} /> Assumed by the AI: confirm with the client ({draft.assumptions.length}):</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-slate-400">{draft.assumptions.map((a) => <li key={a}>{a}</li>)}</ul>
-        </div>
-      )}
-      <p className="mt-2 text-[11px] text-slate-500">Analysis cost: ${analysis.costUsd.toFixed(4)} USD ({analysis.model})</p>
     </div>
   );
 }

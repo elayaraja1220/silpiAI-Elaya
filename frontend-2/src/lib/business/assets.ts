@@ -16,7 +16,18 @@ export const ASSET_STATUS_LABELS: Record<AssetStatus, string> = {
   redo: "Please send again",
 };
 
-export const ASSET_GROUPS = ["Brand", "Business details", "Page content", "Images", "Other"] as const;
+export const ASSET_GROUPS = ["Brand", "Design", "Business details", "Page design", "Page content", "Images", "Other"] as const;
+/** The checklist item that holds the design to follow. The generator treats it as the layout to reproduce, not as a picture to place on a page. */
+export const DESIGN_REFERENCE_KEY = "design-reference";
+/** One design per page ("design:home"), shown beside that page's content. The generator reproduces it exactly like the design reference. */
+export const PAGE_DESIGN_PREFIX = "design:";
+export const PAGE_CONTENT_PREFIX = "page:";
+export const isPageDesignKey = (key: string): boolean => key.startsWith(PAGE_DESIGN_PREFIX);
+/** Any item that holds a design to reproduce (the general reference or one page's design). */
+export const isDesignKey = (key: string): boolean => key === DESIGN_REFERENCE_KEY || isPageDesignKey(key);
+/** The page a design belongs to, as the key of its content item ("design:home" is the design of "page:home"), and the other way round. */
+export const contentKeyOfDesign = (key: string): string => `${PAGE_CONTENT_PREFIX}${key.slice(PAGE_DESIGN_PREFIX.length)}`;
+export const designKeyOfContent = (key: string): string => `${PAGE_DESIGN_PREFIX}${key.slice(PAGE_CONTENT_PREFIX.length)}`;
 export type AssetGroup = (typeof ASSET_GROUPS)[number];
 
 export type AssetKind = "files" | "text" | "both";
@@ -88,14 +99,24 @@ export function buildChecklist(req: Pick<Requirement, "pages" | "modules" | "pro
     { key: "logo", group: "Brand", label: "Logo", kind: "files", required: false, hint: "The main logo. Best: PNG with a transparent background, SVG, or the original design file (AI, PSD, PDF)." },
     { key: "logo-mobile", group: "Brand", label: "Mobile logo", kind: "files", required: false, hint: "A smaller or square version of the logo for phones and the menu bar. If there is only one logo, say so in the note." },
     { key: "favicon", group: "Brand", label: "Favicon (browser tab icon)", kind: "files", required: false, hint: "A square icon, at least 512 x 512 px (PNG, SVG or ICO). We can make one from the logo if you do not have it." },
-    { key: "brand-style", group: "Brand", label: "Brand colours and fonts", kind: "both", required: false, hint: "At least 9 colour codes (like #0B3D91) and your fonts: from Google Fonts, Adobe Fonts, or your own font (@font-face CSS or font files). You can also upload a brand guideline PDF." },
+    { key: "brand-style", group: "Brand", label: "Brand colours and fonts", kind: "both", required: false, hint: "At least 9 colour codes (like #0B3D91), your fonts (Google Fonts, Adobe Fonts, or your own font) and, if you have them, the text sizes and weights for headings and paragraphs." },
+    { key: DESIGN_REFERENCE_KEY, group: "Design", label: "Design reference (the design to follow)", kind: "both", required: false, hint: "Full-page images of the design the website must look like: one image per page (home page, an inner page, the phone view), as PNG or JPG, or exported frames as PDF. In the note, say what to copy exactly and what to ignore, for example \"copy the layout and colours, use our own words and photos\"." },
     { key: "business-details", group: "Business details", label: "Business and contact details", kind: "text", required: false, hint: "Business name, address, phone, email, WhatsApp number, working hours, Google Maps link and social media links." },
   ];
 
   for (const page of req.pages) {
     const purpose = req.pageDetails?.[page]?.purpose;
+    // Two things per page, side by side on the screens: the design to follow, and the real content.
     items.push({
-      key: `page:${slug(page)}`,
+      key: `${PAGE_DESIGN_PREFIX}${slug(page)}`,
+      group: "Page design",
+      label: `${page} page: design`,
+      kind: "files",
+      required: false,
+      hint: `The design of the ${page} page, as a PNG, JPG or PDF. The page is built to look like it.`,
+    });
+    items.push({
+      key: `${PAGE_CONTENT_PREFIX}${slug(page)}`,
       group: "Page content",
       label: `${page} page: original content`,
       kind: "both",
@@ -136,9 +157,32 @@ export const formatBytes = (n: number): string => (n >= 1048576 ? `${(n / 104857
 // ---- brand colours and fonts ------------------------------------------------------------------------------------------
 
 /** The first nine colour fields and what each is for. More colours can be added after these. */
-export const BRAND_COLOR_ROLES = ["Primary", "Secondary", "Accent", "Background", "Cards / surface", "Text", "Headings", "Buttons", "Links and borders"] as const;
+export const BRAND_COLOR_ROLES = ["Primary", "Secondary", "Accent", "Background", "Cards / surface", "Text", "Headings", "Buttons", "Links"] as const;
 export const MIN_BRAND_COLORS = BRAND_COLOR_ROLES.length;
 export const MAX_BRAND_COLORS = 24;
+
+/**
+ * Colours for parts of the page, kept apart from the nine above so nothing already saved moves. Each has its own field:
+ * borders are separate from links, and the navigation bar, the footer and the side menu each have their own set.
+ */
+export const MORE_COLORS = [
+  { key: "borders", group: "Borders", label: "Borders and dividers" },
+  { key: "navBg", group: "Navigation bar", label: "Navigation background" },
+  { key: "navText", group: "Navigation bar", label: "Navigation text" },
+  { key: "navLink", group: "Navigation bar", label: "Navigation link" },
+  { key: "footerBg", group: "Footer", label: "Footer background" },
+  { key: "footerHeading", group: "Footer", label: "Footer headings" },
+  { key: "footerText", group: "Footer", label: "Footer text" },
+  { key: "footerLink", group: "Footer", label: "Footer link" },
+  { key: "sideBg", group: "Side menu", label: "Side menu background" },
+  { key: "sideHeading", group: "Side menu", label: "Side menu headings" },
+  { key: "sideText", group: "Side menu", label: "Side menu text" },
+  { key: "sideLink", group: "Side menu", label: "Side menu link" },
+] as const;
+export type MoreColorKey = (typeof MORE_COLORS)[number]["key"];
+export const MORE_COLOR_GROUPS = ["Navigation bar", "Footer", "Side menu"] as const;
+export const MAX_COLOR_LABEL = 40;
+const COLOR_LABEL = /^[\p{L}\p{N} .,&'+_/()-]{1,40}$/u;
 export const MAX_BRAND_FONTS = 8;
 export const MAX_FONT_CSS = 4000;
 
@@ -159,7 +203,75 @@ export type BrandFont = {
   /** Imported fonts only: the @font-face CSS. */
   css: string;
 };
-export type BrandStyle = { colors: string[]; fonts: BrandFont[] };
+/** The text styles a brand fixes: each heading level, paragraph and small text. */
+export const TYPE_KEYS = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "small"] as const;
+export type TypeKey = (typeof TYPE_KEYS)[number];
+export const TYPE_LABELS: Record<TypeKey, string> = { h1: "Heading 1 (H1)", h2: "Heading 2 (H2)", h3: "Heading 3 (H3)", h4: "Heading 4 (H4)", h5: "Heading 5 (H5)", h6: "Heading 6 (H6)", p: "Paragraph", small: "Small text" };
+export const FONT_WEIGHTS = [300, 400, 500, 600, 700, 800, 900] as const;
+export const FONT_WEIGHT_LABELS: Record<number, string> = { 300: "Light", 400: "Regular", 500: "Medium", 600: "Semibold", 700: "Bold", 800: "Extra bold", 900: "Black" };
+export const MIN_TYPE_PX = 8;
+export const MAX_TYPE_PX = 200;
+
+export type TypeSpec = {
+  /** Size on a computer, in px. */
+  size: number;
+  /** Size on a phone, in px. Empty = the generator scales it down. */
+  mobileSize?: number;
+  weight: number;
+  /** Line height as a multiple of the size, e.g. 1.2. Empty = the generator chooses. */
+  lineHeight?: number;
+};
+export type TypeScale = Partial<Record<TypeKey, TypeSpec>>;
+
+/** A modern, readable scale to start from; nothing here is forced, every value can be changed. */
+export const STANDARD_TYPE_SCALE: Record<TypeKey, TypeSpec> = {
+  h1: { size: 56, mobileSize: 36, weight: 700, lineHeight: 1.1 },
+  h2: { size: 44, mobileSize: 30, weight: 700, lineHeight: 1.15 },
+  h3: { size: 32, mobileSize: 24, weight: 600, lineHeight: 1.2 },
+  h4: { size: 24, mobileSize: 20, weight: 600, lineHeight: 1.3 },
+  h5: { size: 20, mobileSize: 18, weight: 600, lineHeight: 1.35 },
+  h6: { size: 16, mobileSize: 16, weight: 600, lineHeight: 1.4 },
+  p: { size: 16, mobileSize: 16, weight: 400, lineHeight: 1.6 },
+  small: { size: 14, mobileSize: 13, weight: 400, lineHeight: 1.5 },
+};
+
+export type BrandStyle = {
+  /** The nine main colours, then any colours the person added (their names are in `labels`). */
+  colors: string[];
+  fonts: BrandFont[];
+  /** Only the text styles the brand fixed. Absent = none. */
+  type?: TypeScale;
+  /** Borders, navigation, footer and side menu colours. Only the ones filled in. */
+  more?: Partial<Record<MoreColorKey, string>>;
+  /** The names of the added colours: `labels[0]` names `colors[9]`. A missing name shows as "Extra colour N". */
+  labels?: string[];
+};
+
+/** Reads the text styles. A row without a size is "not fixed" and is left out; anything else out of range is refused with a clear message. */
+export function validateTypeScale(input: unknown): TypeScale {
+  if (input === undefined || input === null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) throw new Error("The text sizes are not valid.");
+  const raw = input as Record<string, unknown>;
+  const out: TypeScale = {};
+  const num = (v: unknown): number | null => (v === "" || v === null || v === undefined ? null : typeof v === "number" || typeof v === "string" ? Number(v) : Number.NaN);
+  for (const key of TYPE_KEYS) {
+    const row = raw[key];
+    if (row === undefined || row === null) continue;
+    if (typeof row !== "object" || Array.isArray(row)) throw new Error(`${TYPE_LABELS[key]}: the values are not valid.`);
+    const r = row as Record<string, unknown>;
+    const size = num(r.size);
+    if (size === null) continue;
+    if (!Number.isFinite(size) || size < MIN_TYPE_PX || size > MAX_TYPE_PX) throw new Error(`${TYPE_LABELS[key]}: the size must be a number from ${MIN_TYPE_PX} to ${MAX_TYPE_PX} px.`);
+    const mobile = num(r.mobileSize);
+    if (mobile !== null && (!Number.isFinite(mobile) || mobile < MIN_TYPE_PX || mobile > MAX_TYPE_PX)) throw new Error(`${TYPE_LABELS[key]}: the mobile size must be a number from ${MIN_TYPE_PX} to ${MAX_TYPE_PX} px, or empty.`);
+    const weight = num(r.weight) ?? 400;
+    if (!(FONT_WEIGHTS as readonly number[]).includes(weight)) throw new Error(`${TYPE_LABELS[key]}: choose a weight from 300 (light) to 900 (black).`);
+    const line = num(r.lineHeight);
+    if (line !== null && (!Number.isFinite(line) || line < 0.8 || line > 3)) throw new Error(`${TYPE_LABELS[key]}: the line height must be from 0.8 to 3 (for example 1.2), or empty.`);
+    out[key] = { size: Math.round(size), weight, ...(mobile !== null ? { mobileSize: Math.round(mobile) } : {}), ...(line !== null ? { lineHeight: Math.round(line * 100) / 100 } : {}) };
+  }
+  return out;
+}
 
 export const blankFont = (): BrandFont => ({ name: "", source: "google", usage: "heading", link: "", css: "" });
 /** What the form starts with: nine empty colour fields and one empty font. */
@@ -223,13 +335,44 @@ export function validateBrandStyle(input: unknown): BrandStyle {
     }
     fonts.push({ name, source, usage, link: source === "imported" ? "" : link, css: source === "imported" ? css : "" });
   });
-  return { colors, fonts };
+  const type = validateTypeScale((input as { type?: unknown }).type);
+  const more = validateMoreColors((input as { more?: unknown }).more);
+  const labels = validateColorLabels((input as { labels?: unknown }).labels, colors.length - MIN_BRAND_COLORS);
+  return { colors, fonts, ...(Object.keys(type).length ? { type } : {}), ...(Object.keys(more).length ? { more } : {}), ...(labels.some(Boolean) ? { labels } : {}) };
+}
+
+/** The colours of the borders, navigation, footer and side menu: known keys only, each a real colour code; empty ones are left out. */
+export function validateMoreColors(input: unknown): Partial<Record<MoreColorKey, string>> {
+  if (input === undefined || input === null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) throw new Error("The page colours are not valid.");
+  const raw = input as Record<string, unknown>;
+  const out: Partial<Record<MoreColorKey, string>> = {};
+  for (const { key, label } of MORE_COLORS) {
+    const v = raw[key];
+    if (v === undefined || v === null || v === "") continue;
+    const hex = typeof v === "string" ? normalizeHex(v) : null;
+    if (hex === null) throw new Error(`${label}: not a valid colour code. Use a code like #0B3D91.`);
+    if (hex) out[key] = hex;
+  }
+  return out;
+}
+
+/** The names of the added colours, one per added colour (a blank name is fine: it then shows as "Extra colour N"). */
+export function validateColorLabels(input: unknown, count: number): string[] {
+  const list = Array.isArray(input) ? input : [];
+  const labels: string[] = [];
+  for (let i = 0; i < Math.max(0, count); i++) {
+    const v = typeof list[i] === "string" ? (list[i] as string).trim().replace(/\s+/g, " ") : "";
+    if (v && !COLOR_LABEL.test(v)) throw new Error(`Colour ${MIN_BRAND_COLORS + i + 1}: the name can have letters, numbers, spaces and . , & ' + _ / ( ) - only, up to ${MAX_COLOR_LABEL} characters.`);
+    labels.push(v);
+  }
+  return labels;
 }
 
 /** Stored text for the checklist item. Empty when nothing was filled in, so the item still counts as "not provided". */
 export function serializeBrandStyle(style: BrandStyle): string {
   const cleaned = validateBrandStyle(style);
-  if (cleaned.colors.every((c) => c === "") && cleaned.fonts.length === 0) return "";
+  if (cleaned.colors.every((c) => c === "") && cleaned.fonts.length === 0 && !cleaned.type && !cleaned.more) return "";
   return JSON.stringify(cleaned);
 }
 
@@ -238,7 +381,7 @@ export function parseBrandStyle(text: string): BrandStyle {
   try {
     const parsed = JSON.parse(text) as unknown;
     const style = validateBrandStyle(parsed);
-    return { colors: style.colors, fonts: style.fonts.length ? style.fonts : [blankFont()] };
+    return { colors: style.colors, fonts: style.fonts.length ? style.fonts : [blankFont()], ...(style.type ? { type: style.type } : {}), ...(style.more ? { more: style.more } : {}), ...(style.labels ? { labels: style.labels } : {}) };
   } catch {
     return emptyBrandStyle();
   }
@@ -252,10 +395,15 @@ export function isBrandStyleText(text: string): boolean {
 /** Readable lines for the generator and for people: the colour palette and how to load each font. */
 export function brandStyleLines(style: BrandStyle): string[] {
   const lines: string[] = [];
-  const colors = style.colors.map((c, i) => ({ c, role: i < BRAND_COLOR_ROLES.length ? BRAND_COLOR_ROLES[i] : `Extra colour ${i - BRAND_COLOR_ROLES.length + 1}` })).filter((x) => x.c);
+  const core = style.colors.slice(0, BRAND_COLOR_ROLES.length).map((c, i) => ({ c, role: BRAND_COLOR_ROLES[i] as string }));
+  const moreRows = MORE_COLORS.flatMap(({ key, label }) => (style.more?.[key] ? [{ c: style.more[key]!, role: label }] : []));
+  const added = style.colors.slice(BRAND_COLOR_ROLES.length).map((c, i) => ({ c, role: style.labels?.[i] || `Extra colour ${i + 1}` }));
+  const colors = [...core, ...moreRows, ...added].filter((x) => x.c);
   if (colors.length) {
     lines.push("Colour palette (define each once as a CSS variable and use it across the site):");
     for (const { c, role } of colors) lines.push(`- ${role}: ${c}`);
+    const parts = [style.more && MORE_COLORS.some((m) => m.group === "Navigation bar" && style.more?.[m.key]) && "the navigation colours only in the top navigation bar", style.more && MORE_COLORS.some((m) => m.group === "Footer" && style.more?.[m.key]) && "the footer colours only in the footer", style.more && MORE_COLORS.some((m) => m.group === "Side menu" && style.more?.[m.key]) && "the side menu colours only in the side navigation of dashboards and portals"].filter(Boolean);
+    if (parts.length) lines.push(`Use ${parts.join(", ")}. Anything not given there follows the main colours above.`);
   }
   if (style.fonts.length) {
     if (lines.length) lines.push("");
@@ -267,6 +415,16 @@ export function brandStyleLines(style: BrandStyle): string[] {
         : f.css ? "imported font, @font-face CSS saved in `.silpi/brand-fonts.css`" : "imported font, use the uploaded font files with @font-face";
       lines.push(`- ${f.name} (${FONT_USAGE_LABELS[f.usage].toLowerCase()}): ${how}`);
     }
+  }
+  const rows = TYPE_KEYS.flatMap((k) => (style.type?.[k] ? [{ k, s: style.type[k]! }] : []));
+  if (rows.length) {
+    if (lines.length) lines.push("");
+    lines.push("Typography (use these exact sizes and weights; define them once as CSS variables or theme tokens and use them for every page. Use the mobile size on screens under 768px and let the size scale smoothly in between, for example with clamp()):");
+    for (const { k, s } of rows) {
+      lines.push(`- ${TYPE_LABELS[k]}: ${s.size}px${s.mobileSize ? ` (mobile ${s.mobileSize}px)` : ""}, ${FONT_WEIGHT_LABELS[s.weight].toLowerCase()} (${s.weight})${s.lineHeight ? `, line-height ${s.lineHeight}` : ""}`);
+    }
+    const missing = TYPE_KEYS.filter((k) => !style.type?.[k]);
+    if (missing.length) lines.push(`- Not fixed by the brand (${missing.map((k) => TYPE_LABELS[k]).join(", ")}): choose sizes that fit the scale above.`);
   }
   return lines;
 }

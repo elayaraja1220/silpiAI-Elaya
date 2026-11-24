@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { handle, notFound } from "@/lib/business/http";
+import { isHourly } from "@/lib/business/hourly";
 import { buildProposals, compareProposals } from "@/lib/business/proposals";
 import { chooseTier, getLead, getRateCard, stageHistory } from "@/lib/business/store";
 import { TIERS, type Tier } from "@/lib/business/types";
@@ -17,6 +18,8 @@ export async function GET(_request: NextRequest, context: Context) {
   const lead = getLead(id);
   if (!lead) return notFound();
   return handle("PROPOSALS", () => {
+    // An hourly engagement has one set of terms and no packages.
+    if (isHourly(lead.requirement)) return { proposals: [], comparison: [] };
     const rates = getRateCard();
     const proposals = buildProposals(lead.requirement, lead.client, rates);
     return { proposals, comparison: compareProposals(proposals, rates) };

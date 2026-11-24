@@ -80,6 +80,7 @@ function deps(env: Record<string, string> = {}, over: Partial<RunnerDeps> = {}):
     verify: async () => ({ steps: [{ name: "Build", status: "passed" as const }], passed: true }),
     assertAgentReady: async () => ({}),
     workspaceRoot: () => WORKSPACES,
+    contentCount: () => 3,
     exportContent: () => ({ items: 0, files: 0, missing: [] }),
   };
   return { ...base, ...over, apiCalls };
@@ -214,7 +215,8 @@ describe("2. Claude Code on this computer: found, signed in, and never exposing 
     assert.deepEqual(args.slice(0, 9), ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--max-turns", "60", "--allowedTools"]);
     assert.equal(args[9], ALLOWED_TOOLS.join(","));
     assert.ok(!ALLOWED_TOOLS.some((t) => /^Bash\((rm|del|curl|wget|powershell|cmd|sudo|git push)/i.test(t)), "no destructive or network commands");
-    assert.ok(ALLOWED_TOOLS.every((t) => /^(Read|Write|Edit|Glob|Grep|Bash\(npm (install|run|test):\*\)|Bash\(npx (tsc|eslint):\*\))$/.test(t)), ALLOWED_TOOLS.join());
+    assert.ok(ALLOWED_TOOLS.every((t) => /^(Read|Write|Edit|Glob|Grep|(Bash|PowerShell)\(npm (install|run|test|--prefix):\*\)|Bash\(npx (tsc|eslint):\*\))$/.test(t)), ALLOWED_TOOLS.join());
+    assert.ok(!ALLOWED_TOOLS.some((t) => /^PowerShell\((?!npm )/i.test(t)), "PowerShell may only run the fixed npm commands");
     const cmd = spawnSpec({ exe: "C:\\Program Files\\x\\claude.cmd", source: "path" }, ["-p", "--allowedTools", "Bash(npm run:*)"]);
     assert.equal(cmd.shell, true);
     assert.equal(cmd.command, '"C:\\Program Files\\x\\claude.cmd" "-p" "--allowedTools" "Bash(npm run:*)"');
@@ -925,10 +927,15 @@ describe("13. security by construction", () => {
   });
   it("programs are started in a few known places, always without a request-supplied command", () => {
     const users = walk(path.resolve("src")).filter((f) => /\.(ts|tsx)$/.test(f) && /child_process/.test(readFileSync(f, "utf8"))).map((f) => path.relative(path.resolve("src"), f).replace(/\\/g, "/")).sort();
-    assert.deepEqual(users, ["lib/business/analyze.ts", "lib/demo/app-runner.ts", "lib/demo/service.ts", "lib/execution/api-agent.ts", "lib/execution/claude-cli.ts", "lib/execution/verify.ts", "lib/silpi-runner.ts"].sort());
+    assert.deepEqual(users, ["lib/business/analyze.ts", "lib/demo/app-runner.ts", "lib/demo/service.ts", "lib/execution/api-agent.ts", "lib/execution/claude-cli.ts", "lib/execution/render.ts", "lib/execution/verify.ts", "lib/silpi-runner.ts"].sort());
+    // The browser that photographs the built site is started with fixed arguments and no shell; the only things added are made here.
+    const renderSrc = read("src/lib/execution/render.ts");
+    assert.ok(/spawn\(browser, args, \{ shell: false/.test(renderSrc), "the browser is started directly, never through a shell");
+    assert.ok(/http:\/\/127\.0\.0\.1:\$\{port\}\//.test(renderSrc) && !/https?:\/\/(?!127)/.test(renderSrc.replace(/\/\*[\s\S]*?\*\//g, "")), "it only ever opens the site on this computer");
     // Demo previews: both programs are fixed strings. Nothing from a request, a project or the database becomes a command.
     const runnerSrc = read("src/lib/demo/app-runner.ts");
-    assert.ok(/spawn\(DEMO_START_COMMAND,/.test(runnerSrc) && /DEMO_START_COMMAND = "npm run start"/.test(runnerSrc), "the app runner starts one constant command");
+    assert.ok(/spawn\(startCommandFor\(demo\.app_dir, port\),/.test(runnerSrc) && /DEMO_START_COMMAND = "npm run start"/.test(runnerSrc), "the app runner starts the one constant command");
+    assert.ok(/`\$\{DEMO_START_COMMAND\} -- \$\{flag\} \$\{Math\.trunc\(port\)\}`/.test(runnerSrc), "the only addition is a port flag and a whole number made by the runner");
     assert.ok(/demo\.start_command !== DEMO_START_COMMAND/.test(runnerSrc), "a stored value that is not that command is refused");
     assert.ok(/spawn\("npm run build",/.test(read("src/lib/demo/service.ts")), "the build is a fixed command");
     assert.ok(/env: cleanEnv\(/.test(runnerSrc) && /env: cleanEnv\(/.test(read("src/lib/demo/service.ts")), "demo programs get a clean environment, without SILPI's secrets");
@@ -961,31 +968,39 @@ describe("13. security by construction", () => {
 });
 
 // =================================================================================================
-describe("14. generation uses whatever the client uploaded, and never waits for more", () => {
+describe("14. generation needs some of the client's content, and uses whatever there is", () => {
   const exported: string[] = [];
-  const partial = (over: Partial<RunnerDeps> = {}) => deps({}, { exportContent: (_id, dir) => { exported.push(dir); return { items: 4, files: 6, missing: ["Logo", "Favicon (browser tab icon)"] }; }, ...over });
+  const partial = (count = 2, over: Partial<RunnerDeps> = {}) => deps({}, { contentCount: () => count, exportContent: (_id, dir) => { exported.push(dir); return { items: count, files: 6, missing: ["Logo", "Favicon (browser tab icon)"] }; }, ...over });
 
-  it("nothing is required: preparing and starting work even when most content is missing", async () => {
+  it("with nothing uploaded, nothing is prepared and nothing starts, and it says what to do", async () => {
+    const { runner, jobs, store } = await mods();
+    const lead = await approvedLead();
+    const e = await expectCode(async () => runner.prepareJob(lead.id, { scopeConfirmed: true }, partial(0)), "content-needed");
+    assert.match(e.message, /Collect the client's files first/);
+    assert.match(e.message, /partial is fine/);
+    assert.equal(jobs.listJobs(lead.id).length, 0, "a refusal creates nothing");
+    assert.equal(store.getLead(lead.id)!.stage, "approved");
+  });
+
+  it("a job prepared earlier cannot start once the content is gone, and nothing changes", async () => {
+    const { runner, jobs, store } = await mods();
+    const lead = await approvedLead();
+    const prepared = runner.prepareJob(lead.id, { scopeConfirmed: true }, partial(2));
+    await expectCode(runner.startJob(prepared.id, { mode: "local", ...START }, partial(0)), "content-needed");
+    assert.equal(jobs.getJob(prepared.id)!.state, "prepared", "nothing started");
+    assert.equal(store.getLead(lead.id)!.stage, "approved", "the project did not move to development");
+  });
+
+  it("partial content is enough: it starts, copies what exists, and says the rest will be placeholders", async () => {
     const { runner, jobs } = await mods();
     const lead = await approvedLead();
-    const d = partial();
+    const d = partial(2);
     const prepared = runner.prepareJob(lead.id, { scopeConfirmed: true }, d);
-    assert.equal(prepared.state, "prepared");
     const started = await runner.startJob(prepared.id, { mode: "local", ...START }, d);
     assert.equal(started.state, "running");
     assert.equal(exported.at(-1), path.join(WORKSPACES, prepared.projectName), "the content is copied into the project folder");
     const log = jobs.listEvents(prepared.id, 0).map((e) => e.text).join("\n");
-    assert.match(log, /Client content: 4 items and 6 files copied into the project\. 2 not provided yet; placeholders will be used\./);
-    await finished(prepared.id);
-  });
-
-  it("with no content at all it still starts, and says nothing was provided", async () => {
-    const { runner, jobs } = await mods();
-    const lead = await approvedLead();
-    const d = deps({}, { exportContent: () => ({ items: 0, files: 0, missing: ["Logo"] }) });
-    const prepared = runner.prepareJob(lead.id, { scopeConfirmed: true }, d);
-    assert.equal((await runner.startJob(prepared.id, { mode: "local", ...START }, d)).state, "running");
-    assert.match(jobs.listEvents(prepared.id, 0).map((e) => e.text).join("\n"), /0 items and 0 files copied/);
+    assert.match(log, /Client content: 2 items and 6 files copied into the project\. 2 not provided yet; placeholders will be used\./);
     await finished(prepared.id);
   });
 
@@ -997,5 +1012,106 @@ describe("14. generation uses whatever the client uploaded, and never waits for 
     assert.match(some, /not supplied: Logo; Favicon/);
     assert.match(some, /clearly marked placeholders/);
     assert.ok(!/client-content/.test(runner.buildLocalPrompt(brief)), "no content instructions when there is no content");
+  });
+
+  const DESIGN = [".silpi/client-assets/design/design-reference/home.png", ".silpi/client-assets/design/design-reference/phone.jpg"];
+
+  it("a design reference is built from a full inventory, and checked against the reference before the work ends", async () => {
+    const { runner } = await mods();
+    const brief = { description: "x", frontend: [], backend: [], database: [], styling: [] };
+    const p = runner.buildLocalPrompt(brief, { items: 2, files: 2, missing: [], design: DESIGN });
+    assert.match(p, /DESIGN REFERENCE: the client chose a design\. Reproduce it completely/);
+    assert.match(p, /home\.png, \.silpi\/client-assets\/design\/design-reference\/phone\.jpg/);
+    assert.match(p, /\.silpi\/design-spec\.md/);
+    assert.match(p, /Nothing in the spec may be skipped, merged or simplified/);
+    assert.match(p, /fill their rows/);
+    assert.match(p, /\.silpi\/design-checklist\.md/);
+    assert.ok(!/DESIGN REFERENCE/.test(runner.buildLocalPrompt(brief, { items: 2, files: 1, missing: [] })), "no design rules without a reference");
+    const review = runner.buildDesignReviewPrompt(DESIGN);
+    assert.match(review, /find what is missing or wrong compared with the reference, and fix it/);
+    assert.match(review, /home\.png/);
+    assert.match(review, /never chained/);
+  });
+
+  it("with a design reference the build is followed by a second pass that fills the gaps; without one there is a single pass", async () => {
+    const { runner, jobs } = await mods();
+    const run = async (design: string[] | undefined) => {
+      const lead = await approvedLead();
+      const prompts: string[] = [];
+      const d = partial(2, {
+        exportContent: () => ({ items: 2, files: 2, missing: [], ...(design ? { design } : {}) }),
+        runClaude: async (o) => { prompts.push(o.prompt); return runClaude(o); },
+      });
+      const prepared = runner.prepareJob(lead.id, { scopeConfirmed: true }, d);
+      await runner.startJob(prepared.id, { mode: "local", ...START }, d);
+      const job = await finished(prepared.id);
+      return { prompts, job, log: jobs.listEvents(prepared.id, 0).map((e) => e.text).join("\n") };
+    };
+    const withDesign = await run(DESIGN);
+    assert.equal(withDesign.prompts.length, 2, "build, then check against the reference");
+    assert.match(withDesign.prompts[0], /DESIGN REFERENCE/);
+    assert.match(withDesign.prompts[1], /Your only job now is to find what is missing/, "without a browser the check reads the code against the reference");
+    assert.match(withDesign.log, /Checking the build against the design reference and filling any gaps/);
+    assert.match(withDesign.log, /Building and testing again after the design fixes/);
+    assert.equal(withDesign.job.state, "completed");
+    const plain = await run(undefined);
+    assert.equal(plain.prompts.length, 1);
+    assert.ok(!/DESIGN REFERENCE/.test(plain.prompts[0]));
+  });
+
+  it("when the built page can be photographed, the check compares the real page with the reference", async () => {
+    const { runner, jobs } = await mods();
+    const lead = await approvedLead();
+    const prompts: string[] = [];
+    let verifies = 0;
+    const d = partial(2, {
+      exportContent: () => ({ items: 2, files: 2, missing: [], design: DESIGN }),
+      runClaude: async (o) => { prompts.push(o.prompt); return runClaude(o); },
+      verify: async () => { verifies += 1; return { steps: [{ name: "Build", status: "passed" as const }], passed: true }; },
+      render: async () => ({ files: [".silpi/render/desktop.png", ".silpi/render/phone.png"] }),
+    });
+    const prepared = runner.prepareJob(lead.id, { scopeConfirmed: true }, d);
+    await runner.startJob(prepared.id, { mode: "local", ...START }, d);
+    const job = await finished(prepared.id);
+    assert.equal(job.state, "completed");
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1], /was started and photographed/);
+    assert.match(prompts[1], /\.silpi\/render\/desktop\.png, \.silpi\/render\/phone\.png/);
+    assert.match(prompts[1], /hover-only bar must stay hidden until hover/);
+    assert.equal(verifies, 2, "built once before the photograph and once after the fixes");
+    assert.match(jobs.listEvents(prepared.id, 0).map((e) => e.text).join("\n"), /Comparing the real page with the design reference/);
+  });
+
+  it("a build that fails is not photographed; the check then reads the code, and the failure stays on record", async () => {
+    const { runner } = await mods();
+    const lead = await approvedLead();
+    let rendered = 0;
+    const d = partial(2, {
+      exportContent: () => ({ items: 2, files: 2, missing: [], design: DESIGN }),
+      verify: async () => ({ steps: [{ name: "Build", status: "failed" as const }], passed: false }),
+      render: async () => { rendered += 1; return { files: [".silpi/render/desktop.png"] }; },
+    });
+    const prepared = runner.prepareJob(lead.id, { scopeConfirmed: true }, d);
+    await runner.startJob(prepared.id, { mode: "local", ...START }, d);
+    const job = await finished(prepared.id);
+    assert.equal(rendered, 0);
+    assert.equal(job.state, "completed");
+    assert.equal(job.verification?.passed, false);
+  });
+
+  it("if the second pass cannot finish, the first build is kept and the job still completes, with a clear message", async () => {
+    const { runner, jobs } = await mods();
+    const lead = await approvedLead();
+    let calls = 0;
+    const d = partial(2, {
+      exportContent: () => ({ items: 2, files: 2, missing: [], design: DESIGN }),
+      runClaude: async (o) => { calls += 1; return calls === 1 ? runClaude(o) : { exitCode: 1, timedOut: false, cancelled: false, spawnError: false, result: { ok: false, text: "ran out of turns" }, stderrTail: "", filesChanged: [] } as never; },
+    });
+    const prepared = runner.prepareJob(lead.id, { scopeConfirmed: true }, d);
+    await runner.startJob(prepared.id, { mode: "local", ...START }, d);
+    const job = await finished(prepared.id);
+    assert.equal(job.state, "completed");
+    assert.equal(calls, 2);
+    assert.match(jobs.listEvents(prepared.id, 0).map((e) => e.text).join("\n"), /The design check did not finish\. The first build is kept/);
   });
 });
