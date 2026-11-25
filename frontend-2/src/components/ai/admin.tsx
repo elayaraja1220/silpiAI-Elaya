@@ -5,6 +5,7 @@ import { Loader2, Lock } from "lucide-react";
 
 import { Customers } from "./customers";
 import { MarkupRules, type Rule } from "./markups";
+import { CouponsAdmin, PlansAdmin } from "./plans-admin";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill, usd } from "./light";
 
 type Model = { cacheReadUsdMicroPerMtok: number | null; cacheWriteUsdMicroPerMtok: number | null; priceVersion: number; id: string; provider: string; providerModel: string; label: string; tier: string; inputUsdMicroPerMtok: number; outputUsdMicroPerMtok: number; markupBasisPoints: number; maxOutputTokens: number; priority: number; enabled: boolean };
@@ -37,6 +38,8 @@ export function AiAdmin() {
     <div className="space-y-5">
       {note && <Notice tone="green">{note}</Notice>}
       <Customers onChanged={flash} onError={fail} />
+      <PlansAdmin onNote={flash} onError={fail} />
+      <CouponsAdmin onNote={flash} onError={fail} />
       <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>
       <Charging value={overview.unitsPerUsd} policy={overview.policy} onSaved={() => { flash("Charging settings saved."); load(); }} onError={fail} />
       <MarkupRules rules={overview.markupRules} modelIds={overview.models.map((m) => m.id)} providers={[...new Set(overview.models.map((m) => m.provider))]} onSaved={() => { flash("Markup rules saved."); load(); }} onError={fail} />

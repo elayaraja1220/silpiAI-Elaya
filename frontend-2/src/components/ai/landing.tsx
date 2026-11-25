@@ -38,7 +38,7 @@ const projects = (prices: Price[], credits: number) => {
 const aboutIn = (n: number | null, locale: string) => (n === null || !Number.isFinite(n) ? "-" : n >= 100 ? (Math.round(n / 10) * 10).toLocaleString(locale) : n >= 1 ? Math.floor(n).toLocaleString(locale) : "<1");
 
 const FAQ = [
-  ["What does a credit buy?", "Credits pay for AI work. The cost depends on the model tier you choose and the size of the request. Before you send anything, SILPI AI shows the most it could cost, and afterwards the real cost of each answer."],
+  ["What does a credit buy?", "Credits pay for AI work: one credit is one US cent of usage at SILPI AI's prices, so 100 credits is one dollar's worth. The cost depends on the model tier you choose and the size of the request. Before you send anything, SILPI AI shows the most it could cost, and afterwards the real cost of each answer."],
   ["What if the AI fails, or I cancel?", "You are not charged. The credits held for a request are released if it fails, and steps of a build that never ran cost nothing. If the plan for a build cannot be used at all, what it cost is refunded."],
   ["Do you keep my prompts?", "Chat prompts and answers are not stored. A build's brief and the files it produces are saved to your account so you can come back to them. Other organizations cannot see them."],
   ["Can I limit what gets spent?", "Yes. Every build runs under a budget you approve, and it stops to ask before passing it. Administrators can also set a daily limit for the whole organization."],
@@ -207,11 +207,11 @@ export function Landing() {
       <section id="credits" className="scroll-mt-20 py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <h2 className="text-center text-4xl font-semibold tracking-tight sm:text-5xl">What is a credit?</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-center text-lg text-slate-600">A credit is the one currency SILPI AI uses for AI work. You never deal with tokens, dollar rates or different prices from different AI companies. You spend credits.</p>
+          <p className="mx-auto mt-4 max-w-2xl text-center text-lg text-slate-600">A credit is the one currency SILPI AI uses for AI work, and one credit is worth one US cent of AI usage at SILPI AI's prices. You never deal with tokens, dollar rates or different prices from different AI companies. You spend credits.</p>
           <div className="mt-12 grid gap-6 lg:grid-cols-[1fr_1.25fr]">
             <div className="space-y-4">
               {[
-                [Coins, "Your plan gives you credits", "Each billing period (a month, or a year on a yearly plan) your plan's credits are added to your balance. A plan that says 10 credits a month adds 10 credits every month. In this version unused credits are not removed."],
+                [Coins, "Your plan gives you credits", "Each billing period (a month, or a year on a yearly plan) your plan's credits are added to your balance. A plan that says 200 credits a month adds 200 credits every month. In this version unused credits are not removed."],
                 [ListChecks, "Bigger work costs more", "A longer answer, or a stronger model, uses more credits. A quick answer on the Fast model uses very few."],
                 [ShieldCheck, "You see the cost first", "Before a request you see the most it could cost. Afterwards you see exactly what it cost. If it fails, it costs nothing."],
               ].map(([I, t, d]) => { const Icon = I as typeof Coins; return (

@@ -8,6 +8,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { NextRequest } from "next/server";
 
 import { resetLoginAttempts } from "@/lib/admin-auth";
+import { useFixedMetering } from "./fixtures/fixed-pricing";
 
 const dir = mkdtempSync(path.join(tmpdir(), "silpi-ai-"));
 const ADMIN = "test-admin-token-0123456789abcdef";
@@ -56,10 +57,11 @@ const ask = (orgId: string, over: Record<string, unknown> = {}) => ({ orgId, mod
 const code = async (fn: () => unknown) => { try { await fn(); } catch (e) { return (e as { code?: string }).code ?? "other"; } return "no-error"; };
 const request = async (id: string) => (await mods()).db.getDb().prepare("SELECT * FROM ai_requests WHERE id = ?").get(id) as Record<string, string | number | null>;
 
-before(() => {
+before(async () => {
   process.env.SILPI_DB_PATH = path.join(dir, "ai.db");
   process.env.SILPI_ADMIN_TOKEN = ADMIN;
   delete process.env.ANTHROPIC_API_KEY;
+  await useFixedMetering();
 });
 after(() => {
   const cached = globalThis as unknown as { silpiDb?: { close(): void } };

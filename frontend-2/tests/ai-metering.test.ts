@@ -8,6 +8,7 @@ import { after, before, describe, it } from "node:test";
 import { NextRequest } from "next/server";
 
 import { chargeUnits, usageCostMicroUsd, worstInputPrice, type ModelPrice } from "@/server/ai/pricing";
+import { useFixedMetering } from "./fixtures/fixed-pricing";
 
 const dir = mkdtempSync(path.join(tmpdir(), "silpi-metering-"));
 const ADMIN = "test-admin-token-0123456789abcdef";
@@ -53,7 +54,7 @@ async function liveModel(id = "meter-a", over: Record<string, unknown> = {}) {
 const ask = (orgId: string, model: string, over: Record<string, unknown> = {}) => ({ orgId, model, messages: [{ role: "user", content: "hello" }], maxOutputTokens: 100, idempotencyKey: k("req"), ...over });
 const clearRules = async () => (await mods()).db.getDb().prepare("DELETE FROM markup_rules").run();
 
-before(() => { process.env.SILPI_DB_PATH = path.join(dir, "metering.db"); process.env.SILPI_ADMIN_TOKEN = ADMIN; delete process.env.ANTHROPIC_API_KEY; });
+before(async () => { process.env.SILPI_DB_PATH = path.join(dir, "metering.db"); process.env.SILPI_ADMIN_TOKEN = ADMIN; delete process.env.ANTHROPIC_API_KEY; await useFixedMetering({ models: false }); });
 after(() => {
   const cached = globalThis as unknown as { silpiDb?: { close(): void } };
   cached.silpiDb?.close();
@@ -113,12 +114,13 @@ describe("2. from cost to credits", () => {
 
 // =================================================================================================
 describe("3. price versions", () => {
-  it("every model started with version 1, as it was priced before versioning began", async () => {
+  it("every model started with version 1 as priced before versioning began, then moved to version 2 when a credit became USD 0.01 (markup 2.5)", async () => {
     const { cat } = await mods();
     const history = cat.listPriceHistory("sonnet-5-5");
-    assert.equal(history.length, 1);
-    assert.deepEqual([history[0]!.version, history[0]!.inputUsdMicroPerMtok, history[0]!.changedBy], [1, 2_000_000, "migration"]);
-    assert.equal(cat.getModel("sonnet-5-5")!.priceVersion, 1);
+    assert.deepEqual(history.map((v) => [v.version, v.markupBasisPoints, v.changedBy]), [[2, 25_000, "migration"], [1, 10_000, "migration"]]);
+    assert.equal(history[1]!.inputUsdMicroPerMtok, 2_000_000, "the provider price did not move, only the markup");
+    assert.equal(history[0]!.inputUsdMicroPerMtok, 2_000_000);
+    assert.equal(cat.getModel("sonnet-5-5")!.priceVersion, 2);
   });
   it("a price change writes a new version with who and why; other edits do not", async () => {
     const { cat } = await mods();

@@ -572,6 +572,134 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 12,
+    name: "plan prices per currency, price lock on subscriptions, the six-plan catalogue and the one-credit-is-one-cent definition",
+    up(db) {
+      const at = new Date().toISOString();
+
+      // 1. A subscription remembers the price it was sold at. Without this, changing a plan's price would silently change what every
+      //    existing customer is billed at their next renewal. Locked FIRST, from the plan prices as they are now, before anything below changes them.
+      db.exec(`
+        ALTER TABLE subscriptions ADD COLUMN currency          TEXT NOT NULL DEFAULT 'INR';
+        ALTER TABLE subscriptions ADD COLUMN unit_amount_minor INTEGER CHECK (unit_amount_minor IS NULL OR unit_amount_minor >= 0);
+        ALTER TABLE subscriptions ADD COLUMN trial_ends_at     TEXT;
+        ALTER TABLE subscriptions ADD COLUMN coupon_redemption_id TEXT;
+        ALTER TABLE subscriptions ADD COLUMN allowance_monthly_units INTEGER CHECK (allowance_monthly_units IS NULL OR allowance_monthly_units >= 0);
+      `);
+      db.exec(`
+        UPDATE subscriptions SET unit_amount_minor =
+          (SELECT CASE WHEN subscriptions.billing_period = 'annual' THEN p.annual_price_paise ELSE p.monthly_price_paise END FROM plans p WHERE p.id = subscriptions.plan_id)
+        WHERE unit_amount_minor IS NULL;
+        UPDATE subscriptions SET allowance_monthly_units = (SELECT p.monthly_credit_units FROM plans p WHERE p.id = subscriptions.plan_id) WHERE allowance_monthly_units IS NULL;
+        ALTER TABLE subscription_invoices ADD COLUMN currency        TEXT NOT NULL DEFAULT 'INR';
+        ALTER TABLE subscription_invoices ADD COLUMN discount_minor  INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0);
+        ALTER TABLE subscription_invoices ADD COLUMN coupon_code     TEXT;
+        ALTER TABLE plans ADD COLUMN trial_days         INTEGER CHECK (trial_days IS NULL OR (trial_days >= 1 AND trial_days <= 365));
+        ALTER TABLE plans ADD COLUMN trial_credit_units INTEGER NOT NULL DEFAULT 0 CHECK (trial_credit_units >= 0);
+
+        CREATE TABLE plan_prices (
+          id           TEXT PRIMARY KEY,
+          plan_id      TEXT NOT NULL REFERENCES plans(id),
+          currency     TEXT NOT NULL CHECK (length(currency) = 3),
+          period       TEXT NOT NULL CHECK (period IN ('monthly', 'annual')),
+          amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0),
+          active       INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+          created_at   TEXT NOT NULL,
+          updated_at   TEXT NOT NULL,
+          UNIQUE (plan_id, currency, period)
+        );
+      `);
+
+      // 2. The catalogue from the brief. Credits are $0.01 of customer usage each (see step 5). USD and INR are the brief's figures; the
+      //    pound prices are PROPOSED. Annual is ten months (two months free). The old Pro and Professional sizes are retired, not deleted.
+      const upsert = db.prepare(
+        `INSERT INTO plans (id, name, description, monthly_price_paise, annual_price_paise, monthly_price_usd_cents, annual_price_usd_cents, monthly_price_gbp_pence, annual_price_gbp_pence,
+                            monthly_credit_units, max_active_projects, is_custom, active, sort_order, family, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, monthly_price_paise = excluded.monthly_price_paise, annual_price_paise = excluded.annual_price_paise,
+           monthly_price_usd_cents = excluded.monthly_price_usd_cents, annual_price_usd_cents = excluded.annual_price_usd_cents, monthly_price_gbp_pence = excluded.monthly_price_gbp_pence,
+           annual_price_gbp_pence = excluded.annual_price_gbp_pence, monthly_credit_units = excluded.monthly_credit_units, active = 1, sort_order = excluded.sort_order, family = excluded.family, updated_at = excluded.updated_at`,
+      );
+      // id, name, description, rupees, dollars, pounds, credits, sort order
+      const catalogue: [string, string, string, number, number, number, number, number][] = [
+        ["free", "Free", "Try SILPI on a real project.", 0, 0, 0, 25, 1],
+        ["starter", "Starter", "For trying real projects.", 499, 6, 5, 200, 2],
+        ["creator", "Creator", "For solo creators.", 999, 12, 10, 400, 3],
+        ["pro", "Pro", "For a working freelancer.", 1499, 19, 15, 700, 4],
+        ["professional", "Professional", "For a small agency.", 4499, 49, 39, 2000, 5],
+        ["studio", "Studio", "For studios and growing agencies.", 8999, 99, 79, 4500, 6],
+      ];
+      for (const [id, name, description, inr, usd, gbp, credits, order] of catalogue) {
+        upsert.run(id, name, description, inr * 100, inr * 1000, usd * 100, usd * 1000, gbp * 100, gbp * 1000, credits * 1000, order, id, at, at);
+      }
+      db.prepare("UPDATE plans SET sort_order = 7, updated_at = ? WHERE id = 'enterprise'").run(at);
+      db.prepare("UPDATE plans SET active = 0, sort_order = 90, updated_at = ? WHERE id IN ('pro-800', 'pro-1600', 'pro-3200', 'pro-6400', 'professional-2400', 'professional-4800', 'professional-9600', 'professional-19200')").run(at);
+
+      // 3. Every price now lives in plan_prices, whatever the currency. The older columns on plans stay (nothing is dropped) and are kept in step.
+      const price = db.prepare("INSERT OR REPLACE INTO plan_prices (id, plan_id, currency, period, amount_minor, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)");
+      const rows = db.prepare(
+        `SELECT id, monthly_price_paise AS inrM, annual_price_paise AS inrA, monthly_price_usd_cents AS usdM, annual_price_usd_cents AS usdA, monthly_price_gbp_pence AS gbpM, annual_price_gbp_pence AS gbpA FROM plans`,
+      ).all() as Record<string, string | number | null>[];
+      for (const r of rows) {
+        const list: [string, string, number | null][] = [["INR", "monthly", r.inrM as number | null], ["INR", "annual", r.inrA as number | null], ["USD", "monthly", r.usdM as number | null], ["USD", "annual", r.usdA as number | null], ["GBP", "monthly", r.gbpM as number | null], ["GBP", "annual", r.gbpA as number | null]];
+        for (const [currency, period, amount] of list) if (amount !== null) price.run(`pp_${r.id}_${currency}_${period}`, r.id, currency, period, amount, at, at);
+      }
+
+      // 4. A credit is now worth $0.01 of customer usage. The gateway's maths already is: provider cost x markup x units per dollar. With a
+      //    2.5 markup and 100 credits per dollar of charge, $1 of provider cost is 250 credits. Markups move through the price history.
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ai_units_per_usd', '100000')").run();
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('credit_definition', '1 credit = USD 0.01 of customer-facing AI usage value')").run();
+      const models = db.prepare("SELECT id, input_usd_micro_per_mtok AS i, output_usd_micro_per_mtok AS o, cache_read_usd_micro_per_mtok AS cr, cache_write_usd_micro_per_mtok AS cw, price_version AS v FROM ai_models WHERE provider != 'echo' AND markup_basis_points != 25000").all() as { id: string; i: number; o: number; cr: number | null; cw: number | null; v: number }[];
+      for (const m of models) {
+        db.prepare(
+          "INSERT INTO model_prices (model_id, version, input_usd_micro_per_mtok, output_usd_micro_per_mtok, cache_read_usd_micro_per_mtok, cache_write_usd_micro_per_mtok, markup_basis_points, note, changed_by, created_at) VALUES (?, ?, ?, ?, ?, ?, 25000, ?, 'migration', ?)",
+        ).run(m.id, m.v + 1, m.i, m.o, m.cr, m.cw, "markup 2.5 when one credit became USD 0.01 of usage", at);
+        db.prepare("UPDATE ai_models SET markup_basis_points = 25000, price_version = ?, updated_at = ? WHERE id = ?").run(m.v + 1, at, m.id);
+      }
+    },
+  },
+  {
+    id: 13,
+    name: "coupons and their redemptions",
+    up(db) {
+      // A coupon is a discount code. It can be a percentage or a fixed amount in one currency, last for one invoice, a number of months,
+      // or for as long as the subscription runs, and can be limited by date, by number of uses and by plan. One organization uses a coupon once.
+      db.exec(`
+        CREATE TABLE coupons (
+          id                  TEXT PRIMARY KEY,
+          code                TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          name                TEXT NOT NULL DEFAULT '',
+          kind                TEXT NOT NULL CHECK (kind IN ('percent', 'fixed')),
+          percent_bp          INTEGER CHECK (percent_bp IS NULL OR (percent_bp >= 1 AND percent_bp <= 10000)),
+          fixed_amount_minor  INTEGER CHECK (fixed_amount_minor IS NULL OR fixed_amount_minor >= 1),
+          fixed_currency      TEXT CHECK (fixed_currency IS NULL OR length(fixed_currency) = 3),
+          duration            TEXT NOT NULL CHECK (duration IN ('once', 'repeating', 'forever')),
+          duration_months     INTEGER CHECK (duration_months IS NULL OR duration_months >= 1),
+          valid_from          TEXT,
+          valid_until         TEXT,
+          max_redemptions     INTEGER CHECK (max_redemptions IS NULL OR max_redemptions >= 1),
+          plan_ids            TEXT,
+          active              INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+          created_at          TEXT NOT NULL,
+          updated_at          TEXT NOT NULL,
+          CHECK ((kind = 'percent' AND percent_bp IS NOT NULL AND fixed_amount_minor IS NULL) OR (kind = 'fixed' AND fixed_amount_minor IS NOT NULL AND fixed_currency IS NOT NULL AND percent_bp IS NULL)),
+          CHECK ((duration = 'repeating') = (duration_months IS NOT NULL))
+        );
+
+        CREATE TABLE coupon_redemptions (
+          id              TEXT PRIMARY KEY,
+          coupon_id       TEXT NOT NULL REFERENCES coupons(id),
+          org_id          TEXT NOT NULL REFERENCES organizations(id),
+          subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
+          redeemed_at     TEXT NOT NULL,
+          periods_used    INTEGER NOT NULL DEFAULT 0 CHECK (periods_used >= 0),
+          UNIQUE (coupon_id, org_id)
+        );
+        CREATE INDEX coupon_redemptions_sub ON coupon_redemptions(subscription_id);
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

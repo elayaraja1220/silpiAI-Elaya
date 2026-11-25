@@ -7,6 +7,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { NextRequest } from "next/server";
 
 import { resetLoginAttempts } from "@/lib/admin-auth";
+import { useFixedMetering } from "./fixtures/fixed-pricing";
 
 const dir = mkdtempSync(path.join(tmpdir(), "silpi-jobs-"));
 const ADMIN = "test-admin-token-0123456789abcdef";
@@ -53,10 +54,11 @@ async function fake(script: Script = {}) {
 }
 const FILE_HOLD_LOW = 47; // a 2048-token file on the fast tier holds at most this many units (checked in the budget test)
 
-before(() => {
+before(async () => {
   process.env.SILPI_DB_PATH = path.join(dir, "jobs.db");
   process.env.SILPI_ADMIN_TOKEN = ADMIN;
   delete process.env.ANTHROPIC_API_KEY;
+  await useFixedMetering();
 });
 after(() => {
   const cached = globalThis as unknown as { silpiDb?: { close(): void } };

@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { useFixedCatalogue } from "./fixtures/fixed-pricing";
 
 const dir = mkdtempSync(path.join(tmpdir(), "silpi-subs-"));
 const mods = async () => ({ s: await import("@/server/subscriptions"), c: await import("@/server/credits"), t: await import("@/server/tenancy"), db: await import("@/lib/business/db"), m: await import("@/lib/business/migrations") });
@@ -16,8 +17,7 @@ const fails = (fn: () => unknown, pattern: RegExp) => assert.throws(fn, pattern)
 
 before(async () => {
   process.env.SILPI_DB_PATH = path.join(dir, "subs.db");
-  // Starter is retired in the real catalogue (migration 6). These tests use it as "a cheaper paid plan", so they switch it back on in their own database.
-  (await import("@/server/subscriptions")).updatePlan("starter", { active: true });
+  await useFixedCatalogue(); // these tests are about how billing works, not about today's commercial plans
 });
 after(() => {
   const cached = globalThis as unknown as { silpiDb?: { close(): void } };
@@ -40,10 +40,10 @@ describe("1. months are calendar months", () => {
 
 // =================================================================================================
 describe("2. plans are data", () => {
-  it("starts with the proposed plans (Pro in five sizes), as ordinary rows, in order", async () => {
+  it("starts with the six plans and Enterprise, as ordinary rows, in order", async () => {
     const { s } = await mods();
     const plans = s.listPlans();
-    assert.deepEqual(plans.map((p) => p.id), ["free", "starter", "pro", "pro-800", "pro-1600", "pro-3200", "pro-6400", "professional", "professional-2400", "professional-4800", "professional-9600", "professional-19200", "enterprise"]);
+    assert.deepEqual(plans.map((p) => p.id), ["free", "starter", "creator", "pro", "professional", "studio", "enterprise"]);
     const pro = plans.find((p) => p.id === "pro")!;
     assert.deepEqual([pro.monthlyPricePaise, pro.annualPricePaise, pro.monthlyCreditUnits], [149_900, 1_499_000, 400_000]);
     assert.deepEqual([plans[plans.length - 1].isCustom, plans[plans.length - 1].monthlyPricePaise], [true, null]);

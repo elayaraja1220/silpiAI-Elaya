@@ -20,7 +20,7 @@ Written from the repository as it is today (commit `29e1cfa`). Nothing here is a
 
 | Phase | Verdict | What is missing or different |
 |---|---|---|
-| 2 Pricing | **Partial** | Plan prices are columns for three currencies (rupee, dollar, pound). The brief wants `plan_prices` rows per currency and interval for ten currencies. Missing: coupons, promotions, trials, per-country price IDs, an admin screen for plans, refunds. The brief's plan table differs from the live catalogue (see section 3). |
+| 2 Pricing | **Mostly done (step 3, built)** | The six plans from the brief, prices per currency in `plan_prices`, prices and credit allowances locked at sale, coupons, trials, an admin screen. See section 9. Still open: refunds (step 4), promotional pricing campaigns beyond coupons, ten currencies with real price points (the table supports them; only dollars, rupees and pounds have prices), a "move everyone to the new price" tool. Earlier text of this row: | Plan prices are columns for three currencies (rupee, dollar, pound). The brief wants `plan_prices` rows per currency and interval for ten currencies. Missing: coupons, promotions, trials, per-country price IDs, an admin screen for plans, refunds. The brief's plan table differs from the live catalogue (see section 3). |
 | 3 Wallet | **Done (step 1, built)** | Three buckets (promotional, subscription, purchased), spend order, expiry with a daily sweep, per-bucket holds, reconciliation (`auditBuckets`). See section 7. Still open: a separate grants table and a scheduled reconciliation job (the audit exists; nothing calls it on a timer). |
 | 4 Providers | **Partial** | Only Anthropic (plus a free demo model). Missing: Gemini and OpenAI adapters, streaming, circuit breakers, `getModels`, cached-token and tool charges. |
 | 5 Routing | **Partial** | Routing is tiers in code (`autoTier`, `modelFor`). Missing: admin-configurable routing rules, task types, model-level spend limits, plan-based model access. |
@@ -119,3 +119,30 @@ Add: `plan_prices`, `credit_buckets` (with expiry), `credit_grants`, `credit_pac
 **Known limits.**
 - The customer-facing credit price list (`publicModels`) shows each model's own markup; a task-specific rule can make a request cost more or less than that list suggests.
 - A run record that ties planning, files and review of one build together with cost per stage (phase 7) is not built yet; the pieces (task type, price version, usage, attempts) are now on each request.
+
+## 9. Step 3 built: the six plans, prices per currency, coupons and trials (migrations 12 and 13)
+
+**The catalogue.** Free 25, Starter 200 ($6, ₹499), Creator 400 ($12, ₹999), Pro 700 ($19, ₹1,499), Professional 2,000 ($49, ₹4,499), Studio 4,500 ($99, ₹8,999) credits a month, and Enterprise on request. Yearly is ten months of the monthly price (two months free). Dollars and rupees are the brief's figures. **The pound prices are my proposal** (£5, £10, £15, £39, £79). The earlier Pro and Professional size variants are retired (off sale, sorted last), not deleted.
+
+**One credit is one cent.** The settings now say 1 credit = $0.01 of customer usage, with a 2.5 markup on every model: $1 of provider cost is 250 credits. Old and new markups are both in each model's price history. A test sends a request through the gateway and checks that $0.40 of provider cost is charged as exactly 100 credits.
+
+**Prices per currency.** Every price is a row in `plan_prices` (plan, currency, period, amount in the currency's smallest unit). Ten currencies are supported by the table; add one by setting a price. The older rupee, dollar and pound columns on a plan are kept in step and nothing bills from them.
+
+**Nobody's price changes by surprise.** A subscription records the price, the currency and the monthly credit allowance it was sold with. A later price or allowance change affects only people who subscribe afterwards. The migration locked every existing subscriber to what they were already paying, and a test upgrades a database with a Professional subscriber at 1,200 credits and checks that their renewal still brings 1,200 credits, not the new 2,000.
+
+**Invoices.** An invoice has a currency. Tax (GST) is charged on rupee invoices only; other currencies carry none until a tax provider is added (step 8). The database rule "total = subtotal + tax" is kept, so `subtotal` on an invoice means the amount tax is charged on (after discount); `listPriceMinor` is the price before the coupon.
+
+**Currency choice.** A new subscription is billed in the currency requested (default rupees, so older callers are unaffected). An organization still on Free chooses its billing currency when it upgrades; once it has paid in one currency it stays in it, and upgrades and scheduled downgrades happen in that currency.
+
+**Coupons.** A percentage or a fixed amount (in one currency), lasting one invoice, a number of months, or every invoice; limited by dates, number of uses and plan; one use per organization; not case sensitive. The discount is written on each invoice. A request replaced before payment gives its coupon back. After a coupon has been used its discount cannot change. Coupons apply when starting a plan or moving to a dearer one, not to a scheduled downgrade or to Free.
+
+**Trials.** A plan can have trial days and trial credits. A subscriber starts active at once with the trial credits and no invoice; the first invoice is raised in the last week of the trial, paying it continues from the trial's end, and unpaid at the end it goes past due and then back to Free after the grace days. An organization has one trial, ever. No plan has a trial yet: an administrator turns one on.
+
+**Admin.** `/ai/admin` has Plans (credits, trial, on or off sale, and a price per currency) and Coupons. APIs: `PUT /api/admin/plans` (existing, now also trial fields), `PUT /api/admin/plans/prices`, `GET/PUT /api/admin/coupons`; the customer billing route accepts `currency` and `couponCode`.
+
+**Things to know.**
+- **Old balances are worth less.** A credit used to be about $0.022 of provider cost; now it is $0.004. Units already in a wallet keep their number but buy about 5.6 times less AI. There are no paying customers yet, so nothing was converted. If there were, existing balances would need scaling.
+- The pound prices are unverified, and the rupee and dollar prices have not been tested with customers.
+- No proration: an upgrade starts a new period when it is paid.
+- Credits for an upgrade or a coupon never carry a tax calculation beyond GST on rupees (step 8).
+- Payments are still recorded by the administrator. Refunds, payment events and the card and UPI providers are step 4.

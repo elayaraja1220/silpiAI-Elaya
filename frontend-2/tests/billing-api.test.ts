@@ -7,6 +7,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { NextRequest } from "next/server";
 
 import { resetLoginAttempts } from "@/lib/admin-auth";
+import { useFixedCatalogue } from "./fixtures/fixed-pricing";
 
 const dir = mkdtempSync(path.join(tmpdir(), "silpi-billing-"));
 const ADMIN = "test-admin-token-0123456789abcdef";
@@ -53,9 +54,10 @@ async function customer(name: string, extra?: { email: string; role: string }) {
   return body.organization.id as string;
 }
 
-before(() => {
+before(async () => {
   process.env.SILPI_DB_PATH = path.join(dir, "billing.db");
   process.env.SILPI_ADMIN_TOKEN = ADMIN;
+  await useFixedCatalogue(); // these tests are about the billing screens and routes, not about today's commercial plans
 });
 beforeEach(() => resetLoginAttempts());
 after(() => {
@@ -72,7 +74,7 @@ describe("1. the public price list", () => {
     const { plans } = await mods();
     const res = await plans.GET(req("/api/plans"));
     const body = await res.json();
-    assert.deepEqual(body.plans.map((p: { id: string }) => p.id), ["free", "pro", "pro-800", "pro-1600", "pro-3200", "pro-6400", "professional", "professional-2400", "professional-4800", "professional-9600", "professional-19200", "enterprise"], "Starter is retired; Pro and Professional have larger sizes");
+    assert.deepEqual(body.plans.map((p: { id: string }) => p.id), ["free", "starter", "creator", "pro", "professional", "studio", "enterprise"], "the brief's six plans and Enterprise (Starter switched on by the fixture)");
     assert.deepEqual(Object.keys(plans).filter((k) => ["POST", "PUT", "PATCH", "DELETE"].includes(k)), []);
   });
 });
@@ -185,7 +187,7 @@ describe("4. the administrator's tools", () => {
     assert.equal((await ok.json()).plan.description, "Edited description.");
     assert.equal((await adminPlans.PUT(req("/api/admin/plans", { method: "PUT", headers: admin, body: { id: "starter", monthlyPricePaise: -5 } }))).status, 400);
     assert.equal((await adminPlans.PUT(req("/api/admin/plans", { method: "PUT", headers: admin, body: { name: "no id" } }))).status, 400);
-    assert.equal((await (await adminPlans.GET(req("/api/admin/plans", { headers: admin }))).json()).plans.length, 13, "every plan, the retired Starter and every size included");
+    assert.equal((await (await adminPlans.GET(req("/api/admin/plans", { headers: admin }))).json()).plans.length, 15, "every plan, the retired size variants included");
   });
   it("credits: a grant needs a note-free key, an adjustment needs a reason; mistakes are clear errors; repeats are harmless", async () => {
     const org = await customer("iota");

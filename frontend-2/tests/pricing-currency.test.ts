@@ -83,135 +83,91 @@ describe("3. showing a price", () => {
 });
 
 describe("4. the catalogue in the database", () => {
-  it("Starter is retired, the others carry dollar prices, and Professional has 1,200 credits", async () => {
+  type P = { id: string; monthlyCreditUnits: number; active: boolean; trialDays: number | null; prices: { currency: string; period: string; amountMinor: number }[]; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyPriceUsdCents: number | null; annualPriceUsdCents: number | null; monthlyPriceGbpPence: number | null; annualPriceGbpPence: number | null };
+  const all = async () => ((await import("@/server/subscriptions")).listPlans({ includeInactive: true }) as unknown as P[]);
+  const price = (p: P, currency: string, period: string) => p.prices.find((x) => x.currency === currency && x.period === period)?.amountMinor ?? null;
+
+  it("sells the brief's six plans and Enterprise, in that order", async () => {
     const { listPlans } = await import("@/server/subscriptions");
-    const plans = listPlans();
-    assert.deepEqual(plans.map((p) => p.id), ["free", "pro", "pro-800", "pro-1600", "pro-3200", "pro-6400", "professional", "professional-2400", "professional-4800", "professional-9600", "professional-19200", "enterprise"]);
-    const by = Object.fromEntries(plans.map((p) => [p.id, p]));
-    assert.deepEqual([by.free!.monthlyPriceUsdCents, by.pro!.monthlyPriceUsdCents, by.professional!.monthlyPriceUsdCents, by.enterprise!.monthlyPriceUsdCents], [0, 2500, 7500, null]);
-    assert.deepEqual([by.pro!.annualPriceUsdCents, by.professional!.annualPriceUsdCents], [25_000, 75_000], "annual is ten months, as in rupees");
-    assert.deepEqual([by.free!.monthlyPriceGbpPence, by.pro!.monthlyPriceGbpPence, by.professional!.monthlyPriceGbpPence, by.enterprise!.monthlyPriceGbpPence], [0, 1900, 5700, null], "pound prices for the UK");
-    assert.deepEqual([by.pro!.annualPriceGbpPence, by.professional!.annualPriceGbpPence], [19_000, 57_000]);
-    assert.equal(by.professional!.monthlyCreditUnits, 1_200_000);
-    assert.equal(by.pro!.monthlyPricePaise, 149_900, "rupee prices are untouched");
-    assert.ok(listPlans({ includeInactive: true }).some((p) => p.id === "starter" && !p.active), "kept for history, not offered");
+    assert.deepEqual(listPlans().map((p) => p.id), ["free", "starter", "creator", "pro", "professional", "studio", "enterprise"]);
+  });
+  it("each plan has the credits from the brief (one credit = 1,000 units)", async () => {
+    const credits = Object.fromEntries((await all()).filter((p) => p.active).map((p) => [p.id, p.monthlyCreditUnits / 1000]));
+    assert.deepEqual(credits, { free: 25, starter: 200, creator: 400, pro: 700, professional: 2000, studio: 4500, enterprise: 0 });
+  });
+  it("each plan has the dollar and rupee prices from the brief, and yearly is ten months", async () => {
+    const plans = Object.fromEntries((await all()).map((p) => [p.id, p]));
+    const usd = { free: 0, starter: 600, creator: 1200, pro: 1900, professional: 4900, studio: 9900 };
+    const inr = { free: 0, starter: 49_900, creator: 99_900, pro: 149_900, professional: 449_900, studio: 899_900 };
+    for (const [id, cents] of Object.entries(usd)) {
+      assert.equal(price(plans[id]!, "USD", "monthly"), cents, `${id} USD`);
+      assert.equal(price(plans[id]!, "USD", "annual"), cents * 10, `${id} USD yearly`);
+    }
+    for (const [id, paise] of Object.entries(inr)) {
+      assert.equal(price(plans[id]!, "INR", "monthly"), paise, `${id} INR`);
+      assert.equal(price(plans[id]!, "INR", "annual"), paise * 10, `${id} INR yearly`);
+    }
+    assert.equal(price(plans.enterprise!, "USD", "monthly"), null, "Enterprise has no list price");
+  });
+  it("pound prices exist for the UK (proposed figures)", async () => {
+    const plans = Object.fromEntries((await all()).map((p) => [p.id, p]));
+    assert.deepEqual(["starter", "creator", "pro", "professional", "studio"].map((id) => price(plans[id]!, "GBP", "monthly")), [500, 1000, 1500, 3900, 7900]);
+  });
+  it("the older rupee, dollar and pound fields on a plan agree with its prices", async () => {
+    for (const p of await all()) {
+      assert.equal(p.monthlyPricePaise, price(p, "INR", "monthly"), `${p.id} INR`);
+      assert.equal(p.annualPriceUsdCents, price(p, "USD", "annual"), `${p.id} USD yearly`);
+      assert.equal(p.monthlyPriceGbpPence, price(p, "GBP", "monthly"), `${p.id} GBP`);
+    }
+  });
+  it("the earlier Pro and Professional sizes are retired, not deleted, and no plan has a trial by default", async () => {
+    const plans = await all();
+    for (const id of ["pro-800", "pro-1600", "pro-3200", "pro-6400", "professional-2400", "professional-4800", "professional-9600", "professional-19200"]) assert.equal(plans.find((p) => p.id === id)?.active, false, id);
+    assert.ok(plans.every((p) => p.trialDays === null));
   });
   it("a retired plan cannot be chosen", async () => {
     const { startSubscription } = await import("@/server/subscriptions");
     const { createOrganization } = await import("@/server/tenancy");
     const org = createOrganization({ name: "Currency Org", type: "business" });
-    assert.throws(() => startSubscription({ orgId: org.id, planId: "starter" }), /not available/);
+    assert.throws(() => startSubscription({ orgId: org.id, planId: "pro-800" }), /not available/);
   });
-  it("the administrator can change a dollar price, and bad values are refused", async () => {
-    const { updatePlan, getPlan } = await import("@/server/subscriptions");
+  it("the administrator can change a price in any currency, and bad values are refused", async () => {
+    const { updatePlan, setPlanPrice, getPlan } = await import("@/server/subscriptions");
     assert.equal(updatePlan("pro", { monthlyPriceUsdCents: 2900 }).monthlyPriceUsdCents, 2900);
+    assert.equal(price(getPlan("pro") as unknown as P, "USD", "monthly"), 2900, "the price itself moved too");
     assert.equal(getPlan("pro")!.monthlyPricePaise, 149_900, "the rupee price did not move");
     assert.throws(() => updatePlan("pro", { monthlyPriceUsdCents: -1 }), /cents/);
     assert.throws(() => updatePlan("pro", { monthlyPriceUsdCents: 19.5 }), /cents/);
-    assert.equal(updatePlan("pro", { monthlyPriceUsdCents: 2500 }).monthlyPriceUsdCents, 2500);
-    assert.equal(updatePlan("pro", { monthlyPriceGbpPence: 2000 }).monthlyPriceGbpPence, 2000);
-    assert.throws(() => updatePlan("pro", { monthlyPriceGbpPence: -1 }), /pence/);
-    assert.equal(updatePlan("pro", { monthlyPriceGbpPence: 1900 }).monthlyPriceGbpPence, 1900);
+    updatePlan("pro", { monthlyPriceUsdCents: 1900 });
+    const euro = setPlanPrice({ planId: "pro", currency: "EUR", period: "monthly", amountMinor: 1800 });
+    assert.equal(price(euro as unknown as P, "EUR", "monthly"), 1800, "a new currency needs no code");
+    assert.equal(price(setPlanPrice({ planId: "pro", currency: "EUR", period: "monthly", amountMinor: null }) as unknown as P, "EUR", "monthly"), null, "null removes it");
+    assert.throws(() => setPlanPrice({ planId: "pro", currency: "XYZ", period: "monthly", amountMinor: 5 }), /currency must be/);
+    assert.throws(() => setPlanPrice({ planId: "pro", currency: "USD", period: "weekly", amountMinor: 5 }), /monthly or annual/);
+    assert.throws(() => setPlanPrice({ planId: "pro", currency: "USD", period: "monthly", amountMinor: -5 }), /whole number/);
+    assert.throws(() => setPlanPrice({ planId: "nope", currency: "USD", period: "monthly", amountMinor: 5 }), /does not exist/);
+    assert.throws(() => setPlanPrice({ planId: "free", currency: "USD", period: "monthly", amountMinor: 5 }), /Free plan is free/);
   });
-});
-
-describe("4b. the Pro credit sizes", () => {
-  type P = { id: string; monthlyCreditUnits: number; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyPriceUsdCents: number | null; annualPriceUsdCents: number | null; monthlyPriceGbpPence: number | null; annualPriceGbpPence: number | null; family: string | null };
-  const family = async (name = "pro") => ((await import("@/server/subscriptions")).listPlans() as unknown as P[]).filter((p) => p.family === name);
-
-  it("Pro comes in five sizes, smallest first, and the smallest is the headline plan", async () => {
-    const f = await family();
-    assert.deepEqual(f.map((p) => p.id), ["pro", "pro-800", "pro-1600", "pro-3200", "pro-6400"]);
-    assert.deepEqual(f.map((p) => p.monthlyCreditUnits / 1000), [400, 800, 1600, 3200, 6400]);
-    assert.equal(f[0]!.id, f[0]!.family, "the headline size has id = family");
-  });
-  it("bigger sizes never cost more per credit than the smallest, and the discount stops at 10%", async () => {
-    const f = await family();
-    const base = f[0]!;
-    const perCredit = (p: P, field: "monthlyPricePaise" | "monthlyPriceUsdCents" | "monthlyPriceGbpPence") => (p[field] as number) / p.monthlyCreditUnits;
-    for (const field of ["monthlyPricePaise", "monthlyPriceUsdCents", "monthlyPriceGbpPence"] as const) {
-      let last = Infinity;
-      for (const p of f) {
-        const rate = perCredit(p, field);
-        assert.ok(rate <= last + 1e-12, `${p.id} ${field}: the price per credit must not rise with size`);
-        assert.ok(rate >= perCredit(base, field) * 0.899, `${p.id} ${field}: the discount is capped at about 10%`);
-        last = rate;
-      }
-    }
-  });
-  it("every size has the yearly price at ten months, in all three currencies", async () => {
-    for (const p of await family()) {
-      assert.equal(p.annualPricePaise, p.monthlyPricePaise! * 10, p.id);
-      assert.equal(p.annualPriceUsdCents, p.monthlyPriceUsdCents! * 10, p.id);
-      assert.equal(p.annualPriceGbpPence, p.monthlyPriceGbpPence! * 10, p.id);
-    }
-  });
-  it("a size is a real plan: subscribing to it raises an invoice at its own price and grants its own credits when paid", async () => {
-    const s = await import("@/server/subscriptions");
-    const c = await import("@/server/credits");
-    const { createOrganization } = await import("@/server/tenancy");
-    const org = createOrganization({ name: "Size Org", type: "business" });
-    const { invoice } = s.startSubscription({ orgId: org.id, planId: "pro-1600" });
-    assert.equal(invoice!.subtotalPaise, 569_900);
-    s.markInvoicePaid({ invoiceId: invoice!.id, providerRef: "UPI-SIZE-1" });
-    assert.equal(c.getWallet(org.id).balanceUnits, 1_600_000);
-  });
-});
-
-describe("4c. the Professional credit sizes", () => {
-  type P = { id: string; monthlyCreditUnits: number; monthlyPricePaise: number; annualPricePaise: number; monthlyPriceUsdCents: number; annualPriceUsdCents: number; monthlyPriceGbpPence: number; annualPriceGbpPence: number; family: string | null };
-  const sizes = async (name: string) => ((await import("@/server/subscriptions")).listPlans() as unknown as P[]).filter((p) => p.family === name);
-
-  it("Professional comes in five sizes, smallest first, at the same rate per credit as Pro to start", async () => {
-    const f = await sizes("professional");
-    assert.deepEqual(f.map((p) => p.id), ["professional", "professional-2400", "professional-4800", "professional-9600", "professional-19200"]);
-    assert.deepEqual(f.map((p) => p.monthlyCreditUnits / 1000), [1200, 2400, 4800, 9600, 19_200]);
-    const pro = (await sizes("pro"))[0]!;
-    assert.equal(f[0]!.monthlyPriceUsdCents / f[0]!.monthlyCreditUnits, pro.monthlyPriceUsdCents / pro.monthlyCreditUnits, "no premium per credit over Pro: there is no team feature to charge for yet");
-  });
-  it("the price per credit never rises with size, and the discount stops at 14%", async () => {
-    const f = await sizes("professional");
-    for (const field of ["monthlyPricePaise", "monthlyPriceUsdCents", "monthlyPriceGbpPence"] as const) {
-      const base = f[0]![field] / f[0]!.monthlyCreditUnits;
-      let last = Infinity;
-      for (const p of f) {
-        const rate = p[field] / p.monthlyCreditUnits;
-        assert.ok(rate <= last + 1e-12, `${p.id} ${field}`);
-        assert.ok(rate >= base * 0.859, `${p.id} ${field}: at most about 14% off`);
-        last = rate;
-      }
-    }
-    for (const p of f) {
-      assert.equal(p.annualPricePaise, p.monthlyPricePaise * 10, p.id);
-      assert.equal(p.annualPriceUsdCents, p.monthlyPriceUsdCents * 10, p.id);
-      assert.equal(p.annualPriceGbpPence, p.monthlyPriceGbpPence * 10, p.id);
-    }
-  });
-  it("the margin stays healthy at every size: price per credit is at least double the provider cost (about $0.022 a credit)", async () => {
-    for (const name of ["pro", "professional"]) for (const p of await sizes(name)) assert.ok(p.monthlyPriceUsdCents / 100 / (p.monthlyCreditUnits / 1000) >= 0.044, p.id);
-  });
-  it("a Professional size is a real plan: subscribing raises an invoice at its price and grants its credits when paid", async () => {
-    const s = await import("@/server/subscriptions");
-    const c = await import("@/server/credits");
-    const { createOrganization } = await import("@/server/tenancy");
-    const org = createOrganization({ name: "Pro Size Org", type: "business" });
-    const { invoice } = s.startSubscription({ orgId: org.id, planId: "professional-9600" });
-    assert.equal(invoice!.subtotalPaise, 3_239_900);
-    s.markInvoicePaid({ invoiceId: invoice!.id, providerRef: "UPI-PROSIZE-1" });
-    assert.equal(c.getWallet(org.id).balanceUnits, 9_600_000);
+  it("changing a legacy-field price changes the real price, and the old field stays in step when a price is set directly", async () => {
+    const { updatePlan, setPlanPrice, getPlan } = await import("@/server/subscriptions");
+    setPlanPrice({ planId: "creator", currency: "GBP", period: "monthly", amountMinor: 1100 });
+    assert.equal(getPlan("creator")!.monthlyPriceGbpPence, 1100);
+    updatePlan("creator", { monthlyPriceGbpPence: 1000 });
+    assert.equal(price(getPlan("creator") as unknown as P, "GBP", "monthly"), 1000);
   });
 });
 
 describe("5. the public price list", () => {
-  it("carries all three currencies and the visitor's country when the host reports it, and never changes anything", async () => {
+  it("carries every price, the visitor's country when the host reports it, and never changes anything", async () => {
     const route = await import("@/app/api/plans/route");
     const asked = (h: Record<string, string>) => route.GET(new NextRequest("http://localhost:3000/api/plans", { headers: h }));
     const india = await (await asked({ "x-vercel-ip-country": "IN" })).json();
     assert.equal(india.country, "IN");
-    assert.ok(india.plans.every((p: { monthlyPriceUsdCents?: number | null; monthlyPriceGbpPence?: number | null }) => "monthlyPriceUsdCents" in p && "monthlyPriceGbpPence" in p));
-    assert.equal(india.plans.find((p: { id: string }) => p.id === "pro").monthlyPriceGbpPence, 1900);
-    assert.equal(india.plans.find((p: { id: string }) => p.id === "pro").monthlyPriceUsdCents, 2500);
-    assert.ok(!JSON.stringify(india).includes("starter"), "a retired plan is not advertised");
+    const pro = india.plans.find((p: { id: string }) => p.id === "pro");
+    assert.equal(pro.monthlyPriceUsdCents, 1900);
+    assert.equal(pro.monthlyPriceGbpPence, 1500);
+    assert.ok(Array.isArray(pro.prices) && pro.prices.some((x: { currency: string; period: string; amountMinor: number }) => x.currency === "INR" && x.period === "monthly" && x.amountMinor === 149_900));
+    assert.ok(!JSON.stringify(india).includes("pro-800"), "a retired plan is not advertised");
     assert.equal((await (await asked({})).json()).country, null);
     assert.deepEqual(Object.keys(route).filter((k) => ["POST", "PUT", "PATCH", "DELETE"].includes(k)), []);
   });
