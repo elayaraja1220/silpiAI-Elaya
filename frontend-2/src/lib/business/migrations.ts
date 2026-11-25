@@ -281,6 +281,56 @@ export const MIGRATIONS: Migration[] = [
       db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_units_per_usd', '45000')").run();
     },
   },
+  {
+    id: 5,
+    name: "AI jobs: multi-step project builds with a budget, steps and generated files",
+    up(db) {
+      // Unlike gateway requests, a job's brief and its generated files ARE stored: they are the customer's product.
+      db.exec(`
+        CREATE TABLE ai_jobs (
+          id               TEXT PRIMARY KEY,
+          org_id           TEXT NOT NULL REFERENCES organizations(id),
+          user_id          TEXT NOT NULL DEFAULT '',
+          title            TEXT NOT NULL,
+          brief            TEXT NOT NULL,
+          quality          TEXT NOT NULL CHECK (quality IN ('economy', 'standard', 'high', 'demo')),
+          review           INTEGER NOT NULL DEFAULT 0 CHECK (review IN (0, 1)),
+          status           TEXT NOT NULL CHECK (status IN ('planning', 'awaiting_approval', 'running', 'paused', 'completed', 'failed', 'cancelled')),
+          pause_reason     TEXT,
+          message          TEXT NOT NULL DEFAULT '',
+          plan_summary     TEXT NOT NULL DEFAULT '',
+          budget_units     INTEGER NOT NULL DEFAULT 0 CHECK (budget_units >= 0),
+          spent_units      INTEGER NOT NULL DEFAULT 0 CHECK (spent_units >= 0),
+          cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+          heartbeat_at     TEXT,
+          created_at       TEXT NOT NULL,
+          updated_at       TEXT NOT NULL,
+          finished_at      TEXT
+        );
+        CREATE INDEX ai_jobs_org ON ai_jobs(org_id, created_at);
+
+        CREATE TABLE ai_job_steps (
+          job_id        TEXT NOT NULL REFERENCES ai_jobs(id),
+          seq           INTEGER NOT NULL,
+          kind          TEXT NOT NULL CHECK (kind IN ('plan', 'file', 'review')),
+          label         TEXT NOT NULL,
+          model         TEXT NOT NULL,
+          status        TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+          attempt       INTEGER NOT NULL DEFAULT 0,
+          charged_units INTEGER NOT NULL DEFAULT 0,
+          input_tokens  INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          model_used    TEXT,
+          error         TEXT,
+          payload       TEXT NOT NULL DEFAULT '{}',
+          output        TEXT,
+          started_at    TEXT,
+          finished_at   TEXT,
+          PRIMARY KEY (job_id, seq)
+        );
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

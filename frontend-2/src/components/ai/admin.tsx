@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, Lock } from "lucide-react";
 
+import { Customers } from "./customers";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill, usd } from "./light";
 
 type Model = { id: string; provider: string; providerModel: string; label: string; tier: string; inputUsdMicroPerMtok: number; outputUsdMicroPerMtok: number; markupBasisPoints: number; maxOutputTokens: number; priority: number; enabled: boolean };
@@ -33,6 +34,7 @@ export function AiAdmin() {
   return (
     <div className="space-y-5">
       {note && <Notice tone="green">{note}</Notice>}
+      <Customers onChanged={flash} onError={fail} />
       <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>
       <Conversion value={overview.unitsPerUsd} onSaved={(v) => { setOverview({ ...overview, unitsPerUsd: v }); flash("Conversion saved."); }} onError={fail} />
       <Models models={overview.models} onSaved={() => { flash("Model saved."); load(); }} onError={fail} />
@@ -42,6 +44,17 @@ export function AiAdmin() {
 }
 
 function TokenSignIn({ onDone }: { onDone: () => void }) {
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [help, setHelp] = useState("");
+  useEffect(() => {
+    api<{ configured: boolean }>("/api/admin/session")
+      .then((r) => {
+        setConfigured(r.configured);
+        // The server words the setup instruction itself (it names the setting); an empty attempt only fetches that text.
+        if (!r.configured) api("/api/admin/session", { method: "POST", body: { token: "" } }).catch((e: Error) => setHelp(e.message));
+      })
+      .catch(() => setConfigured(true));
+  }, []);
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -50,6 +63,20 @@ function TokenSignIn({ onDone }: { onDone: () => void }) {
     setError("");
     try { await api("/api/admin/session", { method: "POST", body: { token } }); setToken(""); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
+  if (configured === false) {
+    return (
+      <Card className="mx-auto max-w-lg space-y-3">
+        <h2 className="flex items-center gap-2 text-lg font-semibold"><Lock size={17} /> Set up the administrator token first</h2>
+        <p className="text-sm text-slate-600">The administrator pages are locked until a secret token exists.</p>
+        {help && <Notice tone="amber">{help}</Notice>}
+        <ol className="list-decimal space-y-1.5 pl-5 text-sm text-slate-700">
+          <li>Choose a long secret (16 or more characters) and add it to the file named above, as the setting the message names.</li>
+          <li>Stop the server (Ctrl+C) and start it again with <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">npm run dev</code>.</li>
+          <li>Reload this page and sign in with that secret.</li>
+        </ol>
+      </Card>
+    );
+  }
   return (
     <Card className="mx-auto max-w-md space-y-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><Lock size={17} /> Administrator sign-in</h2>

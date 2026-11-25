@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Send, Wallet } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { WALLET_CHANGED } from "./ai-shell";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill } from "./light";
 
 type Model = { id: string; label: string; tier: "fast" | "balanced" | "best" | "demo"; maxOutputTokens: number; creditsPer1kInput: number; creditsPer1kOutput: number };
@@ -19,6 +20,7 @@ const CHOICES = [
   { value: "silpi-demo", title: "Demo", blurb: "Free. No AI: tries the screens only." },
 ];
 const LENGTHS = [256, 512, 1024, 2048, 4096];
+const STARTERS = ["Explain what an API is in simple words", "Write a friendly product description for a bakery", "Give me 5 name ideas for a travel website", "Translate 'Welcome to our shop' into Tamil"];
 
 /** Chat through the gateway. Shows what a request may hold BEFORE it is sent, and what it really cost AFTER. */
 export function Playground() {
@@ -69,6 +71,7 @@ export function Playground() {
       const x = r.result;
       setThread((t) => [...t, question, { role: "assistant", content: x.text, meta: { model: x.model.label, tokensIn: x.usage.inputTokens, tokensOut: x.usage.outputTokens, chargedUnits: x.chargedUnits, latencyMs: x.latencyMs, fallback: x.fallbackUsed } }]);
       setWallet(x.wallet);
+      window.dispatchEvent(new Event(WALLET_CHANGED));
       setText("");
     } catch (e) {
       const err = e as ApiError;
@@ -107,7 +110,15 @@ export function Playground() {
 
         <Card className="p-0">
           <div className="max-h-[420px] min-h-[220px] space-y-4 overflow-y-auto p-5" aria-live="polite">
-            {thread.length === 0 && !busy && <p className="pt-10 text-center text-sm text-slate-400">Ask something. Each answer shows exactly what it cost.</p>}
+            {thread.length === 0 && !busy && (
+              <div className="space-y-4 pt-6 text-center">
+                <p className="text-base font-medium text-slate-800">What would you like to ask?</p>
+                <p className="text-sm text-slate-500">Each answer shows exactly what it cost. New here? Pick <b>Demo</b> above: it is free and uses no AI.</p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {STARTERS.map((s) => <button key={s} onClick={() => setText(s)} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 hover:border-indigo-300 hover:bg-indigo-50">{s}</button>)}
+                </div>
+              </div>
+            )}
             {thread.map((t, i) => (
               <div key={i} className={cn("flex", t.role === "user" ? "justify-end" : "justify-start")}>
                 <div className={cn("max-w-[85%] rounded-2xl px-4 py-2.5 text-sm", t.role === "user" ? "bg-indigo-600 text-white" : "border border-slate-200 bg-slate-50 text-slate-800")}>

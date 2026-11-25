@@ -60,6 +60,16 @@ export const echoAdapter: ProviderAdapter = {
   isConfigured: () => true,
   async complete(req) {
     const last = [...req.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    // Demo mode for the project builder: fixed, free answers so the whole flow can be tried without any provider.
+    const sys = req.system ?? "";
+    const canned = sys.includes("SILPI_JOB_PLAN")
+      ? JSON.stringify({ summary: "Demo plan: a small static page (no AI model was used).", files: [{ path: "index.html", purpose: "The page", complexity: "low" }, { path: "styles.css", purpose: "Styling", complexity: "low" }, { path: "app.js", purpose: "Behaviour", complexity: "high" }] })
+      : sys.includes("SILPI_JOB_FILE")
+        ? `/* Demo file (no AI model was used): ${/File to write: (.+)/.exec(last)?.[1] ?? "file"} */\n`
+        : sys.includes("SILPI_JOB_REVIEW")
+          ? "Demo review: no real review was performed because no AI model was used."
+          : null;
+    if (canned !== null) return { text: canned, inputTokens: Math.ceil(last.length / 4), outputTokens: Math.ceil(canned.length / 4), providerRequestId: null };
     const text = `Demo reply (no AI model was called). You wrote ${last.length} characters:\n\n"${last.slice(0, 400)}${last.length > 400 ? "..." : ""}"\n\nChoose Fast, Balanced or Best, and connect a provider key, to get real answers.`;
     return { text, inputTokens: Math.ceil(last.length / 4), outputTokens: Math.ceil(text.length / 4), providerRequestId: null };
   },
