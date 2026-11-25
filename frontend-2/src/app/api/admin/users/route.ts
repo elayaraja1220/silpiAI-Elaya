@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { getDb } from "@/lib/business/db";
 import { MEMBER_ROLES, ORG_TYPES } from "@/lib/business/migrations";
@@ -50,6 +51,7 @@ export async function POST(request: NextRequest) {
     const org = b.newOrg ? createOrganization({ name: String(b.newOrg.name ?? ""), type: b.newOrg.type as OrgType }) : getOrganization(b.orgId!)!;
     addMember(org.id, user.id, role);
     if (b.newOrg) startSubscription({ orgId: org.id, planId: "free" }); // a new customer organization starts on the Free plan, with its credits
+    auditAdmin("user.created", "user", user.id, { email: user.email, role }, org.id);
     return { user, organization: { id: org.id, name: org.name, type: org.type }, role };
   });
 }

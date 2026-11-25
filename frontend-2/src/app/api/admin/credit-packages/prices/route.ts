@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { apiHandle } from "@/server/http";
 import { setPackagePrice } from "@/server/payments/service";
@@ -11,5 +12,10 @@ export const dynamic = "force-dynamic";
 export async function PUT(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-  return apiHandle("PACKAGE PRICE", async () => ({ package: setPackagePrice((await request.json()) as Parameters<typeof setPackagePrice>[0]) }));
+  return apiHandle("PACKAGE PRICE", async () => {
+    const input = (await request.json()) as Parameters<typeof setPackagePrice>[0];
+    const pack = setPackagePrice(input);
+    auditAdmin("credit_package.price_set", "credit_package", input.packageId, { ...input });
+    return { package: pack };
+  });
 }

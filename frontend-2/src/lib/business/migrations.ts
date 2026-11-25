@@ -813,6 +813,28 @@ export const MIGRATIONS: Migration[] = [
       });
     },
   },
+  {
+    id: 15,
+    name: "Audit log: an append-only record of who changed money, prices, plans, credits and access",
+    up(db) {
+      db.exec(`
+        CREATE TABLE audit_logs (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          at          TEXT NOT NULL,
+          actor       TEXT NOT NULL,
+          action      TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id   TEXT NOT NULL DEFAULT '',
+          org_id      TEXT,
+          detail      TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX audit_logs_action ON audit_logs(action, id);
+        CREATE INDEX audit_logs_org ON audit_logs(org_id, id);
+        CREATE TRIGGER audit_logs_no_update BEFORE UPDATE ON audit_logs BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+        CREATE TRIGGER audit_logs_no_delete BEFORE DELETE ON audit_logs BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

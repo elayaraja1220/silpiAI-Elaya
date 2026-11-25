@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { transaction } from "@/lib/business/db";
 import { getMeteringPolicy, getUnitsPerUsd, setMeteringPolicy, setUnitsPerUsd } from "@/server/ai/catalog";
@@ -31,6 +32,7 @@ export async function PUT(request: NextRequest) {
     return transaction(() => {
       if (body.unitsPerUsd !== undefined) setUnitsPerUsd(body.unitsPerUsd as number);
       setMeteringPolicy({ rounding: body.rounding, minChargeUnits: body.minChargeUnits });
+      auditAdmin("ai.charging_settings_changed", "settings", "ai_charging", { sent: body });
       return current();
     });
   });

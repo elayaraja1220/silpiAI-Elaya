@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { apiHandle } from "@/server/http";
 import { setPlanPrice } from "@/server/subscriptions";
@@ -15,5 +16,10 @@ export const dynamic = "force-dynamic";
 export async function PUT(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-  return apiHandle("PLAN PRICE", async () => ({ plan: setPlanPrice((await request.json()) as Parameters<typeof setPlanPrice>[0]) }));
+  return apiHandle("PLAN PRICE", async () => {
+    const input = (await request.json()) as Parameters<typeof setPlanPrice>[0];
+    const plan = setPlanPrice(input);
+    auditAdmin("plan.price_set", "plan", input.planId, { ...input });
+    return { plan };
+  });
 }

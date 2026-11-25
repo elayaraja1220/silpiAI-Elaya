@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { setDailyCap } from "@/server/ai/catalog";
 import { aiHandle } from "@/server/ai/http";
@@ -13,6 +14,8 @@ export async function PUT(request: NextRequest) {
   if (denied) return denied;
   return aiHandle("AI LIMITS", async () => {
     const body = (await request.json()) as { orgId?: unknown; dailyCapUnits?: unknown };
-    return { orgId: body.orgId, dailyCapUnits: setDailyCap(String(body.orgId ?? ""), body.dailyCapUnits === null ? null : (body.dailyCapUnits as number)) };
+    const dailyCapUnits = setDailyCap(String(body.orgId ?? ""), body.dailyCapUnits === null ? null : (body.dailyCapUnits as number));
+    auditAdmin("ai.daily_cap_set", "organization", String(body.orgId), { dailyCapUnits }, String(body.orgId));
+    return { orgId: body.orgId, dailyCapUnits };
   });
 }

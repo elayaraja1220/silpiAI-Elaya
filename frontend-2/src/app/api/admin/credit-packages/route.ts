@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { apiHandle } from "@/server/http";
 import { listCreditPackages, saveCreditPackage } from "@/server/payments/service";
@@ -18,5 +19,10 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-  return apiHandle("PACKAGE SAVE", async () => ({ package: saveCreditPackage((await request.json()) as Parameters<typeof saveCreditPackage>[0]) }));
+  return apiHandle("PACKAGE SAVE", async () => {
+    const input = (await request.json()) as Parameters<typeof saveCreditPackage>[0];
+    const pack = saveCreditPackage(input);
+    auditAdmin("credit_package.saved", "credit_package", pack.id, { sent: input });
+    return { package: pack };
+  });
 }

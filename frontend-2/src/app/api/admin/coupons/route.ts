@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { listCoupons, saveCoupon, type CouponInput } from "@/server/coupons";
 import { apiHandle } from "@/server/http";
@@ -22,5 +23,9 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-  return apiHandle("COUPON SAVE", async () => ({ coupon: saveCoupon((await request.json()) as CouponInput) }));
+  return apiHandle("COUPON SAVE", async () => {
+    const coupon = saveCoupon((await request.json()) as CouponInput);
+    auditAdmin("coupon.saved", "coupon", coupon.code, { ...coupon });
+    return { coupon };
+  });
 }

@@ -6,6 +6,7 @@ import { Loader2, Lock } from "lucide-react";
 import { Customers } from "./customers";
 import { MarkupRules, type Rule } from "./markups";
 import { CouponsAdmin, PlansAdmin } from "./plans-admin";
+import { AuditAdmin, FinanceAdmin } from "./finance-admin";
 import { PaymentsAdmin } from "./payments-admin";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill, usd } from "./light";
 
@@ -15,12 +16,15 @@ type Policy = { rounding: "up" | "nearest"; minChargeUnits: number };
 type ProviderStatus = { id: string; configured: boolean; circuit: "closed" | "open" | "half-open" };
 type Overview = { providers: ProviderStatus[]; unitsPerUsd: number; policy: Policy; markupRules: Rule[]; models: Model[]; organizations: Org[] };
 
+const ADMIN_TABS = ["Finance", "Customers & plans", "Payments", "AI", "Audit log"] as const;
+
 /** Administrator view: what the AI really costs, what customers are charged, and the dials. Needs the administrator token. */
 export function AiAdmin() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [tab, setTab] = useState<(typeof ADMIN_TABS)[number]>("Finance");
 
   const load = useCallback(() => {
     api<{ overview: Overview }>("/api/admin/ai")
@@ -39,17 +43,30 @@ export function AiAdmin() {
   return (
     <div className="space-y-5">
       {note && <Notice tone="green">{note}</Notice>}
-      <Customers onChanged={flash} onError={fail} />
-      <PlansAdmin onNote={flash} onError={fail} />
-      <CouponsAdmin onNote={flash} onError={fail} />
-      <PaymentsAdmin onNote={flash} onError={fail} />
-      <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>
-      <Charging value={overview.unitsPerUsd} policy={overview.policy} onSaved={() => { flash("Charging settings saved."); load(); }} onError={fail} />
-      <MarkupRules rules={overview.markupRules} modelIds={overview.models.map((m) => m.id)} providers={[...new Set(overview.models.map((m) => m.provider))]} onSaved={() => { flash("Markup rules saved."); load(); }} onError={fail} />
-      <Providers providers={overview.providers} />
-      <AddModel providers={overview.providers.map((p) => p.id)} onSaved={() => { flash("Model added, switched off. Check its prices, then turn it on."); load(); }} onError={fail} />
-      <Models models={overview.models} onSaved={() => { flash("Model saved."); load(); }} onError={fail} />
-      <Orgs orgs={overview.organizations} onSaved={() => { flash("Limit saved."); load(); }} onError={fail} />
+      <div role="tablist" aria-label="Administrator sections" className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
+        {ADMIN_TABS.map((x) => <button key={x} role="tab" aria-selected={tab === x} onClick={() => setTab(x)} className={"rounded-lg px-3 py-1.5 text-sm font-medium transition " + (tab === x ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50")}>{x}</button>)}
+      </div>
+      {tab === "Finance" && <FinanceAdmin onError={fail} />}
+      {tab === "Customers & plans" && (
+        <>
+          <Customers onChanged={flash} onError={fail} />
+          <PlansAdmin onNote={flash} onError={fail} />
+          <CouponsAdmin onNote={flash} onError={fail} />
+        </>
+      )}
+      {tab === "Payments" && <PaymentsAdmin onNote={flash} onError={fail} />}
+      {tab === "AI" && (
+        <>
+          <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>
+          <Charging value={overview.unitsPerUsd} policy={overview.policy} onSaved={() => { flash("Charging settings saved."); load(); }} onError={fail} />
+          <MarkupRules rules={overview.markupRules} modelIds={overview.models.map((m) => m.id)} providers={[...new Set(overview.models.map((m) => m.provider))]} onSaved={() => { flash("Markup rules saved."); load(); }} onError={fail} />
+          <Providers providers={overview.providers} />
+          <AddModel providers={overview.providers.map((p) => p.id)} onSaved={() => { flash("Model added, switched off. Check its prices, then turn it on."); load(); }} onError={fail} />
+          <Models models={overview.models} onSaved={() => { flash("Model saved."); load(); }} onError={fail} />
+          <Orgs orgs={overview.organizations} onSaved={() => { flash("Limit saved."); load(); }} onError={fail} />
+        </>
+      )}
+      {tab === "Audit log" && <AuditAdmin onError={fail} />}
     </div>
   );
 }

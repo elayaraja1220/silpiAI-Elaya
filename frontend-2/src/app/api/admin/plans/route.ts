@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { ValidationError } from "@/lib/business/validate";
 import { apiHandle } from "@/server/http";
@@ -22,6 +23,8 @@ export async function PUT(request: NextRequest) {
   return apiHandle("PLANS UPDATE", async () => {
     const { id, ...patch } = (await request.json()) as { id?: unknown } & Record<string, unknown>;
     if (typeof id !== "string") throw new ValidationError("id is required.");
-    return { plan: updatePlan(id, patch) };
+    const plan = updatePlan(id, patch);
+    auditAdmin("plan.updated", "plan", id, { sent: patch });
+    return { plan };
   });
 }

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { expireCredits } from "@/server/credits";
 import { apiHandle } from "@/server/http";
@@ -15,5 +16,10 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-  return apiHandle("BILLING PROCESS", () => ({ processed: processSubscriptions(), expired: expireCredits() }));
+  return apiHandle("BILLING PROCESS", () => {
+    const processed = processSubscriptions();
+    const expired = expireCredits();
+    auditAdmin("billing.process_run", "billing", "process", { processed, expired });
+    return { processed, expired };
+  });
 }

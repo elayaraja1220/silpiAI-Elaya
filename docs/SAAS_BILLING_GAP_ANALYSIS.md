@@ -29,11 +29,11 @@ Written from the repository as it is today (commit `29e1cfa`). Nothing here is a
 | 8 Top-ups | **Partial (step 4)** | Packs, orders, payment confirmation and credit grant exist as APIs. Missing: the customer screen (step 6). |
 | 9 Payments | **Partial** | Provider-neutral layer, payment records, signed notices with duplicate prevention, refunds, chargebacks, credit packs built (section 10). Missing: the Stripe and Razorpay adapters themselves (need accounts). |
 | 10 Currency, tax | **Partial** | Display by country for three currencies. Missing: exchange-rate table, ten currencies, billing addresses, tax provider, currency on invoices. Invoices and GST are rupees only. |
-| 11 Admin dashboard | **Partial** | No revenue, churn, margin or cost-by-provider views; no audit log. |
+| 11 Admin dashboard | **Mostly done (step 7, built)** | Finance tab (revenue per currency, MRR, churn risk, credits owed, AI cost against billing, health checks) and an audit log. Missing: exchange-rate totals (step 8), per-customer margin, charts beyond the daily bars. |
 | 12 User billing dashboard | **Mostly done (step 6, built)** | `/ai/billing`: plan, credits by kind with expiry, plan change, coupons, credit packs, invoices, payments, credit history. Missing: online checkout (needs a payment provider), downloadable invoices. |
 | 13 Database | **Partial** | See section 4. |
 | 14 API | **Partial** | Routes follow `/api/workspace` and `/api/admin`, not `/api/v1`. Add versioning only if you want it. |
-| 15 Security | **Partial** | Missing: rate limiting beyond sign-in, audit trail, webhook verification, upload checks, prompt-injection handling. |
+| 15 Security | **Partial** | Webhook signatures and an audit trail now exist. Missing: rate limiting beyond sign-in, individual admin identities, upload checks, prompt-injection handling. |
 | 16 Tests | **Partial** | 811 tests, including money and concurrency. Missing: payment, webhook, expiry, bucket-order and end-to-end browser tests. |
 
 ## 3. Conflicts you need to decide
@@ -202,3 +202,25 @@ Add: `plan_prices`, `credit_buckets` (with expiry), `credit_grants`, `credit_pac
 **Checked** in a real browser against a temporary database: a Free organization with a requested Pro plan, an open dollar invoice and two top-up orders. Two bugs found and fixed that way: the cancel button showed for the Free plan, and the currency pickers ignored the currency of an invoice already raised.
 
 **Not done.** There is no online payment button, because no provider is connected: the page tells the customer to pay and quote the invoice or order number, and the credits or plan start when the administrator records the payment (or a provider notice arrives). Invoice PDFs, and billing addresses and tax numbers (step 8), are not built.
+
+## 13. Step 7 built: finance dashboard and audit log (migration 15)
+
+**Audit log.** `audit_logs` is append-only (the database refuses updates and deletes). Each entry has the time, who, what (`plan.price_set`, `credits.granted`, `payment.succeeded`, `refund.succeeded` ...), what it concerned, the organization when there is one, and the facts of the change. Passwords, tokens, keys and similar fields are never written; long text is cut. Administrator changes are recorded after they succeed (a rejected change leaves nothing). Payments, duplicate-payment flags, disputes and refunds are written in the same transaction as the money moving, so one cannot exist without the other. Also recorded: administrator sign-in and user creation. `GET /api/admin/audit` filters by action prefix, organization and actor, and pages backwards.
+
+**Finance.** `GET /api/admin/finance`, worked out from the books when asked, never stored:
+- **Money received:** successful payments less successful refunds, this month, last month and all time, **each currency on its own** (there are no exchange rates, so nothing is added across currencies); packs sold.
+- **Subscribers:** monthly recurring revenue (yearly counted as a twelfth, trials and past-due not counted), revenue at risk from cancelling subscribers, paying / past due / trial / free, ended this month, by plan, invoices waiting for payment.
+- **Credits owed:** what customers can still spend, by kind, and its worth at the credit price.
+- **AI:** provider cost against what customers were billed in credits, this and last month, by provider and by model, requests failed and served by a backup, unrecovered usage, and the last 14 days.
+- **Health:** wallets and buckets against the ledger, duplicate payments waiting for a refund, failed provider notices, credits not recovered on refunds, stuck AI requests.
+- The agency's own organization is excluded everywhere.
+
+**Admin screen.** `/ai/admin` now has tabs: Finance, Customers & plans, Payments, AI, Audit log (the existing sections, regrouped, unchanged).
+
+**Tests.** `tests/finance-audit.test.ts` (9) and `tests/finance.test.ts` (10): append-only, secrets never stored, filters and paging, rollback with the change, every admin route recorded and nothing recorded on failure, and each finance figure against a small business built through the real services and against independent queries. Mutation checks on the revenue, MRR, trial, past-due, agency-exclusion, refund, secret-hiding and payment-audit logic were all caught.
+
+**Not done.**
+- All administrators share one token, so entries say "admin": individual names need real administrator accounts.
+- The audit log protects against edits through the application and by mistake; someone with the database file can still change it. A hash chain or an external copy would be needed against that.
+- No revenue in one currency (exchange rates, step 8) and no margin per customer or per plan.
+- AI figures were checked with a stand-in provider; real prices are still to be verified.

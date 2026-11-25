@@ -1,3 +1,4 @@
+import { recordAudit } from "@/server/audit";
 import { NextRequest, NextResponse } from "next/server";
 
 import { ADMIN_COOKIE, adminConfigured, allowLoginAttempt, checkAdminToken, createSession, sameSite, sessionCookie, verifySession } from "@/lib/admin-auth";
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
     return json({ success: false, error: "Request body must be JSON." }, 400);
   }
   if (!checkAdminToken(body.token)) return json({ success: false, error: "That admin token is not correct." }, 401);
+  recordAudit({ actor: "admin", action: "admin.signed_in", entityType: "session", entityId: "admin" });
   const session = createSession();
   const response = json({ success: true, configured: true, authenticated: true });
   response.cookies.set(sessionCookie(request, session.value, session.maxAgeSeconds));

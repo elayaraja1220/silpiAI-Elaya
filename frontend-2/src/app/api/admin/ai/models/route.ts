@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { auditAdmin } from "@/server/audit";
 import { requireAdmin } from "@/lib/admin-auth";
 import { saveModel, type ModelInput } from "@/server/ai/catalog";
 import { aiHandle } from "@/server/ai/http";
@@ -11,5 +12,10 @@ export const dynamic = "force-dynamic";
 export async function PUT(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-  return aiHandle("AI MODEL SAVE", async () => ({ model: saveModel({ ...((await request.json()) as ModelInput), changedBy: "admin" }) }));
+  return aiHandle("AI MODEL SAVE", async () => {
+    const input = (await request.json()) as ModelInput;
+    const model = saveModel({ ...input, changedBy: "admin" });
+    auditAdmin("model.saved", "model", model.id, { sent: input, enabled: model.enabled, priceVersion: model.priceVersion });
+    return { model };
+  });
 }

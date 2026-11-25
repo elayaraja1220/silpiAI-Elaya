@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { getDb, transaction } from "@/lib/business/db";
 import { CURRENCY_CODES, isCurrency } from "@/lib/currencies";
 import { ValidationError } from "@/lib/business/validate";
+import { recordAuditIn } from "../audit";
 import { addCreditsIn, bucketOfGrant, clawbackIn } from "../credits";
 import { gstBasisPoints, markInvoicePaidIn } from "../subscriptions";
 import { getPaymentProvider, WebhookError, type PaymentEvent, type PaymentTarget } from "./provider";
@@ -198,6 +199,7 @@ export function applySuccessfulPayment(db: DatabaseSync, p: { provider: string; 
     if (p.rejectIfAlreadyPaid) throw new PaymentProblem(`${t.label[0]!.toUpperCase()}${t.label.slice(1)} is already paid.`);
     // Money arrived for something that was already paid. Keep the record, apply nothing, and say so, so it can be refunded.
     save("succeeded", `Second payment for ${t.label}, which was already paid. Nothing was applied: refund it.`);
+    recordAuditIn(db, { actor: p.provider === "manual" ? "admin" : `provider:${p.provider}`, action: "payment.duplicate_flagged", entityType: "payment", entityId: id, orgId: t.orgId, detail: { amountMinor: t.expected, currency: t.currency, reference: p.providerPaymentId } }, p.at);
     return { payment: toPayment(getPaymentRow(db, id)!), applied: false, duplicate: false };
   }
 
@@ -208,6 +210,7 @@ export function applySuccessfulPayment(db: DatabaseSync, p: { provider: string; 
     db.prepare("UPDATE topups SET status = 'paid', paid_at = ? WHERE id = ?").run(p.at, topup.id);
   }
   save("succeeded", null);
+  recordAuditIn(db, { actor: p.provider === "manual" ? "admin" : `provider:${p.provider}`, action: "payment.succeeded", entityType: "payment", entityId: id, orgId: t.orgId, detail: { amountMinor: t.expected, currency: t.currency, reference: p.providerPaymentId, for: t.invoiceId ? `invoice ${t.invoiceId}` : `top-up ${t.topupId}` } }, p.at);
   // Any other attempt still waiting for the same thing is no longer needed.
   db.prepare("UPDATE billing_payments SET status = 'failed', failure_reason = 'Paid another way', updated_at = ? WHERE id != ? AND status = 'pending' AND ((invoice_id IS NOT NULL AND invoice_id = ?) OR (topup_id IS NOT NULL AND topup_id = ?))").run(p.at, id, t.invoiceId, t.topupId);
   return { payment: toPayment(getPaymentRow(db, id)!), applied: true, duplicate: false };
@@ -284,6 +287,7 @@ function finishRefund(db: DatabaseSync, refundId: string, providerRefundId: stri
   db.prepare("UPDATE billing_payments SET refunded_minor = ?, status = ?, updated_at = ? WHERE id = ?").run(cumulative, cumulative >= pay.amount_minor ? "refunded" : "partially_refunded", at, pay.id);
   const { reversed, unrecovered } = reverseCredits(db, { ...pay, refunded_minor: cumulative }, refundId, cumulative);
   db.prepare("UPDATE refunds SET credits_reversed_units = ?, credits_unrecovered_units = ? WHERE id = ?").run(reversed, unrecovered, refundId);
+  recordAuditIn(db, { actor: refund.requested_by || "system", action: "refund.succeeded", entityType: "payment", entityId: pay.id, orgId: pay.org_id, detail: { refundId, amountMinor: refund.amount_minor, currency: refund.currency, reason: refund.reason, creditsReversedUnits: reversed, creditsUnrecoveredUnits: unrecovered } }, at);
   return toRefund(db.prepare("SELECT * FROM refunds WHERE id = ?").get(refundId) as RefundRow);
 }
 
@@ -357,6 +361,7 @@ function applyExternalRefund(db: DatabaseSync, p: { provider: string; providerPa
 function applyDispute(db: DatabaseSync, p: { provider: string; providerPaymentId: string; outcome: "opened" | "won" | "lost"; eventId: string; at: string }): void {
   const pay = db.prepare("SELECT * FROM billing_payments WHERE provider = ? AND provider_payment_id = ?").get(p.provider, p.providerPaymentId) as PaymentRow | undefined;
   if (!pay) throw new PaymentProblem("A dispute arrived for a payment this system does not know.");
+  if (p.outcome !== "lost") recordAuditIn(db, { actor: `provider:${p.provider}`, action: `payment.dispute_${p.outcome}`, entityType: "payment", entityId: pay.id, orgId: pay.org_id, detail: { amountMinor: pay.amount_minor, currency: pay.currency } }, p.at);
   if (p.outcome === "opened") {
     if (pay.status === "succeeded" || pay.status === "partially_refunded") db.prepare("UPDATE billing_payments SET status = 'disputed', updated_at = ? WHERE id = ?").run(p.at, pay.id);
   } else if (p.outcome === "won") {
