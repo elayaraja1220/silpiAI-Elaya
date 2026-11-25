@@ -25,7 +25,7 @@ export async function PUT(request: NextRequest) {
   return apiHandle("FX SET", async () => {
     const b = (await request.json()) as { currency?: unknown; perUsd?: unknown; source?: unknown; confirm?: unknown };
     const rate = setRate({ currency: b.currency, perUsd: b.perUsd, source: b.source, confirm: b.confirm === true });
-    auditAdmin("fx.rate_set", "currency", rate.currency, { perUsdMicro: rate.perUsdMicro, source: rate.source });
+    auditAdmin(request, "fx.rate_set", "currency", rate.currency, { perUsdMicro: rate.perUsdMicro, source: rate.source });
     return { rate, rates: listRates() };
   });
 }

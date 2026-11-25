@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { ValidationError } from "@/lib/business/validate";
 import { apiHandle } from "@/server/http";
+import { RATES, rateLimited } from "@/server/rate-limit";
 import { requireSession } from "@/server/session-auth";
 import { changePlan, getBilling, startSubscription, type Period } from "@/server/subscriptions";
 
@@ -16,6 +17,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const auth = requireSession(request, "billing:manage");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.billingWrite, auth.ctx.orgId);
+  if (slow) return slow;
   return apiHandle("BILLING PLAN", async () => {
     const body = (await request.json()) as { planId?: unknown; period?: unknown; currency?: unknown; couponCode?: unknown };
     if (typeof body.planId !== "string") throw new ValidationError("planId is required.");

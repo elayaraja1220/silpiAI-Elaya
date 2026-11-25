@@ -180,7 +180,7 @@ const SETTLED: PaymentStatus[] = ["succeeded", "refunded", "partially_refunded",
  * pays the invoice or grants the credits, and records it. Runs inside the caller's transaction.
  * `rejectIfAlreadyPaid`: refuse (the administrator's record) instead of keeping a flagged duplicate (a provider's second payment for something already paid).
  */
-export function applySuccessfulPayment(db: DatabaseSync, p: { provider: string; providerPaymentId: string; target: PaymentTarget; amountMinor?: number; currency?: string; at: string; rejectIfAlreadyPaid?: boolean }): { payment: Payment; applied: boolean; duplicate: boolean } {
+export function applySuccessfulPayment(db: DatabaseSync, p: { provider: string; providerPaymentId: string; target: PaymentTarget; amountMinor?: number; currency?: string; at: string; rejectIfAlreadyPaid?: boolean; actor?: string }): { payment: Payment; applied: boolean; duplicate: boolean } {
   const t = resolveTarget(db, p.target);
   const existing = db.prepare("SELECT * FROM billing_payments WHERE provider = ? AND provider_payment_id = ?").get(p.provider, p.providerPaymentId) as PaymentRow | undefined;
   if (existing && SETTLED.includes(existing.status)) return { payment: toPayment(existing), applied: false, duplicate: true };
@@ -201,7 +201,7 @@ export function applySuccessfulPayment(db: DatabaseSync, p: { provider: string; 
     if (p.rejectIfAlreadyPaid) throw new PaymentProblem(`${t.label[0]!.toUpperCase()}${t.label.slice(1)} is already paid.`);
     // Money arrived for something that was already paid. Keep the record, apply nothing, and say so, so it can be refunded.
     save("succeeded", `Second payment for ${t.label}, which was already paid. Nothing was applied: refund it.`);
-    recordAuditIn(db, { actor: p.provider === "manual" ? "admin" : `provider:${p.provider}`, action: "payment.duplicate_flagged", entityType: "payment", entityId: id, orgId: t.orgId, detail: { amountMinor: t.expected, currency: t.currency, reference: p.providerPaymentId } }, p.at);
+    recordAuditIn(db, { actor: p.provider === "manual" ? p.actor ?? "admin" : `provider:${p.provider}`, action: "payment.duplicate_flagged", entityType: "payment", entityId: id, orgId: t.orgId, detail: { amountMinor: t.expected, currency: t.currency, reference: p.providerPaymentId } }, p.at);
     return { payment: toPayment(getPaymentRow(db, id)!), applied: false, duplicate: false };
   }
 
@@ -212,7 +212,7 @@ export function applySuccessfulPayment(db: DatabaseSync, p: { provider: string; 
     db.prepare("UPDATE topups SET status = 'paid', paid_at = ? WHERE id = ?").run(p.at, topup.id);
   }
   save("succeeded", null);
-  recordAuditIn(db, { actor: p.provider === "manual" ? "admin" : `provider:${p.provider}`, action: "payment.succeeded", entityType: "payment", entityId: id, orgId: t.orgId, detail: { amountMinor: t.expected, currency: t.currency, reference: p.providerPaymentId, for: t.invoiceId ? `invoice ${t.invoiceId}` : `top-up ${t.topupId}` } }, p.at);
+  recordAuditIn(db, { actor: p.provider === "manual" ? p.actor ?? "admin" : `provider:${p.provider}`, action: "payment.succeeded", entityType: "payment", entityId: id, orgId: t.orgId, detail: { amountMinor: t.expected, currency: t.currency, reference: p.providerPaymentId, for: t.invoiceId ? `invoice ${t.invoiceId}` : `top-up ${t.topupId}` } }, p.at);
   // Any other attempt still waiting for the same thing is no longer needed.
   db.prepare("UPDATE billing_payments SET status = 'failed', failure_reason = 'Paid another way', updated_at = ? WHERE id != ? AND status = 'pending' AND ((invoice_id IS NOT NULL AND invoice_id = ?) OR (topup_id IS NOT NULL AND topup_id = ?))").run(p.at, id, t.invoiceId, t.topupId);
   return { payment: toPayment(getPaymentRow(db, id)!), applied: true, duplicate: false };
@@ -234,7 +234,22 @@ export function applyFailedPayment(db: DatabaseSync, p: { provider: string; prov
   return { payment: toPayment(getPaymentRow(db, existing.id)!) };
 }
 
-export type ManualPaymentInput = { invoiceId?: string; topupId?: string; reference: string; amountMinor?: number; now?: number };
+/** The invoice or top-up order a customer quotes by its printed number (INV-2026-00001, TOP-2026-00001). Case and surrounding spaces do not matter. */
+export function findByNumber(number: unknown): { invoiceId: string } | { topupId: string } | null {
+  const n = typeof number === "string" ? number.trim().toUpperCase() : "";
+  const db = getDb();
+  if (/^INV-\d{4}-\d{5,}$/.test(n)) {
+    const r = db.prepare("SELECT id FROM subscription_invoices WHERE number = ?").get(n) as { id: string } | undefined;
+    return r ? { invoiceId: r.id } : null;
+  }
+  if (/^TOP-\d{4}-\d{5,}$/.test(n)) {
+    const r = db.prepare("SELECT id FROM topups WHERE number = ?").get(n) as { id: string } | undefined;
+    return r ? { topupId: r.id } : null;
+  }
+  return null;
+}
+
+export type ManualPaymentInput = { invoiceId?: string; topupId?: string; reference: string; amountMinor?: number; now?: number; /** Who recorded it (shown in the audit log); the administrator token by default. */ actor?: string };
 
 /**
  * The administrator records money received outside the system (UPI, a bank transfer, cash). Same checks as a provider's payment: the amount, when given, must match;
@@ -248,7 +263,7 @@ export function recordManualPayment(input: ManualPaymentInput): { payment: Payme
   const target: PaymentTarget = input.invoiceId !== undefined ? { kind: "invoice", invoiceId: input.invoiceId } : { kind: "topup", topupId: input.topupId! };
   return transaction((db) => {
     try {
-      return applySuccessfulPayment(db, { provider: "manual", providerPaymentId: reference, target, amountMinor: input.amountMinor, at, rejectIfAlreadyPaid: true });
+      return applySuccessfulPayment(db, { provider: "manual", providerPaymentId: reference, target, amountMinor: input.amountMinor, at, rejectIfAlreadyPaid: true, actor: input.actor });
     } catch (e) {
       if (e instanceof PaymentProblem) throw bad(e.message);
       throw e;

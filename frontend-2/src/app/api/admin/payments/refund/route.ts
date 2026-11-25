@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { requireAdmin } from "@/lib/admin-auth";
+import { adminActor, requireAdmin } from "@/lib/admin-auth";
 import { ValidationError } from "@/lib/business/validate";
 import { apiHandle } from "@/server/http";
 import { getPayment, refundPayment } from "@/server/payments/service";
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   return apiHandle("PAYMENT REFUND", async () => {
     const b = (await request.json()) as { paymentId?: unknown; amountMinor?: unknown; reason?: unknown; idempotencyKey?: unknown };
     if (typeof b.paymentId !== "string") throw new ValidationError("paymentId is required.");
-    const refund = await refundPayment({ paymentId: b.paymentId, amountMinor: typeof b.amountMinor === "number" ? b.amountMinor : undefined, reason: String(b.reason ?? ""), requestedBy: "admin", idempotencyKey: typeof b.idempotencyKey === "string" ? b.idempotencyKey : undefined });
+    const refund = await refundPayment({ paymentId: b.paymentId, amountMinor: typeof b.amountMinor === "number" ? b.amountMinor : undefined, reason: String(b.reason ?? ""), requestedBy: adminActor(request), idempotencyKey: typeof b.idempotencyKey === "string" ? b.idempotencyKey : undefined });
     return { refund, payment: getPayment(b.paymentId) };
   });
 }

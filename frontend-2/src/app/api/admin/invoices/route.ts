@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { requireAdmin } from "@/lib/admin-auth";
+import { adminActor, requireAdmin } from "@/lib/admin-auth";
 import { ValidationError } from "@/lib/business/validate";
 import { apiHandle } from "@/server/http";
 import { recordManualPayment } from "@/server/payments/service";
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   return apiHandle("INVOICE PAID", async () => {
     const b = (await request.json()) as { invoiceId?: unknown; providerRef?: unknown };
     if (typeof b.invoiceId !== "string" || typeof b.providerRef !== "string") throw new ValidationError("invoiceId and providerRef are required.");
-    const { payment } = recordManualPayment({ invoiceId: b.invoiceId, reference: b.providerRef });
+    const { payment } = recordManualPayment({ invoiceId: b.invoiceId, reference: b.providerRef, actor: adminActor(request) });
     const invoice = getInvoice(b.invoiceId)!;
     return { invoice, subscription: getSubscription(invoice.subscriptionId)!, payment };
   });

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { estimate } from "@/server/ai/gateway";
 import { aiHandle } from "@/server/ai/http";
 import { getWallet } from "@/server/credits";
+import { RATES, rateLimited } from "@/server/rate-limit";
 import { requireSession } from "@/server/session-auth";
 
 export const runtime = "nodejs";
@@ -12,6 +13,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const auth = requireSession(request, "ai:use");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.aiEstimate, auth.ctx.orgId);
+  if (slow) return slow;
   return aiHandle("AI ESTIMATE", async () => {
     const body = (await request.json()) as { messages?: unknown; system?: unknown; model?: unknown; maxOutputTokens?: unknown; taskType?: unknown };
     return { estimate: estimate({ model: typeof body.model === "string" ? body.model : "auto", messages: body.messages, system: body.system, maxOutputTokens: body.maxOutputTokens, taskType: typeof body.taskType === "string" ? body.taskType : undefined }), wallet: getWallet(auth.ctx.orgId) };

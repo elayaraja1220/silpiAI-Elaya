@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { RATES, clientAddress, rateLimited } from "@/server/rate-limit";
 import { WebhookError } from "@/server/payments/provider";
 import { ingestWebhook } from "@/server/payments/service";
 
@@ -17,6 +18,8 @@ const MAX_BODY = 256 * 1024;
  */
 export async function POST(request: NextRequest, ctx: { params: Promise<{ provider: string }> }) {
   const { provider } = await ctx.params;
+  const slow = rateLimited(RATES.webhook, `${provider}:${clientAddress(request)}`);
+  if (slow) return slow;
   const raw = await request.text();
   if (raw.length > MAX_BODY) return NextResponse.json({ success: false, error: "The notice is too large." }, { status: 413 });
   const headers: Record<string, string> = {};

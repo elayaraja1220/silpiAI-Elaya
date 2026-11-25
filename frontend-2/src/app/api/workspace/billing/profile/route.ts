@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiHandle } from "@/server/http";
 import { recordAudit } from "@/server/audit";
+import { RATES, rateLimited } from "@/server/rate-limit";
 import { requireSession } from "@/server/session-auth";
 import { getBillingProfile, saveBillingProfile } from "@/server/tax";
 
@@ -22,6 +23,8 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   const auth = requireSession(request, "billing:manage");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.billingWrite, auth.ctx.orgId);
+  if (slow) return slow;
   return apiHandle("BILLING PROFILE SAVE", async () => {
     const profile = saveBillingProfile(auth.ctx.orgId, (await request.json()) as Record<string, unknown>, auth.ctx.user.id);
     recordAudit({ actor: `user:${auth.ctx.user.id}`, action: "billing_profile.saved", entityType: "organization", entityId: auth.ctx.orgId, orgId: auth.ctx.orgId, detail: { country: profile.country, taxIdType: profile.taxIdType, hasTaxId: profile.taxId !== "" } });

@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       b.action === "grant"
         ? addCredits({ orgId: b.orgId, units: b.units as number, kind: "grant", category, expiresAt: b.expiresAt, idempotencyKey: b.idempotencyKey as string, note: b.note, createdBy: "admin" })
         : adjustCredits({ orgId: b.orgId, deltaUnits: b.deltaUnits as number, idempotencyKey: b.idempotencyKey as string, note: b.note as string, createdBy: "admin" });
-    auditAdmin(b.action === "grant" ? "credits.granted" : "credits.adjusted", "organization", b.orgId, { units: b.units, deltaUnits: b.deltaUnits, category: b.action === "grant" ? category : undefined, expiresAt: b.expiresAt, note: b.note }, b.orgId);
+    auditAdmin(request, b.action === "grant" ? "credits.granted" : "credits.adjusted", "organization", b.orgId, { units: b.units, deltaUnits: b.deltaUnits, category: b.action === "grant" ? category : undefined, expiresAt: b.expiresAt, note: b.note }, b.orgId);
     return { entry, wallet: getWallet(b.orgId) };
   });
 }

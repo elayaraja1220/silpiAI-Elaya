@@ -6,5 +6,7 @@
  *         work without the admin token. Settings changes and every deployed host still need the admin token.
  * false = back to admin-only.
  */
-export const DEV_START_WITHOUT_PAYMENT = true;
+// Whatever is typed here, a production build ignores it: starting without payment can never be on for real customers.
+const ON_IN_DEVELOPMENT = true;
+export const DEV_START_WITHOUT_PAYMENT = ON_IN_DEVELOPMENT && process.env.NODE_ENV !== "production";
 export const DEV_START_HEADER = "x-silpi-dev-start";

@@ -15,7 +15,7 @@ export async function PUT(request: NextRequest) {
   return apiHandle("PACKAGE PRICE", async () => {
     const input = (await request.json()) as Parameters<typeof setPackagePrice>[0];
     const pack = setPackagePrice(input);
-    auditAdmin("credit_package.price_set", "credit_package", input.packageId, { ...input });
+    auditAdmin(request, "credit_package.price_set", "credit_package", input.packageId, { ...input });
     return { package: pack };
   });
 }

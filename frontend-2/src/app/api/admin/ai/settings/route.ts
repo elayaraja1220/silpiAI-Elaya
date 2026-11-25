@@ -32,7 +32,7 @@ export async function PUT(request: NextRequest) {
     return transaction(() => {
       if (body.unitsPerUsd !== undefined) setUnitsPerUsd(body.unitsPerUsd as number);
       setMeteringPolicy({ rounding: body.rounding, minChargeUnits: body.minChargeUnits });
-      auditAdmin("ai.charging_settings_changed", "settings", "ai_charging", { sent: body });
+      auditAdmin(request, "ai.charging_settings_changed", "settings", "ai_charging", { sent: body });
       return current();
     });
   });

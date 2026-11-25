@@ -22,7 +22,7 @@ export async function PUT(request: NextRequest) {
   return apiHandle("PACKAGE SAVE", async () => {
     const input = (await request.json()) as Parameters<typeof saveCreditPackage>[0];
     const pack = saveCreditPackage(input);
-    auditAdmin("credit_package.saved", "credit_package", pack.id, { sent: input });
+    auditAdmin(request, "credit_package.saved", "credit_package", pack.id, { sent: input });
     return { package: pack };
   });
 }

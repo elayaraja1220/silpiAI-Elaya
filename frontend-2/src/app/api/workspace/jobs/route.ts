@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { aiHandle } from "@/server/ai/http";
 import { listJobs } from "@/server/ai/job-store";
 import { createJob, reconcileJobs, startJob } from "@/server/ai/orchestrator";
+import { RATES, rateLimited } from "@/server/rate-limit";
 import { requireSession } from "@/server/session-auth";
 
 export const runtime = "nodejs";
@@ -22,6 +23,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = requireSession(request, "ai:use");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.jobWrite, auth.ctx.orgId);
+  if (slow) return slow;
   return aiHandle("JOB CREATE", async () => {
     const b = (await request.json()) as { brief?: unknown; title?: unknown; quality?: unknown; review?: unknown };
     const job = createJob({ orgId: auth.ctx.orgId, userId: auth.ctx.user.id, brief: b.brief, title: b.title, quality: b.quality, review: b.review === true });

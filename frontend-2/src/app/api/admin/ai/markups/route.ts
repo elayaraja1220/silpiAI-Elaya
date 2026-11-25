@@ -25,7 +25,7 @@ export async function PUT(request: NextRequest) {
   if (denied) return denied;
   return aiHandle("AI MARKUP SAVE", async () => {
     const rule = saveMarkupRule((await request.json()) as Parameters<typeof saveMarkupRule>[0]);
-    auditAdmin("markup_rule.saved", "markup_rule", rule.id, { ...rule });
+    auditAdmin(request, "markup_rule.saved", "markup_rule", rule.id, { ...rule });
     return { rule };
   });
 }
@@ -38,7 +38,7 @@ export async function DELETE(request: NextRequest) {
     const id = Number(request.nextUrl.searchParams.get("id"));
     if (!Number.isSafeInteger(id) || id < 1) throw new ValidationError("id is required.");
     deleteMarkupRule(id);
-    auditAdmin("markup_rule.deleted", "markup_rule", id);
+    auditAdmin(request, "markup_rule.deleted", "markup_rule", id);
     return { deleted: id };
   });
 }

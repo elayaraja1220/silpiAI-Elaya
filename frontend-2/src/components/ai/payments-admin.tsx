@@ -38,7 +38,6 @@ export function PaymentsAdmin({ onNote, onError }: { onNote: (m: string) => void
 }
 
 function RecordPayment({ onDone, onError }: { onDone: (m: string) => void; onError: (e: unknown) => void }) {
-  const [kind, setKind] = useState<"invoiceId" | "topupId">("invoiceId");
   const [target, setTarget] = useState("");
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState("");
@@ -46,7 +45,7 @@ function RecordPayment({ onDone, onError }: { onDone: (m: string) => void; onErr
   const go = async () => {
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { [kind]: target.trim(), reference: reference.trim() };
+      const body: Record<string, unknown> = { number: target.trim(), reference: reference.trim() };
       if (amount) body.amountMinor = Math.round(Number(amount));
       await api("/api/admin/payments/record", { method: "POST", body });
       setTarget(""); setReference(""); setAmount("");
@@ -60,8 +59,7 @@ function RecordPayment({ onDone, onError }: { onDone: (m: string) => void; onErr
         <p className="mt-1 text-xs leading-5 text-slate-600">For money that arrived outside the system (UPI, bank transfer, cash). Credits and plans are given only when you record the payment. The same reference twice changes nothing. The amount is optional; when given (in the smallest unit, e.g. cents or paise) it must match the invoice or order.</p>
       </div>
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-slate-600">For<select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className={inputClass + " mt-1 block !w-40"} aria-label="Payment is for"><option value="invoiceId">Plan invoice</option><option value="topupId">Credit top-up</option></select></label>
-        <label className="text-xs text-slate-600">{kind === "invoiceId" ? "Invoice id" : "Top-up id"}<input value={target} onChange={(e) => setTarget(e.target.value)} className={inputClass + " mt-1 block !w-56"} aria-label="Invoice or top-up id" /></label>
+        <label className="text-xs text-slate-600">Invoice or order number<input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="INV-2026-00001 or TOP-2026-00001" className={inputClass + " mt-1 block !w-72"} aria-label="Invoice or order number" /></label>
         <label className="text-xs text-slate-600">Reference<input value={reference} onChange={(e) => setReference(e.target.value)} className={inputClass + " mt-1 block !w-48"} placeholder="UPI / bank reference" aria-label="Payment reference" /></label>
         <label className="text-xs text-slate-600">Amount (optional)<input value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} inputMode="numeric" className={inputClass + " mt-1 block !w-28"} aria-label="Amount in smallest unit" /></label>
         <Button onClick={() => void go()} disabled={busy || !target.trim() || reference.trim().length < 3}>{busy && <Loader2 size={15} className="animate-spin" />} Record</Button>

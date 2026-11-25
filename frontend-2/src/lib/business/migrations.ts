@@ -892,6 +892,25 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 17,
+    name: "Named administrator accounts with roles",
+    up(db) {
+      db.exec(`
+        CREATE TABLE admin_accounts (
+          id            TEXT PRIMARY KEY,
+          email         TEXT NOT NULL UNIQUE,
+          name          TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          role          TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+          status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+          created_at    TEXT NOT NULL,
+          created_by    TEXT NOT NULL DEFAULT '',
+          last_login_at TEXT
+        );
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

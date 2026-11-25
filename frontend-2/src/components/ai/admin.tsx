@@ -7,6 +7,7 @@ import { Customers } from "./customers";
 import { MarkupRules, type Rule } from "./markups";
 import { CouponsAdmin, PlansAdmin } from "./plans-admin";
 import { AuditAdmin, FinanceAdmin } from "./finance-admin";
+import { SecurityAdmin } from "./security-admin";
 import { TaxAdmin } from "./tax-admin";
 import { PaymentsAdmin } from "./payments-admin";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill, usd } from "./light";
@@ -15,15 +16,18 @@ type Model = { cacheReadUsdMicroPerMtok: number | null; cacheWriteUsdMicroPerMto
 type Org = { orgId: string; orgName: string; requests: number; failed: number; providerCostMicroUsd: number; chargedUnits: number; chargedUsdAtCurrentRate: number; dailyCapUnits: number | null };
 type Policy = { rounding: "up" | "nearest"; minChargeUnits: number };
 type ProviderStatus = { id: string; configured: boolean; circuit: "closed" | "open" | "half-open" };
+type Who = { name: string; role: "admin" | "viewer"; actor: string };
 type Overview = { providers: ProviderStatus[]; unitsPerUsd: number; policy: Policy; markupRules: Rule[]; models: Model[]; organizations: Org[] };
 
-const ADMIN_TABS = ["Finance", "Customers & plans", "Payments", "Tax & currency", "AI", "Audit log"] as const;
+const ADMIN_TABS = ["Finance", "Customers & plans", "Payments", "Tax & currency", "AI", "Audit log", "Security & launch"] as const;
 
 /** Administrator view: what the AI really costs, what customers are charged, and the dials. Needs the administrator token. */
 export function AiAdmin() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [who, setWho] = useState<Who | null>(null);
   const [note, setNote] = useState("");
   const [tab, setTab] = useState<(typeof ADMIN_TABS)[number]>("Finance");
 
@@ -33,17 +37,31 @@ export function AiAdmin() {
       .catch((e: ApiError) => (e.status === 401 || e.status === 403 ? setNeedsSignIn(true) : setError(e.message)));
   }, []);
   useEffect(load, [load]);
+  useEffect(() => { api<{ identity?: Who }>("/api/admin/session").then((r) => setWho(r.identity ?? null)).catch(() => undefined); }, [needsSignIn]);
 
   if (needsSignIn) return <TokenSignIn onDone={load} />;
   if (error) return <Notice tone="red">{error}</Notice>;
   if (!overview) return <Card className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin" /> Loading...</Card>;
 
   const flash = (m: string) => { setNote(m); setTimeout(() => setNote(""), 3000); };
-  const fail = (e: unknown) => setError((e as Error).message);
+  const fail = (e: unknown) => setActionError((e as Error).message);
+  const signOut = () => api("/api/admin/session", { method: "DELETE" }).then(() => { setWho(null); setOverview(null); load(); }).catch(fail);
 
   return (
     <div className="space-y-5">
       {note && <Notice tone="green">{note}</Notice>}
+      {actionError && (
+        <div role="alert" className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+          <span className="flex-1">{actionError}</span>
+          <button onClick={() => setActionError("")} className="text-xs underline" aria-label="Dismiss the message">Dismiss</button>
+        </div>
+      )}
+      {who && (
+        <p className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          Signed in as <b className="text-slate-700">{who.name}</b> <Pill tone={who.role === "admin" ? "indigo" : "slate"}>{who.role === "admin" ? "admin" : "viewer: read-only"}</Pill>
+          <button onClick={signOut} className="ml-auto underline hover:text-slate-800">Sign out</button>
+        </p>
+      )}
       <div role="tablist" aria-label="Administrator sections" className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
         {ADMIN_TABS.map((x) => <button key={x} role="tab" aria-selected={tab === x} onClick={() => setTab(x)} className={"rounded-lg px-3 py-1.5 text-sm font-medium transition " + (tab === x ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50")}>{x}</button>)}
       </div>
@@ -69,6 +87,7 @@ export function AiAdmin() {
         </>
       )}
       {tab === "Audit log" && <AuditAdmin onError={fail} />}
+      {tab === "Security & launch" && <SecurityAdmin onNote={flash} onError={fail} />}
     </div>
   );
 }
@@ -86,12 +105,15 @@ function TokenSignIn({ onDone }: { onDone: () => void }) {
       .catch(() => setConfigured(true));
   }, []);
   const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"account" | "token">("account");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const go = async () => {
     setBusy(true);
     setError("");
-    try { await api("/api/admin/session", { method: "POST", body: { token } }); setToken(""); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+    try { await api("/api/admin/session", { method: "POST", body: mode === "token" ? { token } : { email, password } }); setToken(""); setPassword(""); onDone(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
   if (configured === false) {
     return (
@@ -107,13 +129,22 @@ function TokenSignIn({ onDone }: { onDone: () => void }) {
       </Card>
     );
   }
+  const ready = mode === "token" ? !!token : !!email && !!password;
   return (
     <Card className="mx-auto max-w-md space-y-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><Lock size={17} /> Administrator sign-in</h2>
-      <p className="text-sm text-slate-600">Prices, markup and limits are for the administrator only. Enter the administrator token.</p>
-      <input type="password" value={token} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => e.key === "Enter" && token && void go()} className={inputClass} placeholder="Administrator token" aria-label="Administrator token" autoComplete="off" />
+      <p className="text-sm text-slate-600">Prices, payments and settings are for administrators only.</p>
+      {mode === "account" ? (
+        <>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} placeholder="Email" aria-label="Administrator email" autoComplete="username" />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ready && void go()} className={inputClass} placeholder="Password" aria-label="Administrator password" autoComplete="current-password" />
+        </>
+      ) : (
+        <input type="password" value={token} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => e.key === "Enter" && token && void go()} className={inputClass} placeholder="Administrator token" aria-label="Administrator token" autoComplete="off" />
+      )}
       {error && <Notice tone="red">{error}</Notice>}
-      <Button onClick={() => void go()} disabled={!token || busy}>{busy && <Loader2 size={15} className="animate-spin" />} Sign in</Button>
+      <Button onClick={() => void go()} disabled={!ready || busy}>{busy && <Loader2 size={15} className="animate-spin" />} Sign in</Button>
+      <button onClick={() => { setMode(mode === "account" ? "token" : "account"); setError(""); }} className="block text-xs text-slate-500 underline hover:text-slate-800">{mode === "account" ? "Use the administrator token instead" : "Use my account instead"}</button>
     </Card>
   );
 }

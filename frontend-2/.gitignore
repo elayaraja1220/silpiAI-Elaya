@@ -22,3 +22,6 @@ storage/
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# End-to-end test build folder
+.next-e2e/

@@ -21,7 +21,7 @@ export async function PUT(request: NextRequest) {
   if (denied) return denied;
   return apiHandle("SELLER SAVE", async () => {
     const seller = saveSeller((await request.json()) as Parameters<typeof saveSeller>[0]);
-    auditAdmin("seller.saved", "settings", "seller", { ...seller });
+    auditAdmin(request, "seller.saved", "settings", "seller", { ...seller });
     return { seller };
   });
 }

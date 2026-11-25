@@ -24,7 +24,7 @@ export async function PUT(request: NextRequest) {
     const { id, ...patch } = (await request.json()) as { id?: unknown } & Record<string, unknown>;
     if (typeof id !== "string") throw new ValidationError("id is required.");
     const plan = updatePlan(id, patch);
-    auditAdmin("plan.updated", "plan", id, { sent: patch });
+    auditAdmin(request, "plan.updated", "plan", id, { sent: patch });
     return { plan };
   });
 }

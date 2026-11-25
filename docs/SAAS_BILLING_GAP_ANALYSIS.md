@@ -243,3 +243,35 @@ Add: `plan_prices`, `credit_buckets` (with expiry), `credit_grants`, `credit_pac
 - Reverse charge for businesses in other countries, tax-exempt customers, tax that depends on state or region, and any check of a tax number. A tax provider (for example Stripe Tax or Avalara) would be the normal answer.
 - The invoice layout has not been checked against any country's invoice rules (sequence, mandatory wording, e-invoicing). The title is plain "Invoice", not "Tax invoice", for that reason.
 - Customers cannot pick their country from a list; they type two letters.
+
+## 15. Step 9 built: security, operations and a way to check it all (migration 17)
+
+**Request limits** (`src/server/rate-limit.ts`). A sliding window per organization for signed-in routes (AI chat 60 a minute, estimates 120, project jobs 30, billing changes 20 per ten minutes) and per client address for open ones (payment webhooks 600 a minute, administrator changes 240 a minute, plus the existing sign-in limit). A refused request gets 429 with `Retry-After`; refused requests are not counted, so waiting is enough. **Counted in the server's memory**: a restart forgets, and several copies would each count alone. It stops scripts and mistakes, not a determined attack.
+
+**Named administrator accounts** (`/ai/admin` > Security & launch). Email and password (12+ characters, scrypt), two roles: **admin** (everything, including managing accounts) and **viewer** (looks at everything, changes nothing). The administrator token still works and is recorded as "admin"; accounts are recorded as `admin:<email>` in the audit log, including who recorded a payment or made a refund. Disabling an account or changing its role takes effect on its next request. The last active administrator cannot be demoted or disabled. Sessions carry the account id inside what is signed, so one cannot be moved to another account. Wrong password and unknown email give the same answer and take the same time; attempts are limited per address and per account. Failed sign-ins are logged without the email or the password.
+
+**Automatic renewals** (`src/server/billing-cycle.ts`). Renewal invoices, past-due and downgrades, and credit expiry now run on a timer, hourly, by default in production (`SILPI_AUTO_BILLING`, `SILPI_BILLING_INTERVAL_MINUTES`). Safe to repeat; a run that changes something leaves an audit entry, one that changes nothing leaves none. Before this nothing called it.
+
+**Development shortcut.** "Start without payment" can no longer be on in a production build, whatever the source file says.
+
+**Security headers.** `nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, and HSTS in production. **No CSP yet.**
+
+**Launch checklist** (`GET /api/admin/readiness`, Security & launch tab). Checks the token, named accounts, HTTPS, production mode, the development shortcut, AI keys and priced models, online payments, seller details, tax, exchange rates, the timer, backups, that the books balance, failed payment notices, and the known limits. Each item that is not fine says how to fix it. It sees only this server's own settings and data.
+
+**Backups.** `npm run backup` makes a checked, consistent copy while the site runs (it never touches the original or overwrites a copy). Copying it off the machine is up to you.
+
+**Recording a payment by the number the customer quotes.** Found while planning the browser test: customers were told to quote the invoice or order number, but the administrator's form asked for an internal id. It now takes `INV-2026-00001` or `TOP-2026-00001`.
+
+**End-to-end browser test** (`npm run e2e`). Starts its own server and Chrome with a temporary database and walks through: a customer signs in and orders credits (no credits yet), an administrator signs in with a named account and records the payment by the order number, the audit log names them, the customer has the credits and the history shows it, a viewer is refused when trying to change something, and a wrong password is refused. It was checked by breaking credit granting on purpose: it failed at the right step.
+
+**Deployment guide**: `docs/DEPLOYMENT.md`.
+
+**Tests.** `tests/security.test.ts` (21) and `tests/operations.test.ts` (17). Seventeen deliberate breakages (viewer writing, disabled accounts, forged account ids, last-admin protection, the per-account throttle, chat limits, the audit actor, refused requests being counted, the production guard on the shortcut, the timer defaults, a second timer, audit noise, HSTS in development) were all caught.
+
+**Not done.**
+- Two-factor sign-in, password reset by email, and any lockout beyond the attempt limits.
+- A Content-Security-Policy.
+- Limits shared across several servers (needs a shared store), and a log shipped off the machine.
+- Finer permissions than admin and viewer.
+- Screening of customers' prompts for attempts to manipulate the model (the models have no tools and file names are checked, so the effect is limited to what the customer gets back).
+- Load testing, and review by a lawyer or accountant (see the deployment guide).

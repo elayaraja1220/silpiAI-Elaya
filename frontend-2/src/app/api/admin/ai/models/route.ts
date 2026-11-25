@@ -15,7 +15,7 @@ export async function PUT(request: NextRequest) {
   return aiHandle("AI MODEL SAVE", async () => {
     const input = (await request.json()) as ModelInput;
     const model = saveModel({ ...input, changedBy: "admin" });
-    auditAdmin("model.saved", "model", model.id, { sent: input, enabled: model.enabled, priceVersion: model.priceVersion });
+    auditAdmin(request, "model.saved", "model", model.id, { sent: input, enabled: model.enabled, priceVersion: model.priceVersion });
     return { model };
   });
 }

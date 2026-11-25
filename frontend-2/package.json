@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "e2e": "node e2e/run.cjs",
+    "backup": "node scripts/backup-db.cjs",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning --import ./tests/register.mjs --test tests/*.test.ts"
   },
   "dependencies": {

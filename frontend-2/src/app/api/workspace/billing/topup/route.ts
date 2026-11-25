@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { ValidationError } from "@/lib/business/validate";
 import { apiHandle } from "@/server/http";
 import { cancelTopupOrder, createTopupOrder, listCreditPackages, listPayments, listTopups } from "@/server/payments/service";
+import { RATES, rateLimited } from "@/server/rate-limit";
 import { requireSession } from "@/server/session-auth";
 
 export const runtime = "nodejs";
@@ -22,6 +23,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = requireSession(request, "billing:manage");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.billingWrite, auth.ctx.orgId);
+  if (slow) return slow;
   return apiHandle("TOPUP ORDER", async () => {
     const b = (await request.json()) as { packageId?: unknown; currency?: unknown };
     if (typeof b.packageId !== "string" || typeof b.currency !== "string") throw new ValidationError("packageId and currency are required.");
@@ -33,6 +36,8 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const auth = requireSession(request, "billing:manage");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.billingWrite, auth.ctx.orgId);
+  if (slow) return slow;
   return apiHandle("TOPUP CANCEL", () => {
     const id = request.nextUrl.searchParams.get("id");
     if (!id) throw new ValidationError("id is required.");

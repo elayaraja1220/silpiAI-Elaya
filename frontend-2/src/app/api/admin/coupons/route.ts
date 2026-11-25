@@ -25,7 +25,7 @@ export async function PUT(request: NextRequest) {
   if (denied) return denied;
   return apiHandle("COUPON SAVE", async () => {
     const coupon = saveCoupon((await request.json()) as CouponInput);
-    auditAdmin("coupon.saved", "coupon", coupon.code, { ...coupon });
+    auditAdmin(request, "coupon.saved", "coupon", coupon.code, { ...coupon });
     return { coupon };
   });
 }

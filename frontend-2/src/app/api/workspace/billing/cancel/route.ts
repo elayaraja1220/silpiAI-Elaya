@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { ValidationError } from "@/lib/business/validate";
 import { apiHandle } from "@/server/http";
+import { RATES, rateLimited } from "@/server/rate-limit";
 import { requireSession } from "@/server/session-auth";
 import { cancelSubscription, getBilling, keepSubscription } from "@/server/subscriptions";
 
@@ -12,6 +13,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const auth = requireSession(request, "billing:manage");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.billingWrite, auth.ctx.orgId);
+  if (slow) return slow;
   return apiHandle("BILLING CANCEL", async () => {
     const body = (await request.json()) as { action?: unknown };
     if (body.action !== "cancel" && body.action !== "keep") throw new ValidationError('action must be "cancel" or "keep".');

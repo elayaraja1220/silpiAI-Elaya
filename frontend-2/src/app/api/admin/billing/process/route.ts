@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   return apiHandle("BILLING PROCESS", () => {
     const processed = processSubscriptions();
     const expired = expireCredits();
-    auditAdmin("billing.process_run", "billing", "process", { processed, expired });
+    auditAdmin(request, "billing.process_run", "billing", "process", { processed, expired });
     return { processed, expired };
   });
 }

@@ -15,7 +15,7 @@ export async function PUT(request: NextRequest) {
   return aiHandle("AI LIMITS", async () => {
     const body = (await request.json()) as { orgId?: unknown; dailyCapUnits?: unknown };
     const dailyCapUnits = setDailyCap(String(body.orgId ?? ""), body.dailyCapUnits === null ? null : (body.dailyCapUnits as number));
-    auditAdmin("ai.daily_cap_set", "organization", String(body.orgId), { dailyCapUnits }, String(body.orgId));
+    auditAdmin(request, "ai.daily_cap_set", "organization", String(body.orgId), { dailyCapUnits }, String(body.orgId));
     return { orgId: body.orgId, dailyCapUnits };
   });
 }

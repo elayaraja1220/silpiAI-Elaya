@@ -1,5 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import type { NextRequest } from "next/server";
+
+import { adminActor } from "@/lib/admin-auth";
 import { getDb } from "@/lib/business/db";
 
 /**
@@ -36,8 +39,8 @@ export function recordAuditIn(db: DatabaseSync, e: AuditInput, at = new Date().t
 export const recordAudit = (e: AuditInput): void => recordAuditIn(getDb(), e);
 
 /** What the administrator did, from an admin route, after it succeeded. */
-export const auditAdmin = (action: string, entityType: string, entityId: string | number | null | undefined, detail?: Record<string, unknown>, orgId?: string | null): void =>
-  recordAudit({ actor: "admin", action, entityType, entityId, orgId: orgId ?? null, detail });
+export const auditAdmin = (request: NextRequest, action: string, entityType: string, entityId: string | number | null | undefined, detail?: Record<string, unknown>, orgId?: string | null): void =>
+  recordAudit({ actor: adminActor(request), action, entityType, entityId, orgId: orgId ?? null, detail });
 
 type Row = { id: number; at: string; actor: string; action: string; entity_type: string; entity_id: string; org_id: string | null; detail: string };
 /** Newest first. `action` matches a prefix ("payment." finds every payment event). */

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { aiHandle } from "@/server/ai/http";
 import { complete } from "@/server/ai/gateway";
+import { RATES, rateLimited } from "@/server/rate-limit";
 import { requireSession } from "@/server/session-auth";
 
 export const runtime = "nodejs";
@@ -17,6 +18,8 @@ export const maxDuration = 300;
 export async function POST(request: NextRequest) {
   const auth = requireSession(request, "ai:use");
   if ("denied" in auth) return auth.denied;
+  const slow = rateLimited(RATES.aiChat, auth.ctx.orgId);
+  if (slow) return slow;
   return aiHandle("AI CHAT", async () => {
     const body = (await request.json()) as { messages?: unknown; system?: unknown; model?: unknown; maxOutputTokens?: unknown; purpose?: unknown; taskType?: unknown };
     const result = await complete({

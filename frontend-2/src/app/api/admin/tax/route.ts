@@ -21,7 +21,7 @@ export async function PUT(request: NextRequest) {
   if (denied) return denied;
   return apiHandle("TAX SAVE", async () => {
     const rule = saveTaxRule((await request.json()) as Parameters<typeof saveTaxRule>[0]);
-    auditAdmin("tax_rule.saved", "tax_rule", rule.id, { ...rule });
+    auditAdmin(request, "tax_rule.saved", "tax_rule", rule.id, { ...rule });
     return { rule, rules: listTaxRules() };
   });
 }

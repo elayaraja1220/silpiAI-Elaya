@@ -19,7 +19,7 @@ export async function PUT(request: NextRequest) {
   return apiHandle("PLAN PRICE", async () => {
     const input = (await request.json()) as Parameters<typeof setPlanPrice>[0];
     const plan = setPlanPrice(input);
-    auditAdmin("plan.price_set", "plan", input.planId, { ...input });
+    auditAdmin(request, "plan.price_set", "plan", input.planId, { ...input });
     return { plan };
   });
 }
