@@ -490,6 +490,88 @@ export const MIGRATIONS: Migration[] = [
       db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('bucket_ledger_start_id', ?)").run(String(last));
     },
   },
+  {
+    id: 11,
+    name: "versioned model prices, markup rules, usage detail and attempt log for AI metering",
+    up(db) {
+      // 1. Prices are versioned. ai_models keeps the CURRENT price (so existing code is unchanged); model_prices keeps every version ever
+      //    used, append-only, so any past request can be re-priced exactly. A request records the version it was charged at.
+      db.exec(`
+        ALTER TABLE ai_models ADD COLUMN cache_read_usd_micro_per_mtok  INTEGER CHECK (cache_read_usd_micro_per_mtok  IS NULL OR cache_read_usd_micro_per_mtok  >= 0);
+        ALTER TABLE ai_models ADD COLUMN cache_write_usd_micro_per_mtok INTEGER CHECK (cache_write_usd_micro_per_mtok IS NULL OR cache_write_usd_micro_per_mtok >= 0);
+        ALTER TABLE ai_models ADD COLUMN price_version INTEGER NOT NULL DEFAULT 1;
+
+        CREATE TABLE model_prices (
+          id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+          model_id                   TEXT NOT NULL REFERENCES ai_models(id),
+          version                    INTEGER NOT NULL CHECK (version >= 1),
+          input_usd_micro_per_mtok   INTEGER NOT NULL CHECK (input_usd_micro_per_mtok >= 0),
+          output_usd_micro_per_mtok  INTEGER NOT NULL CHECK (output_usd_micro_per_mtok >= 0),
+          cache_read_usd_micro_per_mtok  INTEGER CHECK (cache_read_usd_micro_per_mtok  IS NULL OR cache_read_usd_micro_per_mtok  >= 0),
+          cache_write_usd_micro_per_mtok INTEGER CHECK (cache_write_usd_micro_per_mtok IS NULL OR cache_write_usd_micro_per_mtok >= 0),
+          markup_basis_points        INTEGER NOT NULL CHECK (markup_basis_points >= 0),
+          note                       TEXT NOT NULL DEFAULT '',
+          changed_by                 TEXT NOT NULL DEFAULT '',
+          created_at                 TEXT NOT NULL,
+          UNIQUE (model_id, version)
+        );
+        CREATE TRIGGER model_prices_no_update BEFORE UPDATE ON model_prices BEGIN SELECT RAISE(ABORT, 'model_prices is append-only'); END;
+        CREATE TRIGGER model_prices_no_delete BEFORE DELETE ON model_prices BEGIN SELECT RAISE(ABORT, 'model_prices is append-only'); END;
+      `);
+      const at = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO model_prices (model_id, version, input_usd_micro_per_mtok, output_usd_micro_per_mtok, markup_basis_points, note, changed_by, created_at)
+         SELECT id, 1, input_usd_micro_per_mtok, output_usd_micro_per_mtok, markup_basis_points, 'price when versioning began', 'migration', ? FROM ai_models`,
+      ).run(at);
+
+      // 2. The markup (what a customer is charged over the provider's cost) can be set for a provider, a model, a task type, or a mix.
+      //    The most specific matching rule wins (see resolveMarkup); with no rule the model's own markup applies.
+      db.exec(`
+        CREATE TABLE markup_rules (
+          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+          provider            TEXT,
+          model_id            TEXT REFERENCES ai_models(id),
+          task_type           TEXT,
+          markup_basis_points INTEGER NOT NULL CHECK (markup_basis_points >= 0 AND markup_basis_points <= 1000000),
+          enabled             INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+          note                TEXT NOT NULL DEFAULT '',
+          created_at          TEXT NOT NULL,
+          updated_at          TEXT NOT NULL,
+          CHECK (provider IS NOT NULL OR model_id IS NOT NULL OR task_type IS NOT NULL)
+        );
+      `);
+
+      // 3. What each request really used and how it was priced. Content is never stored: only sizes, money and the provider's own usage counts.
+      db.exec(`
+        ALTER TABLE ai_requests ADD COLUMN task_type               TEXT NOT NULL DEFAULT 'chat';
+        ALTER TABLE ai_requests ADD COLUMN price_version           INTEGER;
+        ALTER TABLE ai_requests ADD COLUMN cache_read_tokens       INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE ai_requests ADD COLUMN cache_write_tokens      INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE ai_requests ADD COLUMN other_charge_micro_usd  INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE ai_requests ADD COLUMN markup_basis_points     INTEGER;
+        ALTER TABLE ai_requests ADD COLUMN markup_source           TEXT;
+        ALTER TABLE ai_requests ADD COLUMN usage_source            TEXT CHECK (usage_source IS NULL OR usage_source IN ('provider', 'estimated'));
+        ALTER TABLE ai_requests ADD COLUMN usage_raw               TEXT;
+        ALTER TABLE ai_requests ADD COLUMN min_charge_applied      INTEGER NOT NULL DEFAULT 0 CHECK (min_charge_applied IN (0, 1));
+      `);
+
+      // 4. Every attempt at a provider, retries and fallbacks included, so a failed or repeated call is visible and its cost can be questioned.
+      db.exec(`
+        CREATE TABLE ai_request_attempts (
+          request_id    TEXT NOT NULL REFERENCES ai_requests(id),
+          attempt_no    INTEGER NOT NULL,
+          model_id      TEXT NOT NULL,
+          outcome       TEXT NOT NULL CHECK (outcome IN ('success', 'retryable-error', 'error')),
+          error_message TEXT,
+          latency_ms    INTEGER,
+          input_tokens  INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          created_at    TEXT NOT NULL,
+          PRIMARY KEY (request_id, attempt_no)
+        );
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

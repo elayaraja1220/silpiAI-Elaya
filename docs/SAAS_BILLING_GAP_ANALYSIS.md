@@ -24,7 +24,7 @@ Written from the repository as it is today (commit `29e1cfa`). Nothing here is a
 | 3 Wallet | **Done (step 1, built)** | Three buckets (promotional, subscription, purchased), spend order, expiry with a daily sweep, per-bucket holds, reconciliation (`auditBuckets`). See section 7. Still open: a separate grants table and a scheduled reconciliation job (the audit exists; nothing calls it on a timer). |
 | 4 Providers | **Partial** | Only Anthropic (plus a free demo model). Missing: Gemini and OpenAI adapters, streaming, circuit breakers, `getModels`, cached-token and tool charges. |
 | 5 Routing | **Partial** | Routing is tiers in code (`autoTier`, `modelFor`). Missing: admin-configurable routing rules, task types, model-level spend limits, plan-based model access. |
-| 6 Metering | **Partial** | Exact maths exists. Missing: cached tokens, a stored **price version** per request, tool and media charges, minimum-charge setting, retries counted separately. |
+| 6 Metering | **Done (step 2, built)** | Versioned prices, cached-token prices, other billable charges, markup rules by provider, model and task, minimum charge and rounding settings, raw usage kept, missing usage handled, every attempt logged. See section 8. Still open: image, audio and video charges (the field for "other charges" exists; no provider reports them yet) and the stage-level run record of phase 7. |
 | 7 Agent workflow | **Partial** | The builder covers plan, files and review. Missing: document analysis and testing stages, an execution id per stage with provider cost, customer charge and reserved versus consumed credits on one row. |
 | 8 Top-ups | **Missing** | No packages, no purchase flow. |
 | 9 Payments | **Missing** | No Stripe or Razorpay code, no webhooks, no payment table. Payments are recorded by hand. |
@@ -97,3 +97,25 @@ Add: `plan_prices`, `credit_buckets` (with expiry), `credit_grants`, `credit_pac
 - Expiry entries use ledger kind `adjust` with reference `expiry:<bucket>` and creator `system`, because the ledger's kind list is fixed by the database and changing it would mean rebuilding an immutable table. Reports should treat those rows as expiries.
 - The audit is not on a timer yet.
 - Nothing yet reads the per-category data on a screen.
+
+## 8. Step 2 built: price versions and metering (migration 11)
+
+**Price versions.** `ai_models` still holds the CURRENT price, so nothing that read it changed. Every change to a model's price, cache prices or markup now writes a new row in `model_prices` (append-only: the database refuses edits and deletes) with who changed it and why. Other edits (name, priority, on or off) do not. Every request records the version it was charged at, so any past charge can be re-derived exactly, and a price changed while a request is running does not alter that request. All existing models were backfilled as version 1.
+
+**What is priced.** Input, output, cache reads, cache writes (each at its own price, or at the input price when the model has no separate cache price), and other billable charges. All whole-number maths with exact rounding (BigInt). The hold before a call counts input at the dearest input price the model has, so a request that turns out to write the cache still fits inside it.
+
+**Markup rules.** The markup can be set for a provider, a model, a task type, or a mix. The most specific matching rule wins (model 8, task 4, provider 2; ties go to the newest); with no rule the model's own markup applies. The hold and the final charge use the same rule, and the request records the markup and which rule gave it. Task types: chat, document_analysis, architecture_planning, code_generation, bug_fixing, code_review, other. The project builder now labels its steps as planning, code generation and review.
+
+**Charging policy.** Two settings, saved together or not at all: rounding ("up" never undercharges, or "nearest") and a minimum charge in units. A request that cost the provider nothing (the free demo model) is never charged.
+
+**Usage reported by the provider.** Counts are the provider's own, with cached tokens separate; the provider's numeric usage fields are kept (never content). If a provider returns an answer with no usable usage, the work is still charged from the gateway's own estimate (about 4 characters a token) and the request is flagged `usage_source = estimated`, instead of throwing the answer away. Negative or fractional counts are treated as missing.
+
+**Attempts.** `ai_request_attempts` records every try: which model, how it ended, how long, tokens. Retries and fallbacks are therefore visible. They are not charged to the customer.
+
+**API.** `GET /api/admin/ai/prices?modelId=` (history), `GET/PUT/DELETE /api/admin/ai/markups`, `GET/PUT /api/admin/ai/settings`; model edits take `note`. The `/ai/admin` screen shows price versions, cache prices, the charging settings and the markup rules.
+
+**What did NOT change, on purpose.** The credit definition. The brief says 1 credit = $0.01 of customer usage with a 2.5 markup. That is already expressible with these settings (a test shows a $0.40 provider cost becoming 100 credits), but switching it also changes what every plan's credit allowance means, so it happens together with the new plan table in step 3. Until then credits keep today's meaning.
+
+**Known limits.**
+- The customer-facing credit price list (`publicModels`) shows each model's own markup; a task-specific rule can make a request cost more or less than that list suggests.
+- A run record that ties planning, files and review of one build together with cost per stage (phase 7) is not built yet; the pieces (task type, price version, usage, attempts) are now on each request.

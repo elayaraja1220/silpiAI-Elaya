@@ -4,11 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2, Lock } from "lucide-react";
 
 import { Customers } from "./customers";
+import { MarkupRules, type Rule } from "./markups";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill, usd } from "./light";
 
-type Model = { id: string; provider: string; providerModel: string; label: string; tier: string; inputUsdMicroPerMtok: number; outputUsdMicroPerMtok: number; markupBasisPoints: number; maxOutputTokens: number; priority: number; enabled: boolean };
+type Model = { cacheReadUsdMicroPerMtok: number | null; cacheWriteUsdMicroPerMtok: number | null; priceVersion: number; id: string; provider: string; providerModel: string; label: string; tier: string; inputUsdMicroPerMtok: number; outputUsdMicroPerMtok: number; markupBasisPoints: number; maxOutputTokens: number; priority: number; enabled: boolean };
 type Org = { orgId: string; orgName: string; requests: number; failed: number; providerCostMicroUsd: number; chargedUnits: number; chargedUsdAtCurrentRate: number; dailyCapUnits: number | null };
-type Overview = { unitsPerUsd: number; models: Model[]; organizations: Org[] };
+type Policy = { rounding: "up" | "nearest"; minChargeUnits: number };
+type Overview = { unitsPerUsd: number; policy: Policy; markupRules: Rule[]; models: Model[]; organizations: Org[] };
 
 /** Administrator view: what the AI really costs, what customers are charged, and the dials. Needs the administrator token. */
 export function AiAdmin() {
@@ -36,7 +38,8 @@ export function AiAdmin() {
       {note && <Notice tone="green">{note}</Notice>}
       <Customers onChanged={flash} onError={fail} />
       <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>
-      <Conversion value={overview.unitsPerUsd} onSaved={(v) => { setOverview({ ...overview, unitsPerUsd: v }); flash("Conversion saved."); }} onError={fail} />
+      <Charging value={overview.unitsPerUsd} policy={overview.policy} onSaved={() => { flash("Charging settings saved."); load(); }} onError={fail} />
+      <MarkupRules rules={overview.markupRules} modelIds={overview.models.map((m) => m.id)} providers={[...new Set(overview.models.map((m) => m.provider))]} onSaved={() => { flash("Markup rules saved."); load(); }} onError={fail} />
       <Models models={overview.models} onSaved={() => { flash("Model saved."); load(); }} onError={fail} />
       <Orgs orgs={overview.organizations} onSaved={() => { flash("Limit saved."); load(); }} onError={fail} />
     </div>
@@ -88,15 +91,22 @@ function TokenSignIn({ onDone }: { onDone: () => void }) {
   );
 }
 
-function Conversion({ value, onSaved, onError }: { value: number; onSaved: (v: number) => void; onError: (e: unknown) => void }) {
+function Charging({ value, policy, onSaved, onError }: { value: number; policy: Policy; onSaved: () => void; onError: (e: unknown) => void }) {
   const [v, setV] = useState(String(value));
+  const [min, setMin] = useState(String(policy.minChargeUnits));
+  const [rounding, setRounding] = useState<Policy["rounding"]>(policy.rounding);
+  const changed = Number(v) !== value || Number(min) !== policy.minChargeUnits || rounding !== policy.rounding;
   return (
     <Card className="space-y-3">
-      <h2 className="text-sm font-semibold text-slate-900">Credit conversion</h2>
-      <p className="text-xs leading-5 text-slate-600">How many credit units one US dollar of provider cost is worth (1 credit = 1,000 units). With the model markups below, this sets your margin. Now: <b>$1 of AI cost = {credits(value)} credits</b>.</p>
-      <div className="flex max-w-sm gap-2">
-        <input value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, ""))} inputMode="numeric" className={inputClass} aria-label="Units per US dollar" />
-        <Button onClick={() => api<{ unitsPerUsd: number }>("/api/admin/ai/settings", { method: "PUT", body: { unitsPerUsd: Number(v) } }).then((r) => onSaved(r.unitsPerUsd)).catch(onError)} disabled={!v || Number(v) === value}>Save</Button>
+      <h2 className="text-sm font-semibold text-slate-900">How requests are charged</h2>
+      <p className="text-xs leading-5 text-slate-600">
+        Charge = provider cost x markup x units per dollar, rounded, and never below the minimum. 1 credit = 1,000 units. Now: <b>$1 of charge = {credits(value)} credits</b>. All three settings are saved together.
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-slate-600">Units per US dollar<input value={v} onChange={(e) => setV(e.target.value.replace(/\D/g, ""))} inputMode="numeric" className={inputClass + " mt-1 w-36"} aria-label="Units per US dollar" /></label>
+        <label className="text-xs text-slate-600">Minimum charge (units)<input value={min} onChange={(e) => setMin(e.target.value.replace(/\D/g, ""))} inputMode="numeric" className={inputClass + " mt-1 w-36"} aria-label="Minimum charge in units" /></label>
+        <label className="text-xs text-slate-600">Rounding<select value={rounding} onChange={(e) => setRounding(e.target.value as Policy["rounding"])} className={inputClass + " mt-1 w-40"} aria-label="Rounding"><option value="up">Up (never undercharge)</option><option value="nearest">To the nearest</option></select></label>
+        <Button onClick={() => api("/api/admin/ai/settings", { method: "PUT", body: { unitsPerUsd: Number(v), minChargeUnits: Number(min), rounding } }).then(onSaved).catch(onError)} disabled={!v || !min || !changed}>Save</Button>
       </div>
     </Card>
   );
@@ -118,19 +128,23 @@ function Models({ models, onSaved, onError }: { models: Model[]; onSaved: () => 
 function ModelRow({ m, onSaved, onError }: { m: Model; onSaved: () => void; onError: (e: unknown) => void }) {
   const [inp, setInp] = useState(perMtok(m.inputUsdMicroPerMtok));
   const [out, setOut] = useState(perMtok(m.outputUsdMicroPerMtok));
+  const [cacheRead, setCacheRead] = useState(m.cacheReadUsdMicroPerMtok === null ? "" : perMtok(m.cacheReadUsdMicroPerMtok));
+  const [cacheWrite, setCacheWrite] = useState(m.cacheWriteUsdMicroPerMtok === null ? "" : perMtok(m.cacheWriteUsdMicroPerMtok));
   const [markup, setMarkup] = useState(String(m.markupBasisPoints / 100));
   const [priority, setPriority] = useState(String(m.priority));
   const save = (extra: Partial<Model> = {}) =>
-    api("/api/admin/ai/models", { method: "PUT", body: { id: m.id, inputUsdMicroPerMtok: toMicro(inp), outputUsdMicroPerMtok: toMicro(out), markupBasisPoints: Math.round(Number(markup) * 100), priority: Number(priority), ...extra } }).then(onSaved).catch(onError);
+    api("/api/admin/ai/models", { method: "PUT", body: { id: m.id, inputUsdMicroPerMtok: toMicro(inp), outputUsdMicroPerMtok: toMicro(out), cacheReadUsdMicroPerMtok: cacheRead.trim() === "" ? null : toMicro(cacheRead), cacheWriteUsdMicroPerMtok: cacheWrite.trim() === "" ? null : toMicro(cacheWrite), markupBasisPoints: Math.round(Number(markup) * 100), priority: Number(priority), ...extra } }).then(onSaved).catch(onError);
   const field = "w-24 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm tabular-nums text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20";
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 p-3">
       <div className="min-w-40 flex-1">
-        <p className="text-sm font-semibold text-slate-900">{m.label} <span className="font-normal text-slate-500">({m.id})</span></p>
+        <p className="text-sm font-semibold text-slate-900">{m.label} <span className="font-normal text-slate-500">({m.id})</span> <Pill tone="slate">price v{m.priceVersion}</Pill></p>
         <p className="text-xs text-slate-500">{m.provider} · {m.providerModel} · <Pill tone="indigo">{m.tier}</Pill></p>
       </div>
       <label className="text-xs text-slate-600">Input $/M<input value={inp} onChange={(e) => setInp(e.target.value)} className={field + " mt-1 block"} /></label>
       <label className="text-xs text-slate-600">Output $/M<input value={out} onChange={(e) => setOut(e.target.value)} className={field + " mt-1 block"} /></label>
+      <label className="text-xs text-slate-600" title="Leave empty if the provider bills cached tokens at the normal input price">Cache read $/M<input value={cacheRead} onChange={(e) => setCacheRead(e.target.value)} placeholder="= input" className={field + " mt-1 block"} /></label>
+      <label className="text-xs text-slate-600" title="Leave empty if the provider bills cache writes at the normal input price">Cache write $/M<input value={cacheWrite} onChange={(e) => setCacheWrite(e.target.value)} placeholder="= input" className={field + " mt-1 block"} /></label>
       <label className="text-xs text-slate-600">Markup %<input value={markup} onChange={(e) => setMarkup(e.target.value)} className={field + " mt-1 block"} /></label>
       <label className="text-xs text-slate-600">Priority<input value={priority} onChange={(e) => setPriority(e.target.value)} className={field + " mt-1 block w-20"} /></label>
       <Button variant="ghost" onClick={() => void save()}>Save</Button>

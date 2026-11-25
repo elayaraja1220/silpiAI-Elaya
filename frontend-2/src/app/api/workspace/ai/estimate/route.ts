@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   const auth = requireSession(request, "ai:use");
   if ("denied" in auth) return auth.denied;
   return aiHandle("AI ESTIMATE", async () => {
-    const body = (await request.json()) as { messages?: unknown; system?: unknown; model?: unknown; maxOutputTokens?: unknown };
-    return { estimate: estimate({ model: typeof body.model === "string" ? body.model : "auto", messages: body.messages, system: body.system, maxOutputTokens: body.maxOutputTokens }), wallet: getWallet(auth.ctx.orgId) };
+    const body = (await request.json()) as { messages?: unknown; system?: unknown; model?: unknown; maxOutputTokens?: unknown; taskType?: unknown };
+    return { estimate: estimate({ model: typeof body.model === "string" ? body.model : "auto", messages: body.messages, system: body.system, maxOutputTokens: body.maxOutputTokens, taskType: typeof body.taskType === "string" ? body.taskType : undefined }), wallet: getWallet(auth.ctx.orgId) };
   });
 }

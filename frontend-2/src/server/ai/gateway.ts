@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { getDb, transaction } from "@/lib/business/db";
 import { CreditError, extendReservation, getWallet, releaseReservation, reserveCredits, settleReservation, type Wallet } from "@/server/credits";
-import { getDailyCap, getModel, getUnitsPerUsd, listModels, TIERS, type AiModel, type Tier } from "./catalog";
-import { estimateTokens, providerCostMicroUsd, unitsForCost, unitsForTokens } from "./pricing";
+import { getDailyCap, getMeteringPolicy, getModel, getUnitsPerUsd, listModels, resolveMarkup, TASK_TYPES, TIERS, type AiModel, type Tier } from "./catalog";
+import { chargeUnits, estimateTokens, usageCostMicroUsd, worstInputPrice, type MeteringPolicy, type Usage } from "./pricing";
 import { defaultProviders, ProviderError, type ChatMessage, type ProviderAdapter } from "./providers";
 
 /**
@@ -53,6 +53,8 @@ export type GatewayInput = {
   maxOutputTokens?: unknown;
   idempotencyKey: string;
   purpose?: string;
+  /** What the request is for (chat, document_analysis, architecture_planning, code_generation, bug_fixing, code_review, other). It selects the markup rule. */
+  taskType?: string;
 };
 export type GatewayDeps = { providers?: Record<string, ProviderAdapter>; sleep?: (ms: number) => Promise<void>; now?: () => number };
 
@@ -64,7 +66,11 @@ export type GatewayResult = {
   model: { id: string; label: string; tier: Tier };
   fallbackUsed: boolean;
   attempts: number;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
+  /** True when the provider did not report usage and the charge was worked out from the gateway's own estimate. */
+  usageEstimated: boolean;
+  /** The version of the model's price this request was charged at (see model_prices). */
+  priceVersion: number | null;
   chargedUnits: number;
   uncollectedUnits: number;
   latencyMs: number;
@@ -74,7 +80,7 @@ export type GatewayResult = {
 const bad = (message: string) => new GatewayError("invalid", message);
 
 // ---- validation ----------------------------------------------------------------------------------------------------------
-type Clean = { messages: ChatMessage[]; system: string | undefined; promptChars: number; maxOutputTokens: number | null; key: string; purpose: string };
+type Clean = { messages: ChatMessage[]; system: string | undefined; promptChars: number; maxOutputTokens: number | null; key: string; purpose: string; taskType: string };
 function clean(input: GatewayInput): Clean {
   const key = typeof input.idempotencyKey === "string" ? input.idempotencyKey.trim() : "";
   if (key.length < 6 || key.length > 200) throw bad("An idempotency key of 6 to 200 characters is required.");
@@ -97,7 +103,9 @@ function clean(input: GatewayInput): Clean {
     if (typeof input.maxOutputTokens !== "number" || !Number.isSafeInteger(input.maxOutputTokens) || input.maxOutputTokens < 1) throw bad("maxOutputTokens must be a whole number of 1 or more.");
     maxOutputTokens = input.maxOutputTokens;
   }
-  return { messages, system, promptChars, maxOutputTokens, key, purpose: String(input.purpose ?? "chat").slice(0, 60) };
+  const taskType = input.taskType === undefined || input.taskType === null || input.taskType === "" ? "chat" : String(input.taskType);
+  if (!(TASK_TYPES as readonly string[]).includes(taskType)) throw bad(`taskType must be one of: ${TASK_TYPES.join(", ")}.`);
+  return { messages, system, promptChars, maxOutputTokens, key, purpose: String(input.purpose ?? "chat").slice(0, 60), taskType };
 }
 
 /**
@@ -123,21 +131,29 @@ function candidatesFor(requested: string, promptChars: number, outTokens: number
 
 const outputFor = (m: AiModel, asked: number | null) => Math.min(asked ?? LIMITS.defaultOutputTokens, m.maxOutputTokens);
 
-/** The most this request could cost on a model: every prompt token estimated high, and the full answer allowance used. */
-const worstCaseUnits = (m: AiModel, promptChars: number, asked: number | null, rate: number) => unitsForTokens(m, rate, estimateTokens(promptChars), outputFor(m, asked));
+/**
+ * The most this request could cost on a model: every prompt token estimated high AND billed at the dearest input price the model has (a cache write
+ * can cost more than plain input), and the full answer allowance used. Priced with the same markup rule the real charge will use.
+ */
+const worstCaseUnits = (m: AiModel, promptChars: number, asked: number | null, rate: number, policy: MeteringPolicy, taskType: string) => {
+  const cost = usageCostMicroUsd({ ...m, inputUsdMicroPerMtok: worstInputPrice(m) }, { inputTokens: estimateTokens(promptChars), outputTokens: outputFor(m, asked) });
+  return chargeUnits(cost, resolveMarkup(m, taskType).basisPoints, rate, policy).units;
+};
 
 export type Estimate = { model: string; maxUnits: number; maxOutputTokens: number; estimatedInputTokens: number };
 /** What a request would hold, before it is sent. Same maths as the real thing. */
-export function estimate(input: { model?: string; messages: unknown; system?: unknown; maxOutputTokens?: unknown }): Estimate {
+export function estimate(input: { model?: string; messages: unknown; system?: unknown; maxOutputTokens?: unknown; taskType?: string }): Estimate {
   const c = clean({ ...input, orgId: "", idempotencyKey: "estimate-only" });
   const rate = getUnitsPerUsd();
+  const policy = getMeteringPolicy();
   const chain = candidatesFor(input.model ?? "auto", c.promptChars, c.maxOutputTokens ?? LIMITS.defaultOutputTokens);
-  const worst = chain.reduce((a, b) => (worstCaseUnits(b, c.promptChars, c.maxOutputTokens, rate) > worstCaseUnits(a, c.promptChars, c.maxOutputTokens, rate) ? b : a));
-  return { model: chain.length === 1 ? chain[0]!.id : `${chain[0]!.tier} tier`, maxUnits: worstCaseUnits(worst, c.promptChars, c.maxOutputTokens, rate), maxOutputTokens: outputFor(worst, c.maxOutputTokens), estimatedInputTokens: estimateTokens(c.promptChars) };
+  const quote = (m: AiModel) => worstCaseUnits(m, c.promptChars, c.maxOutputTokens, rate, policy, c.taskType);
+  const worst = chain.reduce((a, b) => (quote(b) > quote(a) ? b : a));
+  return { model: chain.length === 1 ? chain[0]!.id : `${chain[0]!.tier} tier`, maxUnits: quote(worst), maxOutputTokens: outputFor(worst, c.maxOutputTokens), estimatedInputTokens: estimateTokens(c.promptChars) };
 }
 
 // ---- request rows --------------------------------------------------------------------------------------------------------------
-type ReqRow = { id: string; status: "running" | "completed" | "failed"; model_id: string | null; fallback_used: number; attempts: number; input_tokens: number; output_tokens: number; charged_units: number; uncollected_units: number; latency_ms: number | null; error_code: string | null };
+type ReqRow = { id: string; status: "running" | "completed" | "failed"; model_id: string | null; fallback_used: number; attempts: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; usage_source: "provider" | "estimated" | null; price_version: number | null; charged_units: number; uncollected_units: number; latency_ms: number | null; error_code: string | null };
 
 /** Gives back the credits held by requests whose process died. Cheap; runs at the start of every call. */
 export function sweepStaleRequests(orgId: string, now = Date.now()): number {
@@ -170,7 +186,8 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
   const chain = all.filter((m) => providers[m.provider]?.isConfigured());
   if (!chain.length) throw new GatewayError("provider-not-configured", "The AI provider for this model is not set up yet. Nothing was charged.");
   const rate = getUnitsPerUsd(db);
-  const hold = Math.max(...chain.map((m) => worstCaseUnits(m, c.promptChars, c.maxOutputTokens, rate)));
+  const policy = getMeteringPolicy(db);
+  const hold = Math.max(...chain.map((m) => worstCaseUnits(m, c.promptChars, c.maxOutputTokens, rate, policy, c.taskType)));
 
   // ---- one locked step: repeat? daily cap? concurrency? then the request row. Two simultaneous calls cannot both slip through. ----
   const requestId = `air_${randomUUID()}`;
@@ -186,8 +203,8 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
     const running = (tx.prepare("SELECT COUNT(*) AS n FROM ai_requests WHERE org_id = ? AND status = 'running'").get(orgId) as { n: number }).n;
     if (running >= LIMITS.maxConcurrentPerOrg) throw new GatewayError("too-many-requests", `Too many AI requests are running at once (limit ${LIMITS.maxConcurrentPerOrg}). Try again in a moment.`);
     tx.prepare(
-      "INSERT INTO ai_requests (id, org_id, user_id, idempotency_key, status, purpose, requested_model, reserved_units, prompt_chars, created_at) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)",
-    ).run(requestId, orgId, input.userId ?? "", c.key, c.purpose, requested.slice(0, 80), hold, c.promptChars, new Date(started).toISOString());
+      "INSERT INTO ai_requests (id, org_id, user_id, idempotency_key, status, purpose, task_type, requested_model, reserved_units, prompt_chars, created_at) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)",
+    ).run(requestId, orgId, input.userId ?? "", c.key, c.purpose, c.taskType, requested.slice(0, 80), hold, c.promptChars, new Date(started).toISOString());
     return { prior: null };
   });
 
@@ -196,7 +213,7 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
     if (p.status === "running") throw new GatewayError("in-progress", "A request with this idempotency key is still running.");
     if (p.status === "failed") throw new GatewayError("provider-failed", `That request already failed (${p.error_code ?? "error"}) and nothing was charged. Send it again with a new idempotency key.`);
     const model = getModel(p.model_id ?? "")!;
-    return { requestId: p.id, replayed: true, text: "", model: { id: model.id, label: model.label, tier: model.tier }, fallbackUsed: p.fallback_used === 1, attempts: p.attempts, usage: { inputTokens: p.input_tokens, outputTokens: p.output_tokens }, chargedUnits: p.charged_units, uncollectedUnits: p.uncollected_units, latencyMs: p.latency_ms ?? 0, wallet: getWallet(orgId) };
+    return { requestId: p.id, replayed: true, text: "", model: { id: model.id, label: model.label, tier: model.tier }, fallbackUsed: p.fallback_used === 1, attempts: p.attempts, usage: { inputTokens: p.input_tokens, outputTokens: p.output_tokens, cacheReadTokens: p.cache_read_tokens, cacheWriteTokens: p.cache_write_tokens }, usageEstimated: p.usage_source === "estimated", priceVersion: p.price_version, chargedUnits: p.charged_units, uncollectedUnits: p.uncollected_units, latencyMs: p.latency_ms ?? 0, wallet: getWallet(orgId) };
   }
 
   const fail = (code: string, message: string, extra: { attempts?: number } = {}) =>
@@ -213,6 +230,9 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
       throw e;
     }
   }
+  /** Every try at a provider is recorded, successful or not, so retries and fallbacks are visible and their cost can be questioned. */
+  const logAttempt = (no: number, modelId: string, outcome: "success" | "retryable-error" | "error", detail: { error?: string; latencyMs: number; input?: number; output?: number }) =>
+    db.prepare("INSERT OR IGNORE INTO ai_request_attempts (request_id, attempt_no, model_id, outcome, error_message, latency_ms, input_tokens, output_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(requestId, no, modelId, outcome, detail.error ? detail.error.slice(0, 300) : null, detail.latencyMs, detail.input ?? 0, detail.output ?? 0, new Date(clock()).toISOString());
   const giveBack = (note: string) => { if (reservationId) { try { releaseReservation({ orgId, reservationId, note }); } catch { /* already closed */ } } };
 
   // ---- call the provider: retry a temporary failure, then fall back to the next model of the same tier ----
@@ -225,10 +245,23 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
       if (clock() - started > LIMITS.totalDeadlineMs) { lastError = "The request ran out of time."; break; }
       attempts++;
       try {
+        const tryStarted = clock();
         const out = await provider.complete({ providerModel: model.providerModel, system: c.system, messages: c.messages, maxOutputTokens: outputFor(model, c.maxOutputTokens), signal: AbortSignal.timeout(LIMITS.attemptTimeoutMs) });
         // ---- measure and settle the REAL cost ----
-        const costUsd = providerCostMicroUsd(model, out.inputTokens, out.outputTokens);
-        let units = unitsForCost(costUsd, model.markupBasisPoints, rate);
+        // What the provider says it used. If it said nothing readable the work was still done (and billed to us), so the charge is worked out from
+        // the gateway's own estimate (about 4 characters a token, the ordinary figure rather than the cautious one used for the hold) and flagged.
+        let usage: Usage = { inputTokens: out.inputTokens, outputTokens: out.outputTokens, cacheReadTokens: out.cacheReadTokens ?? 0, cacheWriteTokens: out.cacheWriteTokens ?? 0, otherChargesMicroUsd: out.otherChargesMicroUsd ?? 0 };
+        let estimated = out.usageMissing === true;
+        let costUsd = 0;
+        if (!estimated) { try { costUsd = usageCostMicroUsd(model, usage); } catch { estimated = true; } } // negative or fractional counts from a provider are not trusted
+        if (estimated) {
+          usage = { inputTokens: Math.ceil(c.promptChars / 4), outputTokens: Math.ceil(out.text.length / 4), cacheReadTokens: 0, cacheWriteTokens: 0, otherChargesMicroUsd: 0 };
+          costUsd = usageCostMicroUsd(model, usage);
+        }
+        const markup = resolveMarkup(model, c.taskType, db);
+        const priced = chargeUnits(costUsd, markup.basisPoints, rate, policy);
+        const units = priced.units;
+        logAttempt(attempts, model.id, "success", { latencyMs: clock() - tryStarted, input: usage.inputTokens, output: usage.outputTokens });
         let held = hold;
         if (reservationId && units > held) {
           // The prompt was bigger than estimated. Hold the difference if the wallet has it; otherwise charge only what was held.
@@ -238,11 +271,16 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
         if (reservationId) settleReservation({ orgId, reservationId, actualUnits: charged, note: `ai:${model.id}` });
         const latencyMs = clock() - started;
         db.prepare(
-          `UPDATE ai_requests SET status = 'completed', model_id = ?, fallback_used = ?, attempts = ?, reserved_units = ?, response_chars = ?, input_tokens = ?, output_tokens = ?, provider_cost_micro_usd = ?, charged_units = ?, uncollected_units = ?, provider_request_id = ?, latency_ms = ?, finished_at = ? WHERE id = ?`,
-        ).run(model.id, i > 0 ? 1 : 0, attempts, held, out.text.length, out.inputTokens, out.outputTokens, costUsd, charged, units - charged, out.providerRequestId, latencyMs, new Date(clock()).toISOString(), requestId);
-        return { requestId, replayed: false, text: out.text, model: { id: model.id, label: model.label, tier: model.tier }, fallbackUsed: i > 0, attempts, usage: { inputTokens: out.inputTokens, outputTokens: out.outputTokens }, chargedUnits: charged, uncollectedUnits: units - charged, latencyMs, wallet: getWallet(orgId) };
+          `UPDATE ai_requests SET status = 'completed', model_id = ?, fallback_used = ?, attempts = ?, reserved_units = ?, response_chars = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?, other_charge_micro_usd = ?,
+             provider_cost_micro_usd = ?, price_version = ?, markup_basis_points = ?, markup_source = ?, usage_source = ?, usage_raw = ?, min_charge_applied = ?,
+             charged_units = ?, uncollected_units = ?, provider_request_id = ?, latency_ms = ?, finished_at = ? WHERE id = ?`,
+        ).run(model.id, i > 0 ? 1 : 0, attempts, held, out.text.length, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens ?? 0, usage.cacheWriteTokens ?? 0, usage.otherChargesMicroUsd ?? 0,
+          costUsd, model.priceVersion, markup.basisPoints, markup.source, estimated ? "estimated" : "provider", out.raw ? JSON.stringify(out.raw) : null, priced.minApplied ? 1 : 0,
+          charged, units - charged, out.providerRequestId, latencyMs, new Date(clock()).toISOString(), requestId);
+        return { requestId, replayed: false, text: out.text, model: { id: model.id, label: model.label, tier: model.tier }, fallbackUsed: i > 0, attempts, usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens ?? 0, cacheWriteTokens: usage.cacheWriteTokens ?? 0 }, usageEstimated: estimated, priceVersion: model.priceVersion, chargedUnits: charged, uncollectedUnits: units - charged, latencyMs, wallet: getWallet(orgId) };
       } catch (e) {
-        if (!(e instanceof ProviderError)) { giveBack("ai request failed"); fail("error", (e as Error).message, { attempts }); throw e; }
+        if (!(e instanceof ProviderError)) { logAttempt(attempts, model.id, "error", { error: (e as Error).message, latencyMs: clock() - started }); giveBack("ai request failed"); fail("error", (e as Error).message, { attempts }); throw e; }
+        logAttempt(attempts, model.id, e.retryable ? "retryable-error" : "error", { error: e.message, latencyMs: clock() - started });
         lastError = e.message;
         if (!e.retryable) break; // a request the provider rejects will be rejected again: try the next model, not the same one
         if (a < LIMITS.attemptsPerModel) await sleep(400 * a);

@@ -5,7 +5,24 @@
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ProviderRequest = { providerModel: string; system?: string; messages: ChatMessage[]; maxOutputTokens: number; signal?: AbortSignal };
-export type ProviderResult = { text: string; inputTokens: number; outputTokens: number; providerRequestId: string | null };
+/**
+ * What a provider returns. Token counts are the provider's own. Cached tokens are counted APART from inputTokens. If the provider did not
+ * report usage at all, usageMissing is true and the gateway prices the request from its own estimate instead of guessing here.
+ * raw holds only the provider's numeric usage fields, never any content.
+ */
+export type ProviderResult = {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  otherChargesMicroUsd?: number;
+  usageMissing?: boolean;
+  raw?: Record<string, number>;
+  providerRequestId: string | null;
+};
+
+const count = (v: unknown): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null);
 
 /** retryable: worth trying again (rate limit, overload, network, timeout). Otherwise the request itself is the problem. */
 export class ProviderError extends Error {
@@ -47,10 +64,18 @@ export const anthropicAdapter: ProviderAdapter = {
       // 408 timeout, 409 conflict, 429 rate limit, 5xx and 529 (overloaded) are temporary; 400/401/403/404 are not.
       throw new ProviderError(`Provider answered ${response.status}: ${detail}`, [408, 409, 429].includes(response.status) || response.status >= 500, response.status);
     }
-    const body = (await response.json().catch(() => null)) as { id?: string; content?: { type: string; text?: string }[]; usage?: { input_tokens?: number; output_tokens?: number } } | null;
-    const usage = body?.usage;
-    if (!body || !Array.isArray(body.content) || typeof usage?.input_tokens !== "number" || typeof usage?.output_tokens !== "number") throw new ProviderError("The provider's answer had no readable content or usage.", false);
-    return { text: body.content.filter((c) => c.type === "text").map((c) => c.text ?? "").join(""), inputTokens: usage.input_tokens, outputTokens: usage.output_tokens, providerRequestId: body.id ?? null };
+    const body = (await response.json().catch(() => null)) as { id?: string; content?: { type: string; text?: string }[]; usage?: Record<string, unknown> } | null;
+    if (!body || !Array.isArray(body.content)) throw new ProviderError("The provider's answer had no readable content.", false);
+    const text = body.content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
+    const u = body.usage ?? {};
+    const input = count(u.input_tokens);
+    const output = count(u.output_tokens);
+    const raw: Record<string, number> = {};
+    for (const [k, v] of Object.entries(u)) { const n = count(v); if (n !== null) raw[k] = n; }
+    // Content arrived but the usage is missing or unreadable: the work was done and the provider will bill it, so do not throw the answer away.
+    // The gateway prices it from its own estimate and records that it did.
+    if (input === null || output === null) return { text, inputTokens: 0, outputTokens: 0, usageMissing: true, raw, providerRequestId: body.id ?? null };
+    return { text, inputTokens: input, outputTokens: output, cacheReadTokens: count(u.cache_read_input_tokens) ?? 0, cacheWriteTokens: count(u.cache_creation_input_tokens) ?? 0, raw, providerRequestId: body.id ?? null };
   },
 };
 

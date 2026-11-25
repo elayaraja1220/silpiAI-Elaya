@@ -11,5 +11,5 @@ export const dynamic = "force-dynamic";
 export async function PUT(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
-  return aiHandle("AI MODEL SAVE", async () => ({ model: saveModel((await request.json()) as ModelInput) }));
+  return aiHandle("AI MODEL SAVE", async () => ({ model: saveModel({ ...((await request.json()) as ModelInput), changedBy: "admin" }) }));
 }

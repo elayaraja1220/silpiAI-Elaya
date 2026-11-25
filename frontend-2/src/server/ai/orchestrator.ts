@@ -77,14 +77,14 @@ const PLAN_SYS = "SILPI_JOB_PLAN\nYou are a senior software architect. Reply wit
 const FILE_SYS = "SILPI_JOB_FILE\nYou write exactly ONE file of a software project. Reply with ONLY the complete contents of that file: no markdown code fences and no explanations. Follow the plan so all the files fit together.";
 const REVIEW_SYS = "SILPI_JOB_REVIEW\nYou are a careful code reviewer. Read the project files and list the real problems you find (bugs, missing pieces, inconsistencies between files), most serious first, briefly. If it looks sound, say so.";
 
-type Req = { model: string; system: string; messages: { role: "user"; content: string }[]; maxOutputTokens: number };
+type Req = { model: string; system: string; messages: { role: "user"; content: string }[]; maxOutputTokens: number; taskType: string };
 
 function buildRequest(job: Job, steps: Step[], step: Step, outputOf: (seq: number) => string | null): Req {
-  if (step.kind === "plan") return { model: step.model, system: PLAN_SYS, messages: [{ role: "user", content: `Project brief:\n${job.brief}` }], maxOutputTokens: JOB_LIMITS.planTokens };
+  if (step.kind === "plan") return { model: step.model, system: PLAN_SYS, messages: [{ role: "user", content: `Project brief:\n${job.brief}` }], maxOutputTokens: JOB_LIMITS.planTokens, taskType: "architecture_planning" };
   const files = steps.filter((s) => s.kind === "file");
   if (step.kind === "file") {
     const list = files.map((f) => `- ${String(f.payload.path)}: ${String(f.payload.purpose)}`).join("\n");
-    return { model: step.model, system: FILE_SYS, messages: [{ role: "user", content: `Project brief:\n${job.brief}\n\nPlan: ${job.planSummary}\n\nAll files:\n${list}\n\nFile to write: ${String(step.payload.path)}\nPurpose: ${String(step.payload.purpose)}` }], maxOutputTokens: Number(step.payload.maxOutputTokens) || 2048 };
+    return { model: step.model, system: FILE_SYS, messages: [{ role: "user", content: `Project brief:\n${job.brief}\n\nPlan: ${job.planSummary}\n\nAll files:\n${list}\n\nFile to write: ${String(step.payload.path)}\nPurpose: ${String(step.payload.purpose)}` }], maxOutputTokens: Number(step.payload.maxOutputTokens) || 2048, taskType: "code_generation" };
   }
   // review: the files so far. Before they exist (for the budget estimate) each is assumed to be as long as its answer allowance.
   let body = "";
@@ -92,10 +92,10 @@ function buildRequest(job: Job, steps: Step[], step: Step, outputOf: (seq: numbe
     const out = outputOf(f.seq) ?? "x".repeat((Number(f.payload.maxOutputTokens) || 2048) * 3);
     body += `### ${String(f.payload.path)}\n${out}\n\n`;
   }
-  return { model: step.model, system: REVIEW_SYS, messages: [{ role: "user", content: `Project brief:\n${job.brief}\n\n${body.slice(0, JOB_LIMITS.reviewChars)}` }], maxOutputTokens: JOB_LIMITS.reviewTokens };
+  return { model: step.model, system: REVIEW_SYS, messages: [{ role: "user", content: `Project brief:\n${job.brief}\n\n${body.slice(0, JOB_LIMITS.reviewChars)}` }], maxOutputTokens: JOB_LIMITS.reviewTokens, taskType: "code_review" };
 }
 
-const holdFor = (r: Req) => estimate({ model: r.model, messages: r.messages, system: r.system, maxOutputTokens: r.maxOutputTokens }).maxUnits;
+const holdFor = (r: Req) => estimate({ model: r.model, messages: r.messages, system: r.system, maxOutputTokens: r.maxOutputTokens, taskType: r.taskType }).maxUnits;
 
 /** The most the remaining steps could hold in total (what the customer is asked to approve). */
 export function estimateRemaining(job: Job): { maxUnits: number; steps: { seq: number; label: string; model: string; maxUnits: number }[] } {
@@ -209,7 +209,7 @@ export async function runJob(jobId: string, deps: GatewayDeps = {}): Promise<voi
       setStep(jobId, step.seq, { status: "running", started_at: now(), error: null });
       setJob(jobId, { heartbeat_at: now() });
       try {
-        const r = await complete({ orgId: job.orgId, userId: job.userId, model: req.model, messages: req.messages, system: req.system, maxOutputTokens: req.maxOutputTokens, idempotencyKey: `job:${jobId}:s${step.seq}:a${step.attempt}`, purpose: `job:${jobId}` }, deps);
+        const r = await complete({ orgId: job.orgId, userId: job.userId, model: req.model, messages: req.messages, system: req.system, maxOutputTokens: req.maxOutputTokens, taskType: req.taskType, idempotencyKey: `job:${jobId}:s${step.seq}:a${step.attempt}`, purpose: `job:${jobId}` }, deps);
         const spent = (getJobById(jobId)?.spentUnits ?? job.spentUnits) + r.chargedUnits;
         if (r.replayed && !r.text) {
           // Charged before but the answer was lost (a crash between the call and saving it): count the charge, ask again under a new key.

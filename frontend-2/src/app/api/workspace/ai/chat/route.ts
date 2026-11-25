@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
   const auth = requireSession(request, "ai:use");
   if ("denied" in auth) return auth.denied;
   return aiHandle("AI CHAT", async () => {
-    const body = (await request.json()) as { messages?: unknown; system?: unknown; model?: unknown; maxOutputTokens?: unknown; purpose?: unknown };
+    const body = (await request.json()) as { messages?: unknown; system?: unknown; model?: unknown; maxOutputTokens?: unknown; purpose?: unknown; taskType?: unknown };
     const result = await complete({
       orgId: auth.ctx.orgId,
       userId: auth.ctx.user.id,
@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
       system: body.system,
       maxOutputTokens: body.maxOutputTokens,
       purpose: typeof body.purpose === "string" ? body.purpose : "chat",
+      taskType: typeof body.taskType === "string" ? body.taskType : undefined,
       idempotencyKey: request.headers.get("idempotency-key") ?? "",
     });
     return { result };
