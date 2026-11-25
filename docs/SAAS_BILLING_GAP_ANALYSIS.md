@@ -28,7 +28,7 @@ Written from the repository as it is today (commit `29e1cfa`). Nothing here is a
 | 7 Agent workflow | **Partial** | The builder covers plan, files and review. Missing: document analysis and testing stages, an execution id per stage with provider cost, customer charge and reserved versus consumed credits on one row. |
 | 8 Top-ups | **Partial (step 4)** | Packs, orders, payment confirmation and credit grant exist as APIs. Missing: the customer screen (step 6). |
 | 9 Payments | **Partial** | Provider-neutral layer, payment records, signed notices with duplicate prevention, refunds, chargebacks, credit packs built (section 10). Missing: the Stripe and Razorpay adapters themselves (need accounts). |
-| 10 Currency, tax | **Partial** | Display by country for three currencies. Missing: exchange-rate table, ten currencies, billing addresses, tax provider, currency on invoices. Invoices and GST are rupees only. |
+| 10 Currency, tax | **Mostly done (step 8, built)** | Ten currencies, exchange rates for reports (entered by hand), tax rules per billing country, billing profiles, invoice documents. Missing: reverse charge, tax-exempt customers, tax by state, tax-number verification, a tax provider. |
 | 11 Admin dashboard | **Mostly done (step 7, built)** | Finance tab (revenue per currency, MRR, churn risk, credits owed, AI cost against billing, health checks) and an audit log. Missing: exchange-rate totals (step 8), per-customer margin, charts beyond the daily bars. |
 | 12 User billing dashboard | **Mostly done (step 6, built)** | `/ai/billing`: plan, credits by kind with expiry, plan change, coupons, credit packs, invoices, payments, credit history. Missing: online checkout (needs a payment provider), downloadable invoices. |
 | 13 Database | **Partial** | See section 4. |
@@ -224,3 +224,22 @@ Add: `plan_prices`, `credit_buckets` (with expiry), `credit_grants`, `credit_pac
 - The audit log protects against edits through the application and by mistake; someone with the database file can still change it. A hash chain or an external copy would be needed against that.
 - No revenue in one currency (exchange rates, step 8) and no margin per customer or per plan.
 - AI figures were checked with a stand-in provider; real prices are still to be verified.
+
+## 14. Step 8 built: exchange rates, tax rules, billing details, invoice documents (migration 16)
+
+**No invented rates.** Nothing is built in beyond the GST (18%) that already applied to rupee invoices. Every other tax rule and every exchange rate is typed in by the administrator, who is told to check them with an accountant or a bank.
+
+**Exchange rates** (`/ai/admin` > Tax & currency). "1 US dollar = N units of the currency", kept as whole millionths (no floating point), each with where it came from. Every rate ever set is kept (append-only). A change of more than 30% is refused until confirmed, to stop a typing slip. Nothing is fetched from the internet. **Rates are used only to add up reports.** A customer is always billed in the currency of their plan and pays exactly that; a rate never changes an invoice. The Finance tab now has "Everything in US dollars (estimate)". A currency with no rate is left out of those totals and named, never converted at a guess.
+
+**Tax.** Decided in one place (`src/server/tax.ts`). In order: (1) the customer's billing country has an active rule that fits the invoice currency, a rule for that exact currency beating one for any currency; (2) otherwise a rupee invoice to an Indian or unknown country gets GST at the existing setting; (3) otherwise no tax. So existing behaviour is unchanged until a rule is added. The tax name (GST, VAT...) and the addressee are written on each invoice and credit-pack order when it is raised: changing a rule or a profile later never rewrites an old one. Credit packs are taxed the same way. Existing invoices were labelled "GST" by the migration; no amount changed.
+
+**Billing details.** An owner or admin saves legal name, address, country and an optional tax number at `/ai/billing`. A GSTIN must have its fixed 15-character shape; other tax numbers are only checked for plain characters. **A tax number is recorded and printed, never verified with any authority.** The audit log records the change but not the number.
+
+**Invoice document.** `/ai/billing/document?kind=invoice|topup&id=...` shows seller, addressee, lines, discount, tax and total, with a print button (browser "Save as PDF"). Only the organization's own documents can be opened. The seller's legal name, address and tax number are set by the administrator; until they are, the document shows "SILPI AI" only.
+
+**Tests.** `tests/tax-fx.test.ts` (21) and `tests/tax-migration.test.ts` (3, on a database that already has invoices and top-ups, with the backup). Eight deliberate breakages (rounding, the big-change guard, rule precedence, inactive rules, Indian GST on foreign customers, document ownership, missing rates counted, GSTIN check) were all caught.
+
+**Not done, and needs a professional before relying on it.**
+- Reverse charge for businesses in other countries, tax-exempt customers, tax that depends on state or region, and any check of a tax number. A tax provider (for example Stripe Tax or Avalara) would be the normal answer.
+- The invoice layout has not been checked against any country's invoice rules (sequence, mandatory wording, e-invoicing). The title is plain "Invoice", not "Tax invoice", for that reason.
+- Customers cannot pick their country from a list; they type two letters.

@@ -7,6 +7,7 @@ import { Customers } from "./customers";
 import { MarkupRules, type Rule } from "./markups";
 import { CouponsAdmin, PlansAdmin } from "./plans-admin";
 import { AuditAdmin, FinanceAdmin } from "./finance-admin";
+import { TaxAdmin } from "./tax-admin";
 import { PaymentsAdmin } from "./payments-admin";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill, usd } from "./light";
 
@@ -16,7 +17,7 @@ type Policy = { rounding: "up" | "nearest"; minChargeUnits: number };
 type ProviderStatus = { id: string; configured: boolean; circuit: "closed" | "open" | "half-open" };
 type Overview = { providers: ProviderStatus[]; unitsPerUsd: number; policy: Policy; markupRules: Rule[]; models: Model[]; organizations: Org[] };
 
-const ADMIN_TABS = ["Finance", "Customers & plans", "Payments", "AI", "Audit log"] as const;
+const ADMIN_TABS = ["Finance", "Customers & plans", "Payments", "Tax & currency", "AI", "Audit log"] as const;
 
 /** Administrator view: what the AI really costs, what customers are charged, and the dials. Needs the administrator token. */
 export function AiAdmin() {
@@ -55,6 +56,7 @@ export function AiAdmin() {
         </>
       )}
       {tab === "Payments" && <PaymentsAdmin onNote={flash} onError={fail} />}
+      {tab === "Tax & currency" && <TaxAdmin onNote={flash} onError={fail} />}
       {tab === "AI" && (
         <>
           <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>

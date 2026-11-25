@@ -9,8 +9,10 @@ import { api, Button, Card, credits, inputClass, Notice, Pill, Stat } from "./li
 type ByCurrency = Record<string, number>;
 type Money = { received: ByCurrency; refunded: ByCurrency; net: ByCurrency };
 type AiLine = { key: string; requests: number; failed: number; fallbacks: number; providerCostMicroUsd: number; chargedUnits: number; billedMicroUsd: number; uncollectedUnits: number };
+type Consolidated = { currency: string; total: number; missing: string[]; ratesFrom: string | null };
 type Finance = {
   month: { label: string };
+  inUsd: { netThisMonth: Consolidated; netLastMonth: Consolidated; netAllTime: Consolidated; mrr: Consolidated; mrrAtRisk: Consolidated; openInvoices: Consolidated };
   unitsPerUsd: number;
   revenue: { thisMonth: Money; lastMonth: Money; allTime: Money; topupsThisMonth: { orders: number; value: ByCurrency } };
   subscriptions: { activePaid: number; pastDue: number; inTrial: number; free: number; cancelling: number; endedThisMonth: number; mrr: ByCurrency; mrrAtRisk: ByCurrency; byPlan: { planId: string; name: string; count: number }[]; openInvoices: { count: number; value: ByCurrency } };
@@ -32,7 +34,9 @@ export function FinanceAdmin({ onError }: { onError: (e: unknown) => void }) {
   const load = useCallback(() => { api<{ finance: Finance }>("/api/admin/finance").then((r) => setF(r.finance)).catch(onError); }, [onError]);
   useEffect(load, [load]);
   if (!f) return <Card className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin" /> Loading...</Card>;
-  const { revenue: r, subscriptions: s, credits: c, ai, health: h } = f;
+  const { revenue: r, subscriptions: s, credits: c, ai, health: h, inUsd } = f;
+  const usdTiles = [inUsd.netThisMonth, inUsd.netLastMonth, inUsd.mrr];
+  const missing = [...new Set(usdTiles.flatMap((x) => x.missing))];
   const problems = [
     h.walletMismatches > 0 && `${h.walletMismatches} wallet(s) do not match their ledger`,
     h.bucketMismatches > 0 && `${h.bucketMismatches} credit bucket check(s) fail`,
@@ -45,7 +49,7 @@ export function FinanceAdmin({ onError }: { onError: (e: unknown) => void }) {
   const th = "py-2 pr-4 text-xs font-medium text-slate-500";
   return (
     <div className="space-y-5">
-      <Notice tone="slate">Amounts in different currencies are never added together (there are no exchange rates yet), so each is shown in its own currency. AI figures are in US dollars. A month is a calendar month in UTC. The agency&apos;s own organization is left out.</Notice>
+      <Notice tone="slate">The first tiles show each currency on its own. The US-dollar totals below add them up at the exchange rates you enter in the Tax &amp; currency tab. AI figures are in US dollars. A month is a calendar month in UTC. The agency&apos;s own organization is left out.</Notice>
       {problems.length === 0 ? <Notice tone="green">All checks pass: wallets, credit buckets and payments agree with each other.</Notice> : <Notice tone="red">Needs attention: {problems.join("; ")}.</Notice>}
 
       <Card className="space-y-3">
@@ -56,6 +60,17 @@ export function FinanceAdmin({ onError }: { onError: (e: unknown) => void }) {
           <Stat label="Credit packs sold this month" value={String(r.topupsThisMonth.orders)} hint={money(r.topupsThisMonth.value)} />
           <Stat label="Net, all time" value={money(r.allTime.net)} />
         </div>
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-sm font-semibold text-slate-900">Everything in US dollars (estimate)</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat label="Net this month" value={dollars(inUsd.netThisMonth.total * 10_000)} />
+          <Stat label="Net last month" value={dollars(inUsd.netLastMonth.total * 10_000)} />
+          <Stat label="Monthly recurring revenue" value={dollars(inUsd.mrr.total * 10_000)} hint={`at risk: ${dollars(inUsd.mrrAtRisk.total * 10_000)}`} />
+          <Stat label="Waiting for payment" value={dollars(inUsd.openInvoices.total * 10_000)} />
+        </div>
+        {missing.length > 0 ? <Notice tone="amber">No exchange rate for {missing.join(", ")}, so money in {missing.length > 1 ? "those currencies is" : "that currency is"} left out of these totals. Add the rate in the Tax &amp; currency tab.</Notice> : <p className="text-xs text-slate-500">Converted at the rates you entered{usdTiles.find((x) => x.ratesFrom)?.ratesFrom ? ` (oldest used: ${usdTiles.find((x) => x.ratesFrom)!.ratesFrom!.slice(0, 10)})` : ""}. This is for reading the numbers, not for accounts: customers pay in their own currency.</p>}
       </Card>
 
       <Card className="space-y-3">
@@ -142,8 +157,8 @@ export function AuditAdmin({ onError }: { onError: (e: unknown) => void }) {
         <p className="mt-1 text-xs leading-5 text-slate-600">Every change to prices, plans, coupons, credits, payments, refunds, people and settings, and every administrator sign-in. Entries cannot be edited or deleted. Passwords, tokens and keys are never written down. All administrators share one token, so they show as &quot;admin&quot;.</p>
       </div>
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-slate-600">Action starts with<input value={action} onChange={(e) => setAction(e.target.value)} placeholder="payment." className={inputClass + " mt-1 w-48"} aria-label="Action filter" /></label>
-        <label className="text-xs text-slate-600">Organization id<input value={orgId} onChange={(e) => setOrgId(e.target.value)} className={inputClass + " mt-1 w-56"} aria-label="Organization filter" /></label>
+        <label className="text-xs text-slate-600">Action starts with<input value={action} onChange={(e) => setAction(e.target.value)} placeholder="payment." className={inputClass + " mt-1 block !w-48"} aria-label="Action filter" /></label>
+        <label className="text-xs text-slate-600">Organization id<input value={orgId} onChange={(e) => setOrgId(e.target.value)} className={inputClass + " mt-1 block !w-56"} aria-label="Organization filter" /></label>
       </div>
       {!entries ? <p className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin" /> Loading...</p> : entries.length === 0 ? <p className="text-sm text-slate-500">Nothing recorded.</p> : (
         <ul className="divide-y divide-slate-100 text-sm">

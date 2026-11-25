@@ -6,7 +6,8 @@ import { CURRENCY_CODES, isCurrency } from "@/lib/currencies";
 import { ValidationError } from "@/lib/business/validate";
 import { recordAuditIn } from "../audit";
 import { addCreditsIn, bucketOfGrant, clawbackIn } from "../credits";
-import { gstBasisPoints, markInvoicePaidIn } from "../subscriptions";
+import { markInvoicePaidIn } from "../subscriptions";
+import { billToSnapshot, taxFor } from "../tax";
 import { getPaymentProvider, WebhookError, type PaymentEvent, type PaymentTarget } from "./provider";
 
 /**
@@ -38,9 +39,9 @@ export type Payment = { id: string; orgId: string; provider: string; providerPay
 type PaymentRow = { id: string; org_id: string; provider: string; provider_payment_id: string | null; purpose: Payment["purpose"]; invoice_id: string | null; topup_id: string | null; currency: string; amount_minor: number; status: PaymentStatus; failure_reason: string | null; refunded_minor: number; created_at: string; paid_at: string | null };
 const toPayment = (r: PaymentRow): Payment => ({ id: r.id, orgId: r.org_id, provider: r.provider, providerPaymentId: r.provider_payment_id, purpose: r.purpose, invoiceId: r.invoice_id, topupId: r.topup_id, currency: r.currency, amountMinor: r.amount_minor, status: r.status, failureReason: r.failure_reason, refundedMinor: r.refunded_minor, createdAt: r.created_at, paidAt: r.paid_at });
 
-export type Topup = { id: string; number: string; orgId: string; packageId: string; creditUnits: number; currency: string; subtotalMinor: number; gstBasisPoints: number; gstMinor: number; totalMinor: number; status: "pending" | "paid" | "cancelled"; createdAt: string; paidAt: string | null };
-type TopupRow = { id: string; number: string; org_id: string; package_id: string; credit_units: number; currency: string; subtotal_minor: number; gst_basis_points: number; gst_minor: number; total_minor: number; status: Topup["status"]; created_at: string; paid_at: string | null };
-const toTopup = (r: TopupRow): Topup => ({ id: r.id, number: r.number, orgId: r.org_id, packageId: r.package_id, creditUnits: r.credit_units, currency: r.currency, subtotalMinor: r.subtotal_minor, gstBasisPoints: r.gst_basis_points, gstMinor: r.gst_minor, totalMinor: r.total_minor, status: r.status, createdAt: r.created_at, paidAt: r.paid_at });
+export type Topup = { id: string; number: string; orgId: string; packageId: string; creditUnits: number; currency: string; subtotalMinor: number; gstBasisPoints: number; gstMinor: number; taxLabel: string; totalMinor: number; status: "pending" | "paid" | "cancelled"; createdAt: string; paidAt: string | null };
+type TopupRow = { id: string; number: string; org_id: string; package_id: string; credit_units: number; currency: string; subtotal_minor: number; gst_basis_points: number; gst_minor: number; tax_label: string; total_minor: number; status: Topup["status"]; created_at: string; paid_at: string | null };
+const toTopup = (r: TopupRow): Topup => ({ id: r.id, number: r.number, orgId: r.org_id, packageId: r.package_id, creditUnits: r.credit_units, currency: r.currency, subtotalMinor: r.subtotal_minor, gstBasisPoints: r.gst_basis_points, gstMinor: r.gst_minor, taxLabel: r.tax_label, totalMinor: r.total_minor, status: r.status, createdAt: r.created_at, paidAt: r.paid_at });
 
 export type Refund = { id: string; paymentId: string; orgId: string; provider: string; providerRefundId: string | null; amountMinor: number; currency: string; reason: string; status: "pending" | "succeeded" | "failed"; creditsReversedUnits: number; creditsUnrecoveredUnits: number; requestedBy: string; createdAt: string };
 type RefundRow = { id: string; payment_id: string; org_id: string; provider: string; provider_refund_id: string | null; amount_minor: number; currency: string; reason: string; status: Refund["status"]; credits_reversed_units: number; credits_unrecovered_units: number; requested_by: string; created_at: string };
@@ -129,13 +130,14 @@ export function createTopupOrder(input: { orgId: string; packageId: string; curr
     if (waiting >= MAX_PENDING_TOPUPS) throw bad(`There are already ${waiting} unpaid top-up orders. Pay or cancel one first.`);
     const provider = input.provider ?? "manual";
     if (!getPaymentProvider(provider)?.isConfigured()) throw bad("That payment method is not available.");
-    const bp = input.currency === "INR" ? gstBasisPoints(db) : 0;
-    const gst = Math.round((price.amount_minor * bp) / 10_000);
+    const tax = taxFor(db, input.orgId, input.currency, price.amount_minor);
+    const bp = tax.basisPoints;
+    const gst = tax.taxMinor;
     const year = at.slice(0, 4);
     const last = db.prepare("SELECT MAX(CAST(SUBSTR(number, 10) AS INTEGER)) AS n FROM topups WHERE number LIKE ?").get(`TOP-${year}-%`) as { n: number | null };
     const topupId = `top_${randomUUID()}`;
-    db.prepare("INSERT INTO topups (id, number, org_id, package_id, credit_units, currency, subtotal_minor, gst_basis_points, gst_minor, total_minor, status, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)")
-      .run(topupId, `TOP-${year}-${String((last.n ?? 0) + 1).padStart(5, "0")}`, input.orgId, pkg.id, pkg.credit_units, input.currency, price.amount_minor, bp, gst, price.amount_minor + gst, input.createdBy ?? "", at);
+    db.prepare("INSERT INTO topups (id, number, org_id, package_id, credit_units, currency, subtotal_minor, gst_basis_points, gst_minor, total_minor, status, created_by, created_at, tax_label, bill_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)")
+      .run(topupId, `TOP-${year}-${String((last.n ?? 0) + 1).padStart(5, "0")}`, input.orgId, pkg.id, pkg.credit_units, input.currency, price.amount_minor, bp, gst, price.amount_minor + gst, input.createdBy ?? "", at, tax.label, billToSnapshot(db, input.orgId));
     const paymentId = `pay_${randomUUID()}`;
     db.prepare("INSERT INTO billing_payments (id, org_id, provider, provider_payment_id, purpose, topup_id, currency, amount_minor, status, created_at, updated_at) VALUES (?, ?, ?, NULL, 'topup', ?, ?, ?, 'pending', ?, ?)")
       .run(paymentId, input.orgId, provider, topupId, input.currency, price.amount_minor + gst, at, at);

@@ -19,6 +19,7 @@ type Wallet = { wallet: { balanceUnits: number; reservedUnits: number; available
 type Pack = { id: string; name: string; creditUnits: number; prices: { currency: string; amountMinor: number }[] };
 type Topup = { id: string; number: string; creditUnits: number; currency: string; totalMinor: number; status: "pending" | "paid" | "cancelled"; createdAt: string };
 type PaymentRow = { id: string; purpose: string; currency: string; amountMinor: number; status: string; refundedMinor: number; createdAt: string };
+type Profile = { legalName: string; country: string; addressLine1: string; addressLine2: string; city: string; region: string; postalCode: string; taxId: string; taxIdType: string };
 type TopupResponse = { packages: Pack[]; topups: Topup[]; payments: PaymentRow[] };
 
 const fmt = (minor: number, c: string) => (isCurrency(c) ? formatAmount(minor, c) : `${minor} ${c}`);
@@ -34,6 +35,7 @@ export function BillingPage() {
   const [b, setB] = useState<BillingResponse | null>(null);
   const [w, setW] = useState<Wallet | null>(null);
   const [t, setT] = useState<TopupResponse | null>(null);
+  const [profile, setProfile] = useState<Profile | null | undefined>(undefined);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [guess, setGuess] = useState<CurrencyCode>("USD");
   const [error, setError] = useState("");
@@ -44,7 +46,10 @@ export function BillingPage() {
       const billing = await api<BillingResponse>("/api/workspace/billing");
       setB(billing);
       setW(await api<Wallet>("/api/workspace/wallet"));
-      if (billing.canManage) setT(await api<TopupResponse>("/api/workspace/billing/topup"));
+      if (billing.canManage) {
+        setT(await api<TopupResponse>("/api/workspace/billing/topup"));
+        setProfile((await api<{ profile: Profile | null }>("/api/workspace/billing/profile")).profile);
+      }
       window.dispatchEvent(new Event(WALLET_CHANGED));
     } catch (e) { setError((e as Error).message); }
   }, []);
@@ -72,6 +77,7 @@ export function BillingPage() {
       <CreditsCard wallet={w} />
       {b.canManage ? (
         <>
+          <BillingDetails profile={profile ?? null} loaded={profile !== undefined} onDone={done} onError={fail} />
           <ChangePlan billing={b.billing} plans={plans} fixedCurrency={paidCurrency} guess={startCurrency} onDone={done} onError={fail} />
           {t && <BuyCredits data={t} fixedCurrency={paidCurrency} guess={startCurrency} onDone={done} onError={fail} />}
           <History invoices={b.invoices ?? []} payments={t?.payments ?? []} ledger={b.ledger ?? []} />
@@ -147,8 +153,53 @@ function CurrencyPick({ value, onChange, fixed }: { value: string; onChange: (c:
   if (fixed) return <p className="text-xs text-slate-500">Billed in {fixed}. A subscription stays in the currency it started in.</p>;
   return (
     <label className="inline-block text-xs text-slate-600">Currency
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={inputClass + " mt-1 w-40"} aria-label="Currency">{CURRENCY_CODES.map((c) => <option key={c} value={c}>{c} {CURRENCY_INFO[c].symbol}</option>)}</select>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={inputClass + " mt-1 block !w-40"} aria-label="Currency">{CURRENCY_CODES.map((c) => <option key={c} value={c}>{c} {CURRENCY_INFO[c].symbol}</option>)}</select>
     </label>
+  );
+}
+
+const EMPTY: Profile = { legalName: "", country: "", addressLine1: "", addressLine2: "", city: "", region: "", postalCode: "", taxId: "", taxIdType: "" };
+
+/** Who invoices are made out to. The country also decides which tax is added. */
+function BillingDetails({ profile, loaded, onDone, onError }: { profile: Profile | null; loaded: boolean; onDone: (m: string) => void; onError: (e: unknown) => void }) {
+  const [f, setF] = useState<Profile>(profile ?? EMPTY);
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (profile) setF(profile); }, [profile]);
+  if (!loaded) return null;
+  const set = (k: keyof Profile, v: string) => setF({ ...f, [k]: v });
+  const save = () => {
+    setBusy(true);
+    api("/api/workspace/billing/profile", { method: "PUT", body: f }).then(() => { setOpen(false); onDone("Billing details saved. They apply to invoices raised from now on."); }).catch(onError).finally(() => setBusy(false));
+  };
+  const complete = f.legalName.trim().length >= 2 && /^[A-Za-z]{2}$/.test(f.country) && f.addressLine1.trim().length >= 2 && f.city.trim().length >= 1;
+  return (
+    <Card className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-sm font-semibold text-slate-900">Billing details</h2>
+        {!profile && <Pill tone="amber">not added yet</Pill>}
+        <Button variant="ghost" className="ml-auto px-3 py-1.5" onClick={() => setOpen(!open)}>{open ? "Close" : profile ? "Edit" : "Add"}</Button>
+      </div>
+      {!open && (profile ? (
+        <p className="text-sm text-slate-600"><b className="text-slate-900">{profile.legalName}</b>, {[profile.addressLine1, profile.city, profile.country].filter(Boolean).join(", ")}{profile.taxId ? ` · ${profile.taxIdType || "Tax no."} ${profile.taxId}` : ""}</p>
+      ) : <p className="text-sm text-slate-600">Add your company or personal billing details so invoices carry your name, address and tax number. The country you choose decides which tax is added to new invoices.</p>)}
+      {open && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="text-xs text-slate-600">Name on the invoice<input value={f.legalName} onChange={(e) => set("legalName", e.target.value)} className={inputClass + " mt-1"} aria-label="Legal name" /></label>
+          <label className="text-xs text-slate-600">Country (2 letters, e.g. IN, GB, US)<input value={f.country} onChange={(e) => set("country", e.target.value.toUpperCase().slice(0, 2))} className={inputClass + " mt-1"} aria-label="Country" /></label>
+          <label className="text-xs text-slate-600">Address<input value={f.addressLine1} onChange={(e) => set("addressLine1", e.target.value)} className={inputClass + " mt-1"} aria-label="Address line 1" /></label>
+          <label className="text-xs text-slate-600">Address line 2 (optional)<input value={f.addressLine2} onChange={(e) => set("addressLine2", e.target.value)} className={inputClass + " mt-1"} aria-label="Address line 2" /></label>
+          <label className="text-xs text-slate-600">City<input value={f.city} onChange={(e) => set("city", e.target.value)} className={inputClass + " mt-1"} aria-label="City" /></label>
+          <div className="flex gap-2">
+            <label className="flex-1 text-xs text-slate-600">State or region<input value={f.region} onChange={(e) => set("region", e.target.value)} className={inputClass + " mt-1"} aria-label="State or region" /></label>
+            <label className="w-28 text-xs text-slate-600">Postal code<input value={f.postalCode} onChange={(e) => set("postalCode", e.target.value)} className={inputClass + " mt-1"} aria-label="Postal code" /></label>
+          </div>
+          <label className="text-xs text-slate-600">Tax number, e.g. GSTIN or VAT (optional)<input value={f.taxId} onChange={(e) => set("taxId", e.target.value)} className={inputClass + " mt-1"} aria-label="Tax number" /></label>
+          <label className="text-xs text-slate-600">Type of number (optional)<input value={f.taxIdType} onChange={(e) => set("taxIdType", e.target.value)} placeholder="GSTIN, VAT..." className={inputClass + " mt-1"} aria-label="Type of tax number" /></label>
+          <div className="sm:col-span-2"><Button onClick={save} disabled={!complete || busy}>{busy && <Loader2 size={14} className="animate-spin" />} Save details</Button></div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -177,8 +228,8 @@ function ChangePlan({ billing, plans, fixedCurrency, guess, onDone, onError }: {
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <CurrencyPick value={currency} onChange={setCurrency} fixed={fixedCurrency} />
-        <label className="text-xs text-slate-600">Billed<select value={period} onChange={(e) => setPeriod(e.target.value as typeof period)} className={inputClass + " mt-1 w-40"} aria-label="Billing period"><option value="monthly">Monthly</option><option value="annual">Yearly (2 months free)</option></select></label>
-        <label className="text-xs text-slate-600">Coupon code (optional)<input value={coupon} onChange={(e) => setCoupon(e.target.value.toUpperCase())} className={inputClass + " mt-1 w-44"} aria-label="Coupon code" /></label>
+        <label className="text-xs text-slate-600">Billed<select value={period} onChange={(e) => setPeriod(e.target.value as typeof period)} className={inputClass + " mt-1 block !w-40"} aria-label="Billing period"><option value="monthly">Monthly</option><option value="annual">Yearly (2 months free)</option></select></label>
+        <label className="text-xs text-slate-600">Coupon code (optional)<input value={coupon} onChange={(e) => setCoupon(e.target.value.toUpperCase())} className={inputClass + " mt-1 block !w-44"} aria-label="Coupon code" /></label>
       </div>
       <ul className="divide-y divide-slate-100">
         {shown.map((p) => {
@@ -238,7 +289,7 @@ function BuyCredits({ data, fixedCurrency, guess, onDone, onError }: { data: Top
           <p className="text-xs font-medium text-slate-700">Orders waiting for payment</p>
           {unpaid.map((x) => (
             <div key={x.id} className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <b>{x.number}</b><span>{credits(x.creditUnits)} credits</span><span>{fmt(x.totalMinor, x.currency)}</span>
+              <b>{x.number}</b><span>{credits(x.creditUnits)} credits</span><span>{fmt(x.totalMinor, x.currency)}</span><a href={`/ai/billing/document?kind=topup&id=${encodeURIComponent(x.id)}`} className="text-xs underline">View / print</a>
               <Button variant="ghost" className="ml-auto px-3 py-1" onClick={() => void cancel(x.id)}>Cancel order</Button>
             </div>
           ))}
@@ -255,12 +306,13 @@ function History({ invoices, payments, ledger }: { invoices: Invoice[]; payments
       <section className="space-y-2">
         <h2 className="text-sm font-semibold text-slate-900">Invoices</h2>
         {invoices.length === 0 ? <p className="text-sm text-slate-500">No invoices yet.</p> : (
-          <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-slate-200"><th className={th}>Number</th><th className={th}>Date</th><th className={th}>Period</th><th className={th + " text-right"}>Amount</th><th className={th}>Status</th></tr></thead>
+          <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-slate-200"><th className={th}>Number</th><th className={th}>Date</th><th className={th}>Period</th><th className={th + " text-right"}>Amount</th><th className={th}>Status</th><th className={th}></th></tr></thead>
             <tbody>{invoices.map((i) => (
               <tr key={i.id} className="border-b border-slate-100 last:border-0">
                 <td className="py-2 pr-4 font-medium text-slate-800">{i.number}</td><td className="py-2 pr-4 text-slate-600">{day(i.issuedAt)}</td><td className="py-2 pr-4 text-slate-600">{day(i.periodStart)} - {day(i.periodEnd)}</td>
                 <td className="py-2 pr-4 text-right tabular-nums">{fmt(i.totalPaise, i.currency)}{i.discountMinor > 0 && <span className="block text-xs text-emerald-700">{i.couponCode ?? "discount"}: -{fmt(i.discountMinor, i.currency)}</span>}{i.gstPaise > 0 && <span className="block text-xs text-slate-500">incl. GST {fmt(i.gstPaise, i.currency)}</span>}</td>
-                <td className="py-2"><Pill tone={toneOf(i.status)}>{i.status}</Pill></td>
+                <td className="py-2 pr-4"><Pill tone={toneOf(i.status)}>{i.status}</Pill></td>
+                <td className="py-2"><a href={`/ai/billing/document?kind=invoice&id=${encodeURIComponent(i.id)}`} className="text-xs text-indigo-700 hover:underline">View / print</a></td>
               </tr>
             ))}</tbody></table></div>
         )}

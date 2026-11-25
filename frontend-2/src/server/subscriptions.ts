@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { getDb, transaction } from "@/lib/business/db";
 import { CURRENCY_CODES, isCurrency } from "@/lib/currencies";
 import { ValidationError } from "@/lib/business/validate";
+import { billToSnapshot, gstBasisPoints, taxFor } from "./tax";
 import { discountFor, noteCouponUsedIn, redeemCouponIn, releaseRedemptionIn } from "./coupons";
 import { addCreditsIn, getWallet, type Wallet } from "./credits";
 
@@ -54,11 +55,11 @@ export type Subscription = { id: string; orgId: string; planId: string; pendingP
  * subtotalPaise is the amount TAX is charged on: the list price less any coupon discount. The list price is listPriceMinor = subtotal + discount.
  * The database insists that total = subtotal + tax.
  */
-export type Invoice = { id: string; number: string; orgId: string; subscriptionId: string; planId: string; periodStart: string; periodEnd: string; currency: string; listPriceMinor: number; subtotalPaise: number; discountMinor: number; couponCode: string | null; gstBasisPoints: number; gstPaise: number; totalPaise: number; status: "open" | "paid" | "void"; provider: string; providerRef: string | null; issuedAt: string; paidAt: string | null };
+export type Invoice = { id: string; number: string; orgId: string; subscriptionId: string; planId: string; periodStart: string; periodEnd: string; currency: string; listPriceMinor: number; subtotalPaise: number; discountMinor: number; couponCode: string | null; gstBasisPoints: number; gstPaise: number; taxLabel: string; totalPaise: number; status: "open" | "paid" | "void"; provider: string; providerRef: string | null; issuedAt: string; paidAt: string | null };
 
 type PlanRow = { id: string; name: string; description: string; monthly_price_paise: number | null; annual_price_paise: number | null; monthly_price_usd_cents: number | null; annual_price_usd_cents: number | null; monthly_price_gbp_pence: number | null; annual_price_gbp_pence: number | null; monthly_credit_units: number; max_active_projects: number | null; is_custom: number; active: number; sort_order: number; family: string | null; trial_days: number | null; trial_credit_units: number };
 type SubRow = { id: string; org_id: string; plan_id: string; pending_plan_id: string | null; status: Subscription["status"]; billing_period: Period; current_period_start: string | null; current_period_end: string | null; cancel_at_period_end: number; created_at: string; currency: string; unit_amount_minor: number | null; allowance_monthly_units: number | null; trial_ends_at: string | null; coupon_redemption_id: string | null };
-type InvoiceRow = { id: string; number: string; org_id: string; subscription_id: string; plan_id: string; period_start: string; period_end: string; currency: string; subtotal_paise: number; discount_minor: number; coupon_code: string | null; gst_basis_points: number; gst_paise: number; total_paise: number; status: Invoice["status"]; provider: string; provider_ref: string | null; issued_at: string; paid_at: string | null };
+type InvoiceRow = { id: string; number: string; org_id: string; subscription_id: string; plan_id: string; period_start: string; period_end: string; currency: string; subtotal_paise: number; discount_minor: number; coupon_code: string | null; gst_basis_points: number; gst_paise: number; tax_label: string; total_paise: number; status: Invoice["status"]; provider: string; provider_ref: string | null; issued_at: string; paid_at: string | null };
 type PriceRow = { plan_id: string; currency: string; period: Period; amount_minor: number };
 
 const toPlan = (r: PlanRow, prices: PriceRow[] = []): Plan => ({
@@ -68,7 +69,7 @@ const toPlan = (r: PlanRow, prices: PriceRow[] = []): Plan => ({
   monthlyCreditUnits: r.monthly_credit_units, maxActiveProjects: r.max_active_projects, isCustom: r.is_custom === 1, active: r.active === 1, sortOrder: r.sort_order, trialDays: r.trial_days, trialCreditUnits: r.trial_credit_units, family: r.family,
 });
 const toSub = (r: SubRow): Subscription => ({ id: r.id, orgId: r.org_id, planId: r.plan_id, pendingPlanId: r.pending_plan_id, status: r.status, billingPeriod: r.billing_period, currentPeriodStart: r.current_period_start, currentPeriodEnd: r.current_period_end, cancelAtPeriodEnd: r.cancel_at_period_end === 1, createdAt: r.created_at, currency: r.currency, unitAmountMinor: r.unit_amount_minor, allowanceMonthlyUnits: r.allowance_monthly_units, trialEndsAt: r.trial_ends_at });
-const toInvoice = (r: InvoiceRow): Invoice => ({ id: r.id, number: r.number, orgId: r.org_id, subscriptionId: r.subscription_id, planId: r.plan_id, periodStart: r.period_start, periodEnd: r.period_end, currency: r.currency, listPriceMinor: r.subtotal_paise + r.discount_minor, subtotalPaise: r.subtotal_paise, discountMinor: r.discount_minor, couponCode: r.coupon_code, gstBasisPoints: r.gst_basis_points, gstPaise: r.gst_paise, totalPaise: r.total_paise, status: r.status, provider: r.provider, providerRef: r.provider_ref, issuedAt: r.issued_at, paidAt: r.paid_at });
+const toInvoice = (r: InvoiceRow): Invoice => ({ id: r.id, number: r.number, orgId: r.org_id, subscriptionId: r.subscription_id, planId: r.plan_id, periodStart: r.period_start, periodEnd: r.period_end, currency: r.currency, listPriceMinor: r.subtotal_paise + r.discount_minor, subtotalPaise: r.subtotal_paise, discountMinor: r.discount_minor, couponCode: r.coupon_code, gstBasisPoints: r.gst_basis_points, gstPaise: r.gst_paise, taxLabel: r.tax_label, totalPaise: r.total_paise, status: r.status, provider: r.provider, providerRef: r.provider_ref, issuedAt: r.issued_at, paidAt: r.paid_at });
 
 const bad = (message: string) => new ValidationError(message);
 
@@ -223,13 +224,8 @@ export function getBilling(orgId: string): Billing {
   };
 }
 
-// ---- GST on subscription invoices ----------------------------------------------------------------------------------------
-/** The GST rate on SaaS invoices, in basis points (1800 = 18%). Its own setting: the agency's quotation rate is separate books. Charged on rupee invoices only. */
-export function gstBasisPoints(db: DatabaseSync = getDb()): number {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'saas_gst_basis_points'").get() as { value: string } | undefined;
-  const n = row ? Number(row.value) : 1800;
-  return Number.isInteger(n) && n >= 0 && n <= 10_000 ? n : 1800;
-}
+// ---- tax: decided in tax.ts (GST on rupee invoices unless the billing country has its own rule) ------------------------------
+export { gstBasisPoints };
 
 // ---- inside a transaction ----------------------------------------------------------------------------------------------
 function nextInvoiceNumber(db: DatabaseSync, at: string): string {
@@ -249,13 +245,12 @@ function raiseInvoice(db: DatabaseSync, sub: SubRow, plan: PlanRow, period: Peri
   const coupon = discountFor(db, sub, subtotal);
   const discount = coupon?.discountMinor ?? 0;
   const taxable = subtotal - discount;
-  const bp = sub.currency === "INR" ? gstBasisPoints(db) : 0;
-  const gst = Math.round((taxable * bp) / 10_000);
+  const tax = taxFor(db, sub.org_id, sub.currency, taxable);
   const id = `inv_${randomUUID()}`;
   db.prepare(
-    `INSERT INTO subscription_invoices (id, number, org_id, subscription_id, plan_id, period_start, period_end, currency, subtotal_paise, discount_minor, coupon_code, gst_basis_points, gst_paise, total_paise, status, provider, issued_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'manual', ?)`,
-  ).run(id, nextInvoiceNumber(db, at), sub.org_id, sub.id, plan.id, start, end, sub.currency, taxable, discount, coupon?.code ?? null, bp, gst, taxable + gst, at);
+    `INSERT INTO subscription_invoices (id, number, org_id, subscription_id, plan_id, period_start, period_end, currency, subtotal_paise, discount_minor, coupon_code, gst_basis_points, gst_paise, total_paise, status, provider, issued_at, tax_label, bill_to)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'manual', ?, ?, ?)`,
+  ).run(id, nextInvoiceNumber(db, at), sub.org_id, sub.id, plan.id, start, end, sub.currency, taxable, discount, coupon?.code ?? null, tax.basisPoints, tax.taxMinor, taxable + tax.taxMinor, at, tax.label, billToSnapshot(db, sub.org_id));
   if (coupon) noteCouponUsedIn(db, coupon.redemptionId);
   return db.prepare("SELECT * FROM subscription_invoices WHERE id = ?").get(id) as InvoiceRow;
 }

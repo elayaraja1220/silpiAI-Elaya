@@ -835,6 +835,63 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 16,
+    name: "Exchange rates for reports, tax rules, billing profiles, and the tax name and addressee on invoices",
+    up(db) {
+      db.exec(`
+        -- 1 US dollar = per_usd_micro / 1,000,000 units of the currency. Only used to add up reports; never changes what a customer is billed.
+        CREATE TABLE exchange_rates (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          currency      TEXT NOT NULL,
+          per_usd_micro INTEGER NOT NULL CHECK (per_usd_micro > 0),
+          source        TEXT NOT NULL,
+          created_by    TEXT NOT NULL DEFAULT '',
+          created_at    TEXT NOT NULL
+        );
+        CREATE INDEX exchange_rates_currency ON exchange_rates(currency, id);
+        CREATE TRIGGER exchange_rates_no_update BEFORE UPDATE ON exchange_rates BEGIN SELECT RAISE(ABORT, 'exchange_rates is append-only'); END;
+        CREATE TRIGGER exchange_rates_no_delete BEFORE DELETE ON exchange_rates BEGIN SELECT RAISE(ABORT, 'exchange_rates is append-only'); END;
+
+        -- No rule is built in. Rates are added by the administrator after checking them.
+        CREATE TABLE tax_rules (
+          id                INTEGER PRIMARY KEY AUTOINCREMENT,
+          country           TEXT NOT NULL,
+          currency          TEXT,
+          label             TEXT NOT NULL,
+          rate_basis_points INTEGER NOT NULL CHECK (rate_basis_points >= 0 AND rate_basis_points <= 10000),
+          active            INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+          note              TEXT NOT NULL DEFAULT '',
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX tax_rules_unique ON tax_rules(country, COALESCE(currency, ''));
+
+        CREATE TABLE billing_profiles (
+          org_id        TEXT PRIMARY KEY REFERENCES organizations(id),
+          legal_name    TEXT NOT NULL,
+          country       TEXT NOT NULL,
+          address_line1 TEXT NOT NULL,
+          address_line2 TEXT NOT NULL DEFAULT '',
+          city          TEXT NOT NULL,
+          region        TEXT NOT NULL DEFAULT '',
+          postal_code   TEXT NOT NULL DEFAULT '',
+          tax_id        TEXT NOT NULL DEFAULT '',
+          tax_id_type   TEXT NOT NULL DEFAULT '',
+          updated_at    TEXT NOT NULL,
+          updated_by    TEXT NOT NULL DEFAULT ''
+        );
+
+        -- The tax name and the addressee are written on each invoice when it is raised, so editing a profile or a rule later never rewrites an old invoice.
+        ALTER TABLE subscription_invoices ADD COLUMN tax_label TEXT NOT NULL DEFAULT '';
+        ALTER TABLE subscription_invoices ADD COLUMN bill_to   TEXT;
+        ALTER TABLE topups ADD COLUMN tax_label TEXT NOT NULL DEFAULT '';
+        ALTER TABLE topups ADD COLUMN bill_to   TEXT;
+        UPDATE subscription_invoices SET tax_label = 'GST' WHERE gst_basis_points > 0;
+        UPDATE topups SET tax_label = 'GST' WHERE gst_basis_points > 0;
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

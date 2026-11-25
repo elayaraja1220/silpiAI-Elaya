@@ -60,10 +60,10 @@ function RecordPayment({ onDone, onError }: { onDone: (m: string) => void; onErr
         <p className="mt-1 text-xs leading-5 text-slate-600">For money that arrived outside the system (UPI, bank transfer, cash). Credits and plans are given only when you record the payment. The same reference twice changes nothing. The amount is optional; when given (in the smallest unit, e.g. cents or paise) it must match the invoice or order.</p>
       </div>
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-slate-600">For<select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className={inputClass + " mt-1 w-40"} aria-label="Payment is for"><option value="invoiceId">Plan invoice</option><option value="topupId">Credit top-up</option></select></label>
-        <label className="text-xs text-slate-600">{kind === "invoiceId" ? "Invoice id" : "Top-up id"}<input value={target} onChange={(e) => setTarget(e.target.value)} className={inputClass + " mt-1 w-56"} aria-label="Invoice or top-up id" /></label>
-        <label className="text-xs text-slate-600">Reference<input value={reference} onChange={(e) => setReference(e.target.value)} className={inputClass + " mt-1 w-48"} placeholder="UPI / bank reference" aria-label="Payment reference" /></label>
-        <label className="text-xs text-slate-600">Amount (optional)<input value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} inputMode="numeric" className={inputClass + " mt-1 w-28"} aria-label="Amount in smallest unit" /></label>
+        <label className="text-xs text-slate-600">For<select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className={inputClass + " mt-1 block !w-40"} aria-label="Payment is for"><option value="invoiceId">Plan invoice</option><option value="topupId">Credit top-up</option></select></label>
+        <label className="text-xs text-slate-600">{kind === "invoiceId" ? "Invoice id" : "Top-up id"}<input value={target} onChange={(e) => setTarget(e.target.value)} className={inputClass + " mt-1 block !w-56"} aria-label="Invoice or top-up id" /></label>
+        <label className="text-xs text-slate-600">Reference<input value={reference} onChange={(e) => setReference(e.target.value)} className={inputClass + " mt-1 block !w-48"} placeholder="UPI / bank reference" aria-label="Payment reference" /></label>
+        <label className="text-xs text-slate-600">Amount (optional)<input value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} inputMode="numeric" className={inputClass + " mt-1 block !w-28"} aria-label="Amount in smallest unit" /></label>
         <Button onClick={() => void go()} disabled={busy || !target.trim() || reference.trim().length < 3}>{busy && <Loader2 size={15} className="animate-spin" />} Record</Button>
       </div>
     </Card>
@@ -110,8 +110,8 @@ function PaymentList({ payments, onDone, onError }: { payments: Payment[] | null
                 {p.refunds.map((r) => <p key={r.id} className="text-xs text-slate-500">Refund {fmt(r.amountMinor, p.currency)} · {r.reason} · {credits(r.creditsReversedUnits)} credits taken back{r.creditsUnrecoveredUnits > 0 ? `, ${credits(r.creditsUnrecoveredUnits)} already spent` : ""} <Pill tone={tone(r.status)}>{r.status}</Pill></p>)}
                 {open === p.id && (
                   <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <label className="text-xs text-slate-600">Amount (blank = all {fmt(left, p.currency)} left)<input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} className={inputClass + " mt-1 w-40"} aria-label="Refund amount" /></label>
-                    <label className="text-xs text-slate-600">Reason<input value={reason} onChange={(e) => setReason(e.target.value)} className={inputClass + " mt-1 w-64"} aria-label="Refund reason" /></label>
+                    <label className="text-xs text-slate-600">Amount (blank = all {fmt(left, p.currency)} left)<input value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} className={inputClass + " mt-1 block !w-40"} aria-label="Refund amount" /></label>
+                    <label className="text-xs text-slate-600">Reason<input value={reason} onChange={(e) => setReason(e.target.value)} className={inputClass + " mt-1 block !w-64"} aria-label="Refund reason" /></label>
                     <Button onClick={() => void refund(p)} disabled={busy || reason.trim().length < 3}>{busy && <Loader2 size={15} className="animate-spin" />} Confirm refund</Button>
                   </div>
                 )}

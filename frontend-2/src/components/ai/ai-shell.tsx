@@ -62,7 +62,7 @@ export function AiShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900" style={{ colorScheme: "light" }} data-theme="light" data-testid="ai-section">
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
+      <header className="sticky top-0 z-10 print:hidden border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-2.5 sm:px-6">
           <Link href="/ai" className="flex shrink-0 items-center" aria-label="SILPI AI home"><BrandLogo /></Link>
           <nav className="-mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1" aria-label="SILPI AI sections">
@@ -93,7 +93,7 @@ export function AiShell({ children }: { children: ReactNode }) {
         )}
       </main>
 
-      <footer className="border-t border-slate-200 py-4 text-center text-xs text-slate-400">SILPI AI · you are charged the real cost of each request, and failed requests are free</footer>
+      <footer className="print:hidden border-t border-slate-200 py-4 text-center text-xs text-slate-400">SILPI AI · you are charged the real cost of each request, and failed requests are free</footer>
     </div>
   );
 }

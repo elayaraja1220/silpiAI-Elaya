@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/business/db";
 import { getUnitsPerUsd } from "@/server/ai/catalog";
 import { auditBuckets, auditWallets } from "@/server/credits";
+import { consolidate, rateMap, type Consolidated } from "@/server/fx";
 
 /**
  * The administrator's money view, worked out from the books (payments, refunds, subscriptions, the wallets and the AI request log) when asked.
@@ -17,6 +18,8 @@ export type Finance = {
   subscriptions: { activePaid: number; pastDue: number; inTrial: number; free: number; cancelling: number; endedThisMonth: number; mrr: ByCurrency; mrrAtRisk: ByCurrency; byPlan: { planId: string; name: string; count: number }[]; openInvoices: { count: number; value: ByCurrency } };
   credits: { outstandingUnits: number; outstandingValueMicroUsd: number; byCategory: { category: string; units: number }[]; grantedThisMonthUnits: number; spentThisMonthUnits: number };
   ai: { thisMonth: AiLine; lastMonth: AiLine; byProvider: AiLine[]; byModel: AiLine[]; daily: { date: string; requests: number; providerCostMicroUsd: number; billedMicroUsd: number }[] };
+  /** The same money added up in US dollars at the exchange rates the administrator has entered. An estimate: currencies with no rate are listed as missing and left out. */
+  inUsd: { netThisMonth: Consolidated; netLastMonth: Consolidated; netAllTime: Consolidated; mrr: Consolidated; mrrAtRisk: Consolidated; openInvoices: Consolidated };
   health: { walletMismatches: number; bucketMismatches: number; failedNoticesLast7Days: number; duplicatePaymentsToRefund: number; creditsNotRecoveredOnRefundUnits: number; stuckAiRequests: number; unchargedAiUnits: number };
 };
 
@@ -97,6 +100,8 @@ export function financeOverview(now = Date.now()): Finance {
   const week = iso(now - 7 * 86_400_000);
   const count = (sql: string, ...a: (string | number)[]) => (db.prepare(sql).get(...a) as { n: number }).n;
 
+  const rates = rateMap(db);
+  const usd = (m: ByCurrency) => consolidate(m, "USD", rates, db);
   return {
     generatedAt: iso(now),
     month: { start: thisStart, label: thisStart.slice(0, 7) },
@@ -107,6 +112,7 @@ export function financeOverview(now = Date.now()): Finance {
       byPlan: [...perPlan].map(([planId, n]) => ({ planId, name: planNames.get(planId) ?? planId, count: n })).sort((a, b) => b.count - a.count),
       openInvoices: { count: openCount, value: openValue },
     },
+    inUsd: { netThisMonth: usd(period(thisStart, null).net), netLastMonth: usd(period(lastStart, thisStart).net), netAllTime: usd(period(null, null).net), mrr: usd(mrr), mrrAtRisk: usd(mrrAtRisk), openInvoices: usd(openValue) },
     credits: { outstandingUnits: outstanding, outstandingValueMicroUsd: billed(outstanding), byCategory: buckets.map((b) => ({ category: b.category, units: b.n })), grantedThisMonthUnits: granted, spentThisMonthUnits: spent },
     ai: { thisMonth: aiRange(thisStart, null), lastMonth: aiRange(lastStart, thisStart), byProvider: grouped("COALESCE(m.provider, 'unknown')"), byModel: grouped("COALESCE(r.model_id, 'none')"), daily: days },
     health: {
