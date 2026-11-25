@@ -1,5 +1,5 @@
 /** One URL per screen. Used by the sidebar, the page header and in-page links. */
-export type ViewId = "dashboard" | "clients" | "projects" | "existing" | "activity" | "pricing" | "settings";
+export type ViewId = "dashboard" | "clients" | "projects" | "existing" | "activity" | "pricing" | "plans" | "settings";
 
 export const ROUTES: Record<ViewId, string> = {
   dashboard: "/",
@@ -8,6 +8,7 @@ export const ROUTES: Record<ViewId, string> = {
   existing: "/existing",
   activity: "/activity",
   pricing: "/pricing",
+  plans: "/plans",
   settings: "/settings",
 };
 
@@ -18,6 +19,7 @@ export const TITLES: Record<ViewId, string> = {
   existing: "Existing projects",
   activity: "Agent activity",
   pricing: "Business & pricing",
+  plans: "Plans",
   settings: "Settings",
 };
 

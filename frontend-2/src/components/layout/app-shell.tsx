@@ -2,14 +2,14 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, ArrowUpRight, Bell, ChevronDown, Command, FileText, FolderKanban, GitBranch, IndianRupee, LayoutDashboard, Menu, Plus, Search, Settings, Sparkles, X } from "lucide-react";
+import { Activity, ArrowUpRight, Bell, ChevronDown, Command, FileText, FolderKanban, GitBranch, CreditCard, IndianRupee, LayoutDashboard, Menu, Plus, Search, Settings, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ROUTES, viewForPath, type ViewId } from "@/lib/routes";
 
 const nav = [
  {label:"Workspace",items:[{id:"dashboard" as ViewId,label:"Overview",icon:LayoutDashboard},{id:"clients" as ViewId,label:"Clients & quotes",icon:FileText},{id:"projects" as ViewId,label:"My projects",icon:FolderKanban},{id:"existing" as ViewId,label:"Existing projects",icon:GitBranch}]},
  {label:"Monitor",items:[{id:"activity" as ViewId,label:"Agent activity",icon:Activity}]},
- {label:"Preferences",items:[{id:"pricing" as ViewId,label:"Business & pricing",icon:IndianRupee},{id:"settings" as ViewId,label:"Settings",icon:Settings}]}
+ {label:"Preferences",items:[{id:"pricing" as ViewId,label:"Business & pricing",icon:IndianRupee},{id:"plans" as ViewId,label:"Plans",icon:CreditCard},{id:"settings" as ViewId,label:"Settings",icon:Settings}]}
 ];
 
 /** Sidebar, header and page frame. Every screen is its own URL (see lib/routes.ts); `children` is the current page. */

@@ -228,6 +228,84 @@ export function publicRunningServices(items: readonly RunningService[] | null | 
   return { services, note: PUBLIC_RUNNING_NOTE };
 }
 
+export type RunningTotal = { label: string; amount: number; amountNote: string };
+
+const TOTAL_ORDER = ["Monthly", "Quarterly", "Every year", "One-time"];
+
+/**
+ * What SILPI will bill the client on a repeating basis, added up per billing period (monthly, yearly...).
+ * Built from the client-safe object only, so it can never expose more than the client already sees.
+ * Only services SILPI bills with a known amount are counted. Amounts with and without GST are kept apart,
+ * never mixed. It is shown beside, never added to, the development total.
+ */
+export function runningTotals(running: PublicRunningServices): { totals: RunningTotal[]; unpriced: number } {
+  const sums = new Map<string, RunningTotal>();
+  let unpriced = 0;
+  for (const s of running.services) {
+    if (s.status !== "billed-by-us") continue;
+    if (s.amount === null) { unpriced += 1; continue; }
+    const label = s.frequency ?? "Other";
+    const amountNote = s.amountNote ?? "";
+    const key = `${label}|${amountNote}`;
+    const prev = sums.get(key);
+    sums.set(key, { label, amountNote, amount: Math.round(((prev?.amount ?? 0) + s.amount) * 100) / 100 });
+  }
+  const rank = (l: string) => { const i = TOTAL_ORDER.indexOf(l); return i === -1 ? TOTAL_ORDER.length : i; };
+  return { totals: [...sums.values()].sort((a, b) => rank(a.label) - rank(b.label)), unpriced };
+}
+
+// ---- Recurring income across all clients (ADMIN ONLY: uses provider cost) -----------------
+
+const MONTHS_PER_PERIOD = { monthly: 1, quarterly: 3, annual: 12 } as const;
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+export type RecurringIncomeRow = { leadId: string; service: string; frequency: string; monthlyRevenue: number; monthlyCost: number | null; monthlyMarkup: number | null };
+export type RecurringIncome = {
+  /** Every figure is a monthly equivalent, before GST. */
+  monthlyRevenue: number;
+  /** Provider cost of the rows where it is known. */
+  monthlyCost: number;
+  /** Revenue minus cost, over only the rows where both are known. */
+  monthlyMarkup: number;
+  yearlyRevenue: number;
+  clients: number;
+  rows: RecurringIncomeRow[];
+  /** Billed repeating services with no client amount yet: not counted. */
+  unpriced: number;
+  /** Counted rows with no provider cost entered, so their markup is unknown. */
+  costUnknown: number;
+};
+
+/**
+ * What SILPI earns each month from repeating services (hosting, maintenance...) it bills, across the given leads.
+ * The caller passes only projects that are approved and not lost. Counted: arrangement "agency-bills", approved for
+ * the client, with a client amount and a monthly / quarterly / yearly period. One-time charges are not recurring.
+ * GST is taken out of amounts that include it, so every figure is before GST. Never mixed into any quotation total.
+ */
+export function recurringIncome(entries: readonly { leadId: string; services: readonly RunningService[] }[], gstRate: number): RecurringIncome {
+  const out: RecurringIncome = { monthlyRevenue: 0, monthlyCost: 0, monthlyMarkup: 0, yearlyRevenue: 0, clients: 0, rows: [], unpriced: 0, costUnknown: 0 };
+  const clients = new Set<string>();
+  const divisor = 1 + Math.max(0, gstRate) / 100;
+  for (const { leadId, services } of entries) {
+    for (const s of services) {
+      if (s.arrangement !== "agency-bills" || !s.showToClient) continue;
+      if (s.frequency === null || s.frequency === "one-time") continue;
+      if (s.clientAmount === null) { out.unpriced += 1; continue; }
+      const months = MONTHS_PER_PERIOD[s.frequency];
+      const revenue = round2((s.gstIncluded ? s.clientAmount / divisor : s.clientAmount) / months);
+      const cost = s.providerCost === null ? null : round2(s.providerCost / months);
+      out.monthlyRevenue = round2(out.monthlyRevenue + revenue);
+      if (cost === null) out.costUnknown += 1;
+      else { out.monthlyCost = round2(out.monthlyCost + cost); out.monthlyMarkup = round2(out.monthlyMarkup + revenue - cost); }
+      clients.add(leadId);
+      out.rows.push({ leadId, service: s.service, frequency: FREQUENCY_TEXT[s.frequency], monthlyRevenue: revenue, monthlyCost: cost, monthlyMarkup: cost === null ? null : round2(revenue - cost) });
+    }
+  }
+  out.yearlyRevenue = round2(out.monthlyRevenue * 12);
+  out.clients = clients.size;
+  return out;
+}
+
 /** One line of text for a document: the same wording as the screen. */
 export function publicServiceLine(s: PublicRunningService, money: (n: number) => string): string {
   const parts = [s.statusLabel];

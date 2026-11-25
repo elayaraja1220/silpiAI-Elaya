@@ -1,11 +1,12 @@
 import { formatINR } from "@/lib/business/pricing";
-import type { PublicRunningServices } from "@/lib/business/running-services";
+import { runningTotals, type PublicRunningServices } from "@/lib/business/running-services";
 
 /**
  * What the client sees about domain, hosting, maintenance and other running services. Light colours: it prints with
  * the quotation. It only ever receives the client-safe object built on the server (see publicRunningServices).
  */
 export function RunningServicesSection({ running }: { running: PublicRunningServices }) {
+  const { totals, unpriced } = runningTotals(running);
   return (
     <section className="mt-8 rounded-xl border border-slate-200 p-4 text-sm" data-testid="running-services">
       <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">Running services (billed separately from development)</p>
@@ -38,6 +39,18 @@ export function RunningServicesSection({ running }: { running: PublicRunningServ
           </div>
         ))}
       </div>
+      {(totals.length > 0 || unpriced > 0) && (
+        <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs" data-testid="running-totals">
+          <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-slate-400">What we will bill you after launch</p>
+          {totals.map((t) => (
+            <div key={`${t.label}-${t.amountNote}`} className="mt-1.5 flex justify-between gap-3 text-slate-700">
+              <span>{t.label}</span>
+              <span className="tabular-nums"><span className="font-semibold text-slate-900">{formatINR(t.amount)}</span> {t.amountNote}</span>
+            </div>
+          ))}
+          {unpriced > 0 && <p className="mt-1.5 text-slate-500">{unpriced} more {unpriced === 1 ? "service has" : "services have"} an amount still to be confirmed.</p>}
+        </div>
+      )}
       <p className="mt-2 text-[11px] text-slate-500">{running.note}</p>
     </section>
   );

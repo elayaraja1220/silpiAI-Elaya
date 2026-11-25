@@ -19,7 +19,7 @@ import { clientView } from "@/lib/business/client-view";
 import { emptyCostConfig } from "@/lib/business/cost-config";
 import { calcRecurring, suggestRecurringItems } from "@/lib/business/cost-recurring";
 import {
-  ARRANGEMENTS, adminRunningSummary, parseRunningServices, publicRunningServices, publicServiceLine, seedRunningServices, serviceMarkup,
+  ARRANGEMENTS, adminRunningSummary, parseRunningServices, publicRunningServices, publicServiceLine, recurringIncome, runningTotals, seedRunningServices, serviceMarkup,
   type RunningService,
 } from "@/lib/business/running-services";
 import { formatINR } from "@/lib/business/pricing";
@@ -409,5 +409,61 @@ describe("6. security by construction", () => {
     const before = JSON.stringify(store.getLead(lead.id)!.quotation);
     running.saveRunningServices(lead.id, [svc({ id: "hosting", arrangement: "agency-bills", clientAmount: 99999 })]);
     assert.equal(JSON.stringify(store.getLead(lead.id)!.quotation), before);
+  });
+});
+
+// =================================================================================================
+describe("running totals: what SILPI bills after launch", () => {
+  const totalsOf = (...items: RunningService[]) => runningTotals(publicRunningServices(items)!);
+  it("adds up what SILPI bills per period, GST kept apart, monthly first", () => {
+    const t = totalsOf(
+      svc({ id: "a", arrangement: "agency-bills", clientAmount: 1000, frequency: "annual" }),
+      svc({ id: "b", arrangement: "agency-bills", clientAmount: 500, frequency: "monthly" }),
+      svc({ id: "c", arrangement: "agency-bills", clientAmount: 300, frequency: "monthly" }),
+      svc({ id: "d", arrangement: "agency-bills", clientAmount: 200, frequency: "monthly", gstIncluded: true }),
+    );
+    assert.deepEqual(t.totals.map((x) => [x.label, x.amount, x.amountNote]), [["Monthly", 800, "+ GST"], ["Monthly", 200, "incl. GST"], ["Every year", 1000, "+ GST"]]);
+    assert.equal(t.unpriced, 0);
+  });
+  it("only services SILPI bills are counted; client-direct, included and optional are not", () => {
+    const t = totalsOf(
+      svc({ id: "a", arrangement: "client-direct", clientAmount: 999, frequency: "monthly" }),
+      svc({ id: "b", arrangement: "included", clientAmount: 999 }),
+      svc({ id: "c", arrangement: "optional-not-selected", clientAmount: 999 }),
+    );
+    assert.deepEqual(t, { totals: [], unpriced: 0 });
+  });
+  it("a billed service with no amount yet is counted as unpriced, never as a number", () => {
+    const t = totalsOf(svc({ id: "a", arrangement: "agency-bills", clientAmount: null }), svc({ id: "b", arrangement: "agency-bills", clientAmount: 100, frequency: "monthly" }));
+    assert.deepEqual([t.totals.length, t.unpriced], [1, 1]);
+  });
+});
+
+// =================================================================================================
+describe("recurring income across clients (admin)", () => {
+  const bill = (id: string, over: Partial<RunningService>) => svc({ id, arrangement: "agency-bills", showToClient: true, ...over });
+  it("turns every period into a monthly figure, before GST, and totals markup", () => {
+    const r = recurringIncome([
+      { leadId: "L1", services: [bill("a", { clientAmount: 1200, providerCost: 600, frequency: "monthly" }), bill("b", { clientAmount: 12000, providerCost: 6000, frequency: "annual" })] },
+      { leadId: "L2", services: [bill("c", { clientAmount: 1180, gstIncluded: true, providerCost: 500, frequency: "monthly" })] },
+    ], 18);
+    assert.deepEqual([r.monthlyRevenue, r.monthlyCost, r.monthlyMarkup, r.yearlyRevenue, r.clients], [3200, 1600, 1600, 38400, 2]);
+  });
+  it("skips what is not recurring income: one-time, client-direct, hidden, no amount", () => {
+    const r = recurringIncome([{ leadId: "L1", services: [
+      bill("a", { clientAmount: 500, frequency: "one-time" }),
+      svc({ id: "b", arrangement: "client-direct", showToClient: true, clientAmount: 500, frequency: "monthly" }),
+      bill("c", { clientAmount: 500, frequency: "monthly", showToClient: false }),
+      bill("d", { clientAmount: null, frequency: "monthly" }),
+    ] }], 18);
+    assert.deepEqual([r.rows.length, r.monthlyRevenue, r.unpriced], [0, 0, 1]);
+  });
+  it("a missing provider cost is counted as unknown, never as free profit", () => {
+    const r = recurringIncome([{ leadId: "L1", services: [bill("a", { clientAmount: 1000, providerCost: null, frequency: "monthly" })] }], 18);
+    assert.deepEqual([r.monthlyRevenue, r.monthlyMarkup, r.costUnknown, r.rows[0].monthlyMarkup], [1000, 0, 1, null]);
+  });
+  it("the route is admin-only and the card sits behind the admin gate", () => {
+    assert.ok(/requireAdmin\(request\)/.test(readFileSync(path.resolve("src/app/api/business/recurring-income/route.ts"), "utf8")));
+    assert.ok(/<AdminGate[\s\S]*<Figures \/>/.test(readFileSync(path.resolve("src/components/business/recurring-income-card.tsx"), "utf8")));
   });
 });

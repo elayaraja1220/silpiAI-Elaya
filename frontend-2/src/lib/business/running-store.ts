@@ -20,6 +20,12 @@ export function saveRunningServices(leadId: string, items: RunningService[]): Ru
   return items;
 }
 
+/** Admin only. Every saved record, for the recurring-income total. Re-validated like getRunningServices. */
+export function allRunningServices(): { leadId: string; services: RunningService[] }[] {
+  const rows = getDb().prepare("SELECT lead_id FROM running_services").all() as { lead_id: string }[];
+  return rows.flatMap((r) => { const services = getRunningServices(r.lead_id); return services ? [{ leadId: r.lead_id, services }] : []; });
+}
+
 /** What the client may see for this lead, or null. The only route from the stored data to a public response. */
 export function publicRunningFor(leadId: string): PublicRunningServices | null {
   return publicRunningServices(getRunningServices(leadId));
