@@ -1,6 +1,8 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+
+import { MIGRATIONS, runMigrations } from "./migrations";
 
 /**
  * SQLite database (Node's built-in driver, nothing to install).
@@ -194,16 +196,41 @@ CREATE TABLE IF NOT EXISTS settings (
 // is applied to the open connection instead of failing with "no such table".
 const globalForDb = globalThis as unknown as { silpiDb?: DatabaseSync; silpiSchema?: string };
 
+const schemaSignature = () => SCHEMA + migrate.toString() + MIGRATIONS.map((m) => m.id).join(",");
+
+/** The file behind this connection, asked of the connection itself ("" for an in-memory database). */
+function fileOf(db: DatabaseSync): string {
+  const main = (db.prepare("PRAGMA database_list").all() as { name: string; file: string }[]).find((d) => d.name === "main");
+  return main?.file ?? "";
+}
+
+/**
+ * Before the first pending migration changes a database that holds data, keep a consistent copy beside it
+ * (VACUUM INTO works with WAL). The path is read from the connection, not remembered: a connection opened by older
+ * code during a dev-server hot reload must be protected too. If the copy cannot be made, the error stops the migration.
+ */
+function backupBeforeMigrating(db: DatabaseSync, pendingIds: number[]): void {
+  const file = fileOf(db);
+  if (!file || !existsSync(file)) return;
+  const hasData = db.prepare("SELECT 1 FROM leads LIMIT 1").get();
+  if (!hasData) return;
+  const dir = path.join(path.dirname(file), "backups");
+  mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  db.exec(`VACUUM INTO '${path.join(dir, `silpi-before-migration-${pendingIds[0]}-${stamp}.db`).replace(/'/g, "''")}'`);
+}
+
 function applySchema(db: DatabaseSync): void {
   db.exec(SCHEMA);
   migrate(db);
-  globalForDb.silpiSchema = SCHEMA + migrate.toString();
+  runMigrations(db, MIGRATIONS, (ids) => backupBeforeMigrating(db, ids));
+  globalForDb.silpiSchema = schemaSignature();
 }
 
 export function getDb(): DatabaseSync {
   const cached = globalForDb.silpiDb;
   if (cached) {
-    if (globalForDb.silpiSchema !== SCHEMA + migrate.toString()) applySchema(cached);
+    if (globalForDb.silpiSchema !== schemaSignature()) applySchema(cached);
     return cached;
   }
   const file = path.resolve(process.env.SILPI_DB_PATH || path.join(process.cwd(), "storage", "silpi.db"));
