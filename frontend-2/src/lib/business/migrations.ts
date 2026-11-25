@@ -700,6 +700,119 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 14,
+    name: "payments, webhook events, refunds, credit top-up packages and orders",
+    up(db) {
+      db.exec(`
+        -- Packs of extra credits a customer can buy once, on top of the plan. Prices per currency, like plans.
+        CREATE TABLE credit_packages (
+          id           TEXT PRIMARY KEY,
+          name         TEXT NOT NULL,
+          credit_units INTEGER NOT NULL CHECK (credit_units > 0),
+          active       INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+          sort_order   INTEGER NOT NULL DEFAULT 0,
+          created_at   TEXT NOT NULL,
+          updated_at   TEXT NOT NULL
+        );
+        CREATE TABLE credit_package_prices (
+          package_id   TEXT NOT NULL REFERENCES credit_packages(id),
+          currency     TEXT NOT NULL CHECK (length(currency) = 3),
+          amount_minor INTEGER NOT NULL CHECK (amount_minor >= 0),
+          PRIMARY KEY (package_id, currency)
+        );
+
+        -- One purchase of a package. Amounts are fixed when the order is made (tax included in total), so a later price change cannot alter it.
+        CREATE TABLE topups (
+          id               TEXT PRIMARY KEY,
+          number           TEXT NOT NULL UNIQUE,
+          org_id           TEXT NOT NULL REFERENCES organizations(id),
+          package_id       TEXT NOT NULL REFERENCES credit_packages(id),
+          credit_units     INTEGER NOT NULL CHECK (credit_units > 0),
+          currency         TEXT NOT NULL,
+          subtotal_minor   INTEGER NOT NULL CHECK (subtotal_minor >= 0),
+          gst_basis_points INTEGER NOT NULL DEFAULT 0,
+          gst_minor        INTEGER NOT NULL DEFAULT 0 CHECK (gst_minor >= 0),
+          total_minor      INTEGER NOT NULL CHECK (total_minor >= 0),
+          status           TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'cancelled')),
+          created_by       TEXT NOT NULL DEFAULT '',
+          created_at       TEXT NOT NULL,
+          paid_at          TEXT,
+          CHECK (total_minor = subtotal_minor + gst_minor)
+        );
+        CREATE INDEX topups_org ON topups(org_id, created_at);
+
+        -- Every attempt to pay an invoice or a top-up, whoever took the money (a provider, or the administrator recording it by hand).
+        CREATE TABLE billing_payments (
+          id                  TEXT PRIMARY KEY,
+          org_id              TEXT NOT NULL REFERENCES organizations(id),
+          provider            TEXT NOT NULL,
+          provider_payment_id TEXT,
+          purpose             TEXT NOT NULL CHECK (purpose IN ('subscription_invoice', 'topup')),
+          invoice_id          TEXT REFERENCES subscription_invoices(id),
+          topup_id            TEXT REFERENCES topups(id),
+          currency            TEXT NOT NULL,
+          amount_minor        INTEGER NOT NULL CHECK (amount_minor >= 0),
+          status              TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'failed', 'refunded', 'partially_refunded', 'disputed')),
+          failure_reason      TEXT,
+          refunded_minor      INTEGER NOT NULL DEFAULT 0 CHECK (refunded_minor >= 0 AND refunded_minor <= amount_minor),
+          created_at          TEXT NOT NULL,
+          updated_at          TEXT NOT NULL,
+          paid_at             TEXT,
+          CHECK ((purpose = 'subscription_invoice' AND invoice_id IS NOT NULL AND topup_id IS NULL) OR (purpose = 'topup' AND topup_id IS NOT NULL AND invoice_id IS NULL))
+        );
+        -- The same provider payment can only ever be one row, so a repeated notice cannot count twice.
+        CREATE UNIQUE INDEX billing_payments_provider_ref ON billing_payments(provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL;
+        CREATE INDEX billing_payments_org ON billing_payments(org_id, created_at);
+
+        -- Every notice a provider sent. One row per provider event id: a notice received twice is recognised and not applied twice.
+        CREATE TABLE payment_webhook_events (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          provider     TEXT NOT NULL,
+          event_id     TEXT NOT NULL,
+          type         TEXT NOT NULL,
+          status       TEXT NOT NULL CHECK (status IN ('processed', 'ignored', 'failed')),
+          error        TEXT,
+          payload      TEXT,
+          received_at  TEXT NOT NULL,
+          UNIQUE (provider, event_id)
+        );
+
+        CREATE TABLE refunds (
+          id                        TEXT PRIMARY KEY,
+          payment_id                TEXT NOT NULL REFERENCES billing_payments(id),
+          org_id                    TEXT NOT NULL REFERENCES organizations(id),
+          provider                  TEXT NOT NULL,
+          provider_refund_id        TEXT,
+          amount_minor              INTEGER NOT NULL CHECK (amount_minor > 0),
+          currency                  TEXT NOT NULL,
+          reason                    TEXT NOT NULL DEFAULT '',
+          status                    TEXT NOT NULL CHECK (status IN ('pending', 'succeeded', 'failed')),
+          credits_reversed_units    INTEGER NOT NULL DEFAULT 0 CHECK (credits_reversed_units >= 0),
+          credits_unrecovered_units INTEGER NOT NULL DEFAULT 0 CHECK (credits_unrecovered_units >= 0),
+          requested_by              TEXT NOT NULL DEFAULT '',
+          idempotency_key           TEXT,
+          created_at                TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX refunds_key ON refunds(payment_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+        CREATE UNIQUE INDEX refunds_provider_ref ON refunds(provider, provider_refund_id) WHERE provider_refund_id IS NOT NULL;
+      `);
+
+      // The brief's starting packs. PROPOSED figures, edited from the admin screen. The pound prices are my proposal.
+      const at = new Date().toISOString();
+      const pack = db.prepare("INSERT INTO credit_packages (id, name, credit_units, active, sort_order, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?)");
+      const price = db.prepare("INSERT INTO credit_package_prices (package_id, currency, amount_minor) VALUES (?, ?, ?)");
+      // credits, dollars (cents), rupees (paise), pounds (pence)
+      const packs: [number, number, number, number][] = [[100, 300, 29_900, 250], [250, 700, 69_900, 550], [500, 1400, 129_900, 1100], [1000, 2700, 249_900, 2100]];
+      packs.forEach(([credits, usd, inr, gbp], i) => {
+        const id = `pkg_${credits}`;
+        pack.run(id, `${credits.toLocaleString("en-US")} credits`, credits * 1000, i + 1, at, at);
+        price.run(id, "USD", usd);
+        price.run(id, "INR", inr);
+        price.run(id, "GBP", gbp);
+      });
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

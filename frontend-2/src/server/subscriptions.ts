@@ -197,6 +197,10 @@ const planOf = (db: DatabaseSync, id: string): Plan => toPlan(planRow(db, id), a
 export function listInvoices(orgId: string): Invoice[] {
   return (getDb().prepare("SELECT * FROM subscription_invoices WHERE org_id = ? ORDER BY issued_at DESC, number DESC").all(orgId) as InvoiceRow[]).map(toInvoice);
 }
+export function getSubscription(id: string): Subscription | null {
+  const r = getDb().prepare("SELECT * FROM subscriptions WHERE id = ?").get(id) as SubRow | undefined;
+  return r ? toSub(r) : null;
+}
 export function getInvoice(id: string): Invoice | null {
   const r = getDb().prepare("SELECT * FROM subscription_invoices WHERE id = ?").get(id) as InvoiceRow | undefined;
   return r ? toInvoice(r) : null;
@@ -409,10 +413,15 @@ export function keepSubscription(input: { orgId: string; now?: number }): Subscr
  * Repeating it with the same reference changes nothing; a different reference is refused.
  */
 export function markInvoicePaid(input: { invoiceId: string; providerRef: string; now?: number }): { invoice: Invoice; subscription: Subscription } {
+  const at = iso(input.now ?? Date.now());
+  return transaction((db) => markInvoicePaidIn(db, input, at));
+}
+
+/** The same, inside a transaction the caller already opened (so a payment record and the invoice it pays commit together). */
+export function markInvoicePaidIn(db: DatabaseSync, input: { invoiceId: string; providerRef: string }, at: string): { invoice: Invoice; subscription: Subscription } {
   const ref = typeof input.providerRef === "string" ? input.providerRef.trim() : "";
   if (ref.length < 3 || ref.length > 200) throw bad("A payment reference of 3 to 200 characters is required.");
-  const at = iso(input.now ?? Date.now());
-  return transaction((db) => {
+  {
     const inv = db.prepare("SELECT * FROM subscription_invoices WHERE id = ?").get(input.invoiceId) as InvoiceRow | undefined;
     if (!inv) throw bad("That invoice does not exist.");
     const sub = db.prepare("SELECT * FROM subscriptions WHERE id = ?").get(inv.subscription_id) as SubRow;
@@ -437,7 +446,7 @@ export function markInvoicePaid(input: { invoiceId: string; providerRef: string;
     db.prepare("UPDATE subscriptions SET status = 'active', current_period_start = ?, current_period_end = ?, updated_at = ? WHERE id = ?").run(start, end, at, sub.id);
     grantAllowance(db, sub, plan, period, start);
     return { invoice: toInvoice(db.prepare("SELECT * FROM subscription_invoices WHERE id = ?").get(inv.id) as InvoiceRow), subscription: toSub(db.prepare("SELECT * FROM subscriptions WHERE id = ?").get(sub.id) as SubRow) };
-  });
+  }
 }
 
 export type Processed = { renewed: number; renewalInvoices: number; pastDue: number; downgraded: number; cancelled: number; lapsedToFree: number };

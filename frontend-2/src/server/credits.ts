@@ -378,6 +378,37 @@ export function expireCredits(opts: { orgId?: string; at?: string } = {}): { exp
   });
 }
 
+// ---- taking credits back after a refund -------------------------------------------------------------------------------------
+/** The bucket that a grant created, found by the idempotency key it was added with (null if there was none). */
+export function bucketOfGrant(db: DatabaseSync, orgId: string, idempotencyKey: string): string | null {
+  const row = db
+    .prepare("SELECT m.bucket_id AS id FROM credit_ledger l JOIN credit_ledger_buckets m ON m.ledger_id = l.id WHERE l.org_id = ? AND l.idempotency_key = ? AND m.delta_units > 0 LIMIT 1")
+    .get(orgId, idempotencyKey) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+/**
+ * Takes credits back out of ONE bucket, as when a payment is refunded and the credits it bought should go. It takes only what is still in that bucket
+ * and not held by a running job; the rest is reported as a shortfall (the customer already spent it). Recorded as one ledger row of kind adjust (created by
+ * "system") even when nothing could be taken, so repeating the same request is harmless and returns the same answer.
+ */
+export function clawbackIn(db: DatabaseSync, input: { orgId: string; bucketId: string | null; units: number; idempotencyKey: string; note: string; reference?: string }): { removed: number; shortfall: number } {
+  const units = nonNegative(input.units, "The amount");
+  const k = key(input.idempotencyKey);
+  const done = earlier(db, input.orgId, k, (e) => e.kind === "adjust" && e.deltaUnits <= 0);
+  if (done) return { removed: -done.deltaUnits, shortfall: units + done.deltaUnits };
+  walletOf(db, input.orgId);
+  let removed = 0;
+  const moves: Move[] = [];
+  if (input.bucketId && units > 0) {
+    const row = db.prepare("SELECT remaining_units - held_units AS free FROM credit_buckets WHERE id = ? AND org_id = ?").get(input.bucketId, input.orgId) as { free: number } | undefined;
+    removed = Math.min(units, row?.free ?? 0);
+    if (removed > 0) moves.push({ bucketId: input.bucketId, delta: -removed, held: 0 });
+  }
+  apply(db, input.orgId, { kind: "adjust", delta: -removed, reservedDelta: 0, moves, key: k, reference: input.reference ?? "", note: input.note, by: "system" });
+  return { removed, shortfall: units - removed };
+}
+
 // ---- reconciliation -----------------------------------------------------------------------------------------------------
 /**
  * Re-derives every wallet from its ledger and reports any that disagree. A healthy system returns an empty list.

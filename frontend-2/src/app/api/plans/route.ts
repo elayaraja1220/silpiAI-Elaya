@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { countryFromHeaders } from "@/lib/geo";
 import { publicModels } from "@/server/ai/catalog";
+import { listCreditPackages } from "@/server/payments/service";
 import { listPlans } from "@/server/subscriptions";
 
 export const runtime = "nodejs";
@@ -13,5 +14,5 @@ export const dynamic = "force-dynamic";
  * Read-only and public by design (prices are advertised).
  */
 export async function GET(request: Request) {
-  return NextResponse.json({ success: true, plans: listPlans(), aiPrices: publicModels(), country: countryFromHeaders(request.headers) }, { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ success: true, plans: listPlans(), aiPrices: publicModels(), creditPackages: listCreditPackages(), country: countryFromHeaders(request.headers) }, { headers: { "Cache-Control": "no-store" } });
 }
