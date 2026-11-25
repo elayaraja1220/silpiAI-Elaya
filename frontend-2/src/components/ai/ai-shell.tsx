@@ -23,6 +23,7 @@ const TABS = [
   { href: "/ai", label: "Chat" },
   { href: "/ai/builder", label: "Project builder" },
   { href: "/ai/usage", label: "Usage" },
+  { href: "/ai/billing", label: "Billing" },
   { href: "/ai/admin", label: "Admin" },
 ];
 
@@ -72,7 +73,7 @@ export function AiShell({ children }: { children: ReactNode }) {
           </nav>
           <div className="flex shrink-0 items-center gap-2 text-sm">
             {me && !admin && available !== null && (
-              <Link href="/ai/usage" title="Credits available" className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:border-slate-300" data-testid="credit-chip"><Coins size={14} className="text-indigo-600" /><span className="font-medium tabular-nums">{credits(available)}</span><span className="hidden text-slate-500 sm:inline">credits</span></Link>
+              <Link href="/ai/billing" title="Credits available" className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:border-slate-300" data-testid="credit-chip"><Coins size={14} className="text-indigo-600" /><span className="font-medium tabular-nums">{credits(available)}</span><span className="hidden text-slate-500 sm:inline">credits</span></Link>
             )}
             {me && !admin && (
               <button onClick={signOut} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800" title={`${me.user.email} · ${me.organization.name}`}><LogOut size={15} /><span className="hidden md:inline">Sign out</span></button>

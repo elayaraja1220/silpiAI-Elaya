@@ -30,7 +30,7 @@ Written from the repository as it is today (commit `29e1cfa`). Nothing here is a
 | 9 Payments | **Partial** | Provider-neutral layer, payment records, signed notices with duplicate prevention, refunds, chargebacks, credit packs built (section 10). Missing: the Stripe and Razorpay adapters themselves (need accounts). |
 | 10 Currency, tax | **Partial** | Display by country for three currencies. Missing: exchange-rate table, ten currencies, billing addresses, tax provider, currency on invoices. Invoices and GST are rupees only. |
 | 11 Admin dashboard | **Partial** | No revenue, churn, margin or cost-by-provider views; no audit log. |
-| 12 User billing dashboard | **Partial** | APIs exist (`/api/workspace/billing`); the screens (plan, credits, history, invoices, top-up) do not. A usage page exists. |
+| 12 User billing dashboard | **Mostly done (step 6, built)** | `/ai/billing`: plan, credits by kind with expiry, plan change, coupons, credit packs, invoices, payments, credit history. Missing: online checkout (needs a payment provider), downloadable invoices. |
 | 13 Database | **Partial** | See section 4. |
 | 14 API | **Partial** | Routes follow `/api/workspace` and `/api/admin`, not `/api/v1`. Add versioning only if you want it. |
 | 15 Security | **Partial** | Missing: rate limiting beyond sign-in, audit trail, webhook verification, upload checks, prompt-injection handling. |
@@ -187,3 +187,18 @@ Add: `plan_prices`, `credit_buckets` (with expiry), `credit_grants`, `credit_pac
 - Streaming. It needs the charge to be settled when a stream ends or is cut off; worth building together with the playground screen.
 - Admin-editable routing rules by task. Routing is still tier plus priority, or an explicit model.
 - None of the three adapters has been called against a real API. Do that once with a small key before relying on them.
+
+## 12. Step 6 built: the customer billing page (no migration)
+
+`/ai/billing` (tab "Billing"; the credit chip in the header now opens it). It uses only APIs that already existed and are tested; no new server code.
+
+- **Plan:** name, status, the price and credits the customer signed up at, period end, free trial, a scheduled downgrade, a request waiting for payment, open invoices, and Cancel / Keep.
+- **Credits:** available and held, totals for plan, bought and free credits, the spending order, the next expiry, and each bucket.
+- **Change plan:** every plan in the customer's currency (locked to the subscription's currency once paid; free organizations choose), monthly or yearly, coupon code. Choosing creates an invoice; nothing is charged until payment is confirmed.
+- **Buy credits:** the four packs in the chosen currency; unpaid orders can be cancelled.
+- **History:** invoices (with discount and GST), payments (with refunds), and credit movements.
+- Members who are not owners or admins see the plan and credits only.
+
+**Checked** in a real browser against a temporary database: a Free organization with a requested Pro plan, an open dollar invoice and two top-up orders. Two bugs found and fixed that way: the cancel button showed for the Free plan, and the currency pickers ignored the currency of an invoice already raised.
+
+**Not done.** There is no online payment button, because no provider is connected: the page tells the customer to pay and quote the invoice or order number, and the credits or plan start when the administrator records the payment (or a provider notice arrives). Invoice PDFs, and billing addresses and tax numbers (step 8), are not built.
