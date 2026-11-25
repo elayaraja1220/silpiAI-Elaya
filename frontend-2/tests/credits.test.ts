@@ -316,5 +316,7 @@ describe("7. spending at the same time", () => {
     assert.deepEqual(c.getWallet(org), { orgId: org, balanceUnits: 100, reservedUnits: 100, availableUnits: 0 });
     assert.equal((db.getDb().prepare("SELECT COUNT(*) AS n FROM credit_reservations WHERE org_id = ?").get(org) as { n: number }).n, 10);
     assert.deepEqual(c.auditWallets().filter((x) => x.orgId === org), []);
+    assert.deepEqual(c.auditBuckets(), [], "after four processes fought over the same credits, every bucket still agrees with the ledger and the holds");
+    assert.deepEqual(c.getBuckets(org).map((b) => [b.remainingUnits, b.heldUnits]), [[100, 100]], "all 100 credits are held, none twice");
   });
 });

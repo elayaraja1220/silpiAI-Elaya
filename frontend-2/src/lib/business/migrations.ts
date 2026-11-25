@@ -423,6 +423,73 @@ export const MIGRATIONS: Migration[] = [
       for (const [id, name, units, inr, usd, gbp] of sizes) insert.run(id, name, inr, inr * 10, usd, usd * 10, gbp, gbp * 10, units, at, at);
     },
   },
+  {
+    id: 10,
+    name: "credit buckets: promotional, subscription and purchased credits with expiry, held per reservation",
+    up(db) {
+      // The ledger stays the source of truth. Buckets say WHICH credits a ledger row moved: they are spent in a fixed order
+      // (promotional, then subscription, then purchased; soonest expiry first) and some can expire. Every ledger row after this
+      // migration has matching rows in credit_ledger_buckets (append-only), so buckets can be checked against the ledger at any time.
+      db.exec(`
+        CREATE TABLE credit_buckets (
+          id                 TEXT PRIMARY KEY,
+          org_id             TEXT NOT NULL REFERENCES organizations(id),
+          category           TEXT NOT NULL CHECK (category IN ('promotional', 'subscription', 'purchased')),
+          granted_units      INTEGER NOT NULL CHECK (granted_units > 0),
+          opening_units      INTEGER NOT NULL DEFAULT 0 CHECK (opening_units >= 0),
+          opening_held_units INTEGER NOT NULL DEFAULT 0 CHECK (opening_held_units >= 0),
+          remaining_units    INTEGER NOT NULL CHECK (remaining_units >= 0),
+          held_units         INTEGER NOT NULL DEFAULT 0 CHECK (held_units >= 0),
+          expires_at         TEXT,
+          source             TEXT NOT NULL DEFAULT '',
+          created_at         TEXT NOT NULL,
+          CHECK (remaining_units <= granted_units),
+          CHECK (held_units <= remaining_units)
+        );
+        CREATE INDEX credit_buckets_org ON credit_buckets(org_id, category, expires_at, created_at);
+
+        -- Which buckets a reservation holds, in the order they will be charged.
+        CREATE TABLE credit_reservation_holds (
+          reservation_id TEXT NOT NULL REFERENCES credit_reservations(id),
+          bucket_id      TEXT NOT NULL REFERENCES credit_buckets(id),
+          seq            INTEGER NOT NULL,
+          units          INTEGER NOT NULL CHECK (units > 0),
+          PRIMARY KEY (reservation_id, bucket_id)
+        );
+
+        -- How each ledger row moved each bucket. Never edited, never deleted.
+        CREATE TABLE credit_ledger_buckets (
+          ledger_id   INTEGER NOT NULL REFERENCES credit_ledger(id),
+          bucket_id   TEXT NOT NULL REFERENCES credit_buckets(id),
+          delta_units INTEGER NOT NULL,
+          held_delta  INTEGER NOT NULL,
+          PRIMARY KEY (ledger_id, bucket_id)
+        );
+        CREATE INDEX ledger_buckets_bucket ON credit_ledger_buckets(bucket_id);
+        CREATE TRIGGER credit_ledger_buckets_no_update BEFORE UPDATE ON credit_ledger_buckets BEGIN SELECT RAISE(ABORT, 'credit_ledger_buckets is append-only'); END;
+        CREATE TRIGGER credit_ledger_buckets_no_delete BEFORE DELETE ON credit_ledger_buckets BEGIN SELECT RAISE(ABORT, 'credit_ledger_buckets is append-only'); END;
+      `);
+
+      // Existing wallets keep exactly what they have: one "opening balance" bucket per wallet. It is typed purchased and never expires, so
+      // nobody loses credits to a rule that did not exist when they got them. Active reservations keep holding their units from it.
+      const at = new Date().toISOString();
+      const wallets = db.prepare("SELECT org_id, balance_units, reserved_units FROM credit_wallets WHERE balance_units > 0").all() as { org_id: string; balance_units: number; reserved_units: number }[];
+      const bucket = db.prepare(
+        "INSERT INTO credit_buckets (id, org_id, category, granted_units, opening_units, opening_held_units, remaining_units, held_units, expires_at, source, created_at) VALUES (?, ?, 'purchased', ?, ?, ?, ?, ?, NULL, 'opening-balance', ?)",
+      );
+      const hold = db.prepare("INSERT INTO credit_reservation_holds (reservation_id, bucket_id, seq, units) VALUES (?, ?, 1, ?)");
+      const active = db.prepare("SELECT id, units FROM credit_reservations WHERE org_id = ? AND status = 'active'");
+      for (const w of wallets) {
+        const id = `bkt_opening_${w.org_id}`;
+        bucket.run(id, w.org_id, w.balance_units, w.balance_units, w.reserved_units, w.balance_units, w.reserved_units, at);
+        for (const r of active.all(w.org_id) as { id: string; units: number }[]) hold.run(r.id, id, r.units);
+      }
+      // Ledger rows up to here predate buckets; the row-by-row check starts after this id.
+      const last = (db.prepare("SELECT COALESCE(MAX(id), 0) AS n FROM credit_ledger").get() as { n: number }).n;
+      db.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('bucket_ledger_start_id', ?)").run(String(last));
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {
