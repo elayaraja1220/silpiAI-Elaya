@@ -51,11 +51,17 @@ describe("every API route is gated one way or another", () => {
     for (const f of routes.filter((r) => rel(r).startsWith("business/"))) assert.ok(!/api-access/.test(readFileSync(f, "utf8")), rel(f));
   });
   it("every route outside the middleware is the login, a secret-link client route, or checks the admin itself", () => {
-    const known = new Set(["admin", "business", "client", "demo", "execution", "projects"]);
+    const known = new Set(["admin", "auth", "business", "client", "demo", "execution", "projects", "workspace"]);
     for (const f of routes) {
       const group = rel(f).split("/")[0];
       assert.ok(known.has(group), `${rel(f)}: a new API group needs a decision about who may call it (add it to this test only after deciding)`);
       if (group === "business" || group === "projects" || group === "client" || rel(f) === "admin/session/route.ts") continue;
+      // Signed-in user routes: login is the public door; logout only ends the caller's own session; the rest need a session.
+      if (group === "auth" && ["auth/login/route.ts", "auth/logout/route.ts"].includes(rel(f))) continue;
+      if (group === "auth" || group === "workspace") {
+        assert.ok(/requireSession\(/.test(readFileSync(f, "utf8")), `${rel(f)} does not require a signed-in user`);
+        continue;
+      }
       const code = readFileSync(f, "utf8");
       assert.ok(/requireAdmin\(|requireAdminOrDevStart\(|directApiBlocked\(/.test(code), `${rel(f)} is not admin-gated`);
     }

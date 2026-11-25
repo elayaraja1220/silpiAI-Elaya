@@ -67,6 +67,25 @@ export const MIGRATIONS: Migration[] = [
       db.prepare("UPDATE leads SET org_id = ? WHERE org_id IS NULL").run(AGENCY_ORG_ID);
     },
   },
+  {
+    id: 2,
+    name: "user sessions (server-side, revocable)",
+    up(db) {
+      // The browser holds a random token; only its SHA-256 is stored here, so a copy of this table cannot sign anyone in.
+      db.exec(`
+        CREATE TABLE sessions (
+          id           TEXT PRIMARY KEY,
+          user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          org_id       TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+          created_at   TEXT NOT NULL,
+          expires_at   TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL
+        );
+        CREATE INDEX sessions_user ON sessions(user_id);
+        CREATE INDEX sessions_expiry ON sessions(expires_at);
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {
