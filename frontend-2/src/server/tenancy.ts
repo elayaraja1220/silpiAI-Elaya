@@ -28,13 +28,13 @@ const scrypt = promisify(scryptCb) as (password: string, salt: Buffer, keylen: n
 const now = () => new Date().toISOString();
 
 // ---- permissions ---------------------------------------------------------------------------------------------------
-export const PERMISSIONS = ["lead:read", "lead:write", "members:manage", "billing:manage"] as const;
+export const PERMISSIONS = ["lead:read", "lead:write", "members:manage", "billing:manage", "ai:use"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 const GRANTS: Record<Role, readonly Permission[]> = {
-  owner: ["lead:read", "lead:write", "members:manage", "billing:manage"],
-  admin: ["lead:read", "lead:write", "members:manage", "billing:manage"],
-  member: ["lead:read", "lead:write"],
+  owner: ["lead:read", "lead:write", "members:manage", "billing:manage", "ai:use"],
+  admin: ["lead:read", "lead:write", "members:manage", "billing:manage", "ai:use"],
+  member: ["lead:read", "lead:write", "ai:use"],
   viewer: ["lead:read"],
 };
 

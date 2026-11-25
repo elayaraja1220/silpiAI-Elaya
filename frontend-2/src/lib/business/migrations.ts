@@ -205,6 +205,82 @@ export const MIGRATIONS: Migration[] = [
       insert.run("enterprise", "Enterprise", "Custom pricing and credits. Contact us.", null, null, 0, 1, 5, at, at);
     },
   },
+  {
+    id: 4,
+    name: "AI Gateway: model catalogue with prices, request log, per-organization daily cap",
+    up(db) {
+      // Provider prices are whole micro-USD per million tokens (0.10 USD = 100000), so cost maths is exact integers.
+      // ai_requests stores NO prompt or answer text, only sizes and money: customers' content is not kept by the gateway.
+      db.exec(`
+        CREATE TABLE ai_models (
+          id                        TEXT PRIMARY KEY,
+          provider                  TEXT NOT NULL,
+          provider_model            TEXT NOT NULL,
+          label                     TEXT NOT NULL,
+          tier                      TEXT NOT NULL CHECK (tier IN ('fast', 'balanced', 'best', 'demo')),
+          input_usd_micro_per_mtok  INTEGER NOT NULL CHECK (input_usd_micro_per_mtok >= 0),
+          output_usd_micro_per_mtok INTEGER NOT NULL CHECK (output_usd_micro_per_mtok >= 0),
+          markup_basis_points       INTEGER NOT NULL DEFAULT 10000 CHECK (markup_basis_points >= 0),
+          max_output_tokens         INTEGER NOT NULL CHECK (max_output_tokens > 0),
+          priority                  INTEGER NOT NULL DEFAULT 100,
+          enabled                   INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+          created_at                TEXT NOT NULL,
+          updated_at                TEXT NOT NULL
+        );
+
+        CREATE TABLE ai_requests (
+          id                      TEXT PRIMARY KEY,
+          org_id                  TEXT NOT NULL REFERENCES organizations(id),
+          user_id                 TEXT NOT NULL DEFAULT '',
+          idempotency_key         TEXT NOT NULL,
+          status                  TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+          purpose                 TEXT NOT NULL DEFAULT '',
+          requested_model         TEXT NOT NULL,
+          model_id                TEXT,
+          fallback_used           INTEGER NOT NULL DEFAULT 0 CHECK (fallback_used IN (0, 1)),
+          attempts                INTEGER NOT NULL DEFAULT 0,
+          reservation_id          TEXT,
+          reserved_units          INTEGER NOT NULL DEFAULT 0,
+          prompt_chars            INTEGER NOT NULL DEFAULT 0,
+          response_chars          INTEGER NOT NULL DEFAULT 0,
+          input_tokens            INTEGER NOT NULL DEFAULT 0,
+          output_tokens           INTEGER NOT NULL DEFAULT 0,
+          provider_cost_micro_usd INTEGER NOT NULL DEFAULT 0,
+          charged_units           INTEGER NOT NULL DEFAULT 0,
+          uncollected_units       INTEGER NOT NULL DEFAULT 0,
+          provider_request_id     TEXT,
+          error_code              TEXT,
+          error_message           TEXT,
+          latency_ms              INTEGER,
+          created_at              TEXT NOT NULL,
+          finished_at             TEXT,
+          UNIQUE (org_id, idempotency_key)
+        );
+        CREATE INDEX ai_requests_org_time ON ai_requests(org_id, created_at);
+        CREATE INDEX ai_requests_running ON ai_requests(status, created_at) WHERE status = 'running';
+
+        CREATE TABLE ai_org_limits (
+          org_id          TEXT PRIMARY KEY REFERENCES organizations(id),
+          daily_cap_units INTEGER CHECK (daily_cap_units IS NULL OR daily_cap_units >= 0),
+          updated_at      TEXT NOT NULL
+        );
+      `);
+      // Starting catalogue. PROPOSED values, not validated: prices follow the agent's table (silpi-agent/src/pricing.ts) and
+      // must be re-checked against the provider's price page; every one is an ordinary row edited from the admin API.
+      const at = new Date().toISOString();
+      const insert = db.prepare(
+        "INSERT INTO ai_models (id, provider, provider_model, label, tier, input_usd_micro_per_mtok, output_usd_micro_per_mtok, markup_basis_points, max_output_tokens, priority, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 10000, ?, ?, 1, ?, ?)",
+      );
+      insert.run("haiku-5-5", "anthropic", "claude-haiku-5-5", "Fast", "fast", 100_000, 500_000, 8192, 10, at, at);
+      insert.run("sonnet-5-5", "anthropic", "claude-sonnet-5-5", "Balanced", "balanced", 2_000_000, 10_000_000, 8192, 10, at, at);
+      insert.run("opus-5-5", "anthropic", "claude-opus-5-5", "Best quality", "best", 4_000_000, 20_000_000, 16_000, 10, at, at);
+      // A free built-in model that answers without calling any provider: lets the screens and a new install be tried at no cost.
+      insert.run("silpi-demo", "echo", "echo", "Demo (no AI, free)", "demo", 0, 0, 2048, 100, at, at);
+      // 1 USD of provider cost = 45,000 units = 45 credits. About 2x cover over a Pro credit (Rs 1,499 / 400 credits = Rs 3.75) at Rs 85 per USD.
+      db.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)"); // same shape as the base schema; present already in a real database
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_units_per_usd', '45000')").run();
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {
