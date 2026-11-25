@@ -86,6 +86,125 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 3,
+    name: "plans, subscriptions, invoices, credit wallets, append-only credit ledger, reservations",
+    up(db) {
+      // MONEY is whole paise, CREDITS are whole "units" (1 credit = 1000 units). No floating point anywhere.
+      // The SaaS billing tables are separate from the agency's quotation/payment tables on purpose: the two businesses
+      // keep independent books. Organizations that own financial records cannot be deleted (no cascade).
+      db.exec(`
+        CREATE TABLE plans (
+          id                   TEXT PRIMARY KEY,
+          name                 TEXT NOT NULL,
+          description          TEXT NOT NULL DEFAULT '',
+          monthly_price_paise  INTEGER CHECK (monthly_price_paise IS NULL OR monthly_price_paise >= 0),
+          annual_price_paise   INTEGER CHECK (annual_price_paise IS NULL OR annual_price_paise >= 0),
+          monthly_credit_units INTEGER NOT NULL CHECK (monthly_credit_units >= 0),
+          max_active_projects  INTEGER CHECK (max_active_projects IS NULL OR max_active_projects >= 0),
+          is_custom            INTEGER NOT NULL DEFAULT 0 CHECK (is_custom IN (0, 1)),
+          active               INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+          sort_order           INTEGER NOT NULL DEFAULT 0,
+          created_at           TEXT NOT NULL,
+          updated_at           TEXT NOT NULL
+        );
+
+        CREATE TABLE subscriptions (
+          id                   TEXT PRIMARY KEY,
+          org_id               TEXT NOT NULL REFERENCES organizations(id),
+          plan_id              TEXT NOT NULL REFERENCES plans(id),
+          pending_plan_id      TEXT REFERENCES plans(id),
+          status               TEXT NOT NULL CHECK (status IN ('pending_payment', 'active', 'past_due', 'ended')),
+          billing_period       TEXT NOT NULL CHECK (billing_period IN ('monthly', 'annual')),
+          current_period_start TEXT,
+          current_period_end   TEXT,
+          cancel_at_period_end INTEGER NOT NULL DEFAULT 0 CHECK (cancel_at_period_end IN (0, 1)),
+          created_at           TEXT NOT NULL,
+          updated_at           TEXT NOT NULL
+        );
+        CREATE INDEX subscriptions_org ON subscriptions(org_id, created_at);
+        -- At most one running subscription per organization, and at most one waiting for its first payment.
+        CREATE UNIQUE INDEX subscriptions_one_running ON subscriptions(org_id) WHERE status IN ('active', 'past_due');
+        CREATE UNIQUE INDEX subscriptions_one_pending ON subscriptions(org_id) WHERE status = 'pending_payment';
+
+        CREATE TABLE subscription_invoices (
+          id              TEXT PRIMARY KEY,
+          number          TEXT NOT NULL UNIQUE,
+          org_id          TEXT NOT NULL REFERENCES organizations(id),
+          subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
+          plan_id         TEXT NOT NULL REFERENCES plans(id),
+          period_start    TEXT NOT NULL,
+          period_end      TEXT NOT NULL,
+          subtotal_paise  INTEGER NOT NULL CHECK (subtotal_paise >= 0),
+          gst_basis_points INTEGER NOT NULL CHECK (gst_basis_points >= 0),
+          gst_paise       INTEGER NOT NULL CHECK (gst_paise >= 0),
+          total_paise     INTEGER NOT NULL CHECK (total_paise = subtotal_paise + gst_paise),
+          status          TEXT NOT NULL CHECK (status IN ('open', 'paid', 'void')),
+          provider        TEXT NOT NULL DEFAULT 'manual',
+          provider_ref    TEXT,
+          issued_at       TEXT NOT NULL,
+          paid_at         TEXT,
+          UNIQUE (subscription_id, period_start)
+        );
+        CREATE INDEX invoices_org ON subscription_invoices(org_id, issued_at);
+
+        -- balance = credits owned; reserved = the part held for running work; available = balance - reserved.
+        CREATE TABLE credit_wallets (
+          org_id         TEXT PRIMARY KEY REFERENCES organizations(id),
+          balance_units  INTEGER NOT NULL DEFAULT 0 CHECK (balance_units >= 0),
+          reserved_units INTEGER NOT NULL DEFAULT 0 CHECK (reserved_units >= 0),
+          updated_at     TEXT NOT NULL,
+          CHECK (reserved_units <= balance_units)
+        );
+
+        CREATE TABLE credit_reservations (
+          id              TEXT PRIMARY KEY,
+          org_id          TEXT NOT NULL REFERENCES organizations(id),
+          units           INTEGER NOT NULL CHECK (units > 0),
+          status          TEXT NOT NULL CHECK (status IN ('active', 'settled', 'released')),
+          purpose         TEXT NOT NULL DEFAULT '',
+          actual_units    INTEGER CHECK (actual_units IS NULL OR actual_units >= 0),
+          idempotency_key TEXT,
+          created_at      TEXT NOT NULL,
+          closed_at       TEXT
+        );
+        CREATE UNIQUE INDEX reservations_key ON credit_reservations(org_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX reservations_org ON credit_reservations(org_id, status);
+
+        -- Every change to a wallet is one row here, never edited, never deleted. The wallet row is only a running total.
+        CREATE TABLE credit_ledger (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          org_id           TEXT NOT NULL REFERENCES organizations(id),
+          kind             TEXT NOT NULL CHECK (kind IN ('grant', 'purchase', 'refund', 'adjust', 'reserve', 'extend', 'release', 'settle')),
+          delta_units      INTEGER NOT NULL,
+          reserved_delta   INTEGER NOT NULL,
+          balance_after    INTEGER NOT NULL CHECK (balance_after >= 0),
+          reserved_after   INTEGER NOT NULL CHECK (reserved_after >= 0 AND reserved_after <= balance_after),
+          reservation_id   TEXT REFERENCES credit_reservations(id),
+          idempotency_key  TEXT,
+          reference        TEXT NOT NULL DEFAULT '',
+          note             TEXT NOT NULL DEFAULT '',
+          created_by       TEXT NOT NULL DEFAULT '',
+          created_at       TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX ledger_key ON credit_ledger(org_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX ledger_org ON credit_ledger(org_id, id);
+        CREATE TRIGGER credit_ledger_no_update BEFORE UPDATE ON credit_ledger BEGIN SELECT RAISE(ABORT, 'credit_ledger is append-only'); END;
+        CREATE TRIGGER credit_ledger_no_delete BEFORE DELETE ON credit_ledger BEGIN SELECT RAISE(ABORT, 'credit_ledger is append-only'); END;
+      `);
+      // Starting plans. These are PROPOSED commercial values, not validated margins: they are ordinary rows, edited from
+      // the admin plan screen/API, and no code depends on these particular numbers. Annual is 10 x monthly (2 months free).
+      const at = new Date().toISOString();
+      const insert = db.prepare(
+        "INSERT INTO plans (id, name, description, monthly_price_paise, annual_price_paise, monthly_credit_units, max_active_projects, is_custom, active, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, ?, ?)",
+      );
+      insert.run("free", "Free", "Try SILPI on a real project.", 0, 0, 10_000, 0, 1, at, at);
+      insert.run("starter", "Starter", "For an individual developer.", 49_900, 499_000, 100_000, 0, 2, at, at);
+      insert.run("pro", "Pro", "For a working freelancer.", 149_900, 1_499_000, 400_000, 0, 3, at, at);
+      insert.run("professional", "Professional", "For a small agency.", 399_900, 3_999_000, 1_500_000, 0, 4, at, at);
+      insert.run("enterprise", "Enterprise", "Custom pricing and credits. Contact us.", null, null, 0, 1, 5, at, at);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

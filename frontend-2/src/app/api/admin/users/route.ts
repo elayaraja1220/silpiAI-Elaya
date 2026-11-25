@@ -5,6 +5,7 @@ import { getDb } from "@/lib/business/db";
 import { MEMBER_ROLES, ORG_TYPES } from "@/lib/business/migrations";
 import { handle } from "@/lib/business/http";
 import { ValidationError } from "@/lib/business/validate";
+import { startSubscription } from "@/server/subscriptions";
 import { addMember, createOrganization, createUser, getOrganization, type OrgType, type Role } from "@/server/tenancy";
 
 export const runtime = "nodejs";
@@ -48,6 +49,7 @@ export async function POST(request: NextRequest) {
     const user = await createUser({ email: String(b.email ?? ""), name: String(b.name ?? ""), password: String(b.password ?? "") });
     const org = b.newOrg ? createOrganization({ name: String(b.newOrg.name ?? ""), type: b.newOrg.type as OrgType }) : getOrganization(b.orgId!)!;
     addMember(org.id, user.id, role);
+    if (b.newOrg) startSubscription({ orgId: org.id, planId: "free" }); // a new customer organization starts on the Free plan, with its credits
     return { user, organization: { id: org.id, name: org.name, type: org.type }, role };
   });
 }

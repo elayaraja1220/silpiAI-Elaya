@@ -1,105 +1,81 @@
 "use client";
 
-import { useState } from "react";
-import { Check, Minus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, Loader2 } from "lucide-react";
 
 import { Card } from "@/components/business/ui";
-import { formatINR } from "@/lib/business/pricing";
 import { cn } from "@/lib/utils";
 
 /**
- * SAMPLE plans page. The prices and limits below are guesses to look at and discuss, not decided numbers, and no
- * payment or limit is connected yet. Change them in one place: PLANS.
+ * The price list, read from the plans the administrator maintains (GET /api/plans). Nothing is hardcoded here:
+ * prices, credits and limits are whatever is stored. Money arrives as whole paise, credits as whole units (1 credit = 1000).
+ * Choosing a plan is done by an owner or admin from their workspace; that screen is not built yet, so no button is offered.
  */
-type Plan = { id: string; name: string; tagline: string; monthly: number; popular?: boolean; features: { text: string; on: boolean }[] };
+type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean };
 
-const PLANS: Plan[] = [
-  {
-    id: "free", name: "Free", tagline: "Try SILPI on one real client", monthly: 0,
-    features: [
-      { text: "1 active project", on: true },
-      { text: "Quotation with GST", on: true },
-      { text: "Client approval link", on: true },
-      { text: "Print / save as PDF", on: true },
-      { text: "Demo preview and AI build", on: false },
-      { text: "Recurring income view", on: false },
-    ],
-  },
-  {
-    id: "pro", name: "Pro", tagline: "For a working freelancer", monthly: 999, popular: true,
-    features: [
-      { text: "Unlimited projects", on: true },
-      { text: "Quotation with GST", on: true },
-      { text: "Client approval link and payments tracking", on: true },
-      { text: "Demo preview and AI build (monthly allowance)", on: true },
-      { text: "Hosting and maintenance billing, recurring income view", on: true },
-      { text: "Team members", on: false },
-    ],
-  },
-  {
-    id: "business", name: "Business", tagline: "For a small agency", monthly: 2999,
-    features: [
-      { text: "Everything in Pro", on: true },
-      { text: "Bigger AI build allowance", on: true },
-      { text: "Up to 5 team members", on: true },
-      { text: "Your own logo and details on every quotation", on: true },
-      { text: "Priority support", on: true },
-    ],
-  },
-];
-
-const YEARLY_MONTHS = 10; // pay for 10, get 12
+const UNITS_PER_CREDIT = 1000;
+const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 export function PlansPage() {
+  const [plans, setPlans] = useState<Plan[] | null>(null);
+  const [error, setError] = useState("");
   const [yearly, setYearly] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/plans", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((b: { success?: boolean; plans?: Plan[]; error?: string }) => (b.success && b.plans ? setPlans(b.plans) : setError(b.error || "Could not load the plans.")))
+      .catch(() => setError("Could not load the plans."));
+  }, []);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-slate-100">Plans</h2>
-          <p className="mt-1 text-xs text-slate-500">Choose how you want to use SILPI. You can change the plan later.</p>
+          <p className="mt-1 text-xs text-slate-500">Each plan includes a number of credits every period. Prices exclude GST.</p>
         </div>
         <div className="flex rounded-full border border-white/10 p-0.5 text-xs" role="group" aria-label="Billing period">
-          {[{ y: false, label: "Monthly" }, { y: true, label: "Yearly · 2 months free" }].map((o) => (
+          {[{ y: false, label: "Monthly" }, { y: true, label: "Yearly" }].map((o) => (
             <button key={o.label} onClick={() => setYearly(o.y)} aria-pressed={yearly === o.y} className={cn("rounded-full px-3 py-1.5 transition", yearly === o.y ? "bg-violet-500 text-white" : "text-slate-400 hover:text-slate-200")}>{o.label}</button>
           ))}
         </div>
       </div>
 
       <p className="rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100" data-testid="plans-sample-note">
-        Sample plans for review. The prices and limits are not final and payment is not connected yet.
+        These prices and credit amounts are proposed starting values and can be changed. Payments are recorded by the administrator for now; online payment is not connected.
       </p>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {PLANS.map((p) => {
-          const perMonth = yearly ? Math.round((p.monthly * YEARLY_MONTHS) / 12) : p.monthly;
-          return (
-            <Card key={p.id} className={cn("flex flex-col space-y-4", p.popular && "border-violet-400/50")}>
-              <div>
-                <div className="flex items-center justify-between">
+      {!plans && <Card className="flex items-center gap-2 text-sm text-slate-400">{error ? <span className="text-rose-300">{error}</span> : <><Loader2 size={15} className="animate-spin" /> Loading...</>}</Card>}
+
+      {plans && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          {plans.map((p) => {
+            const annual = yearly && p.annualPricePaise !== null && p.annualPricePaise > 0;
+            const price = p.isCustom ? null : annual ? p.annualPricePaise! : p.monthlyPricePaise;
+            const credits = (p.monthlyCreditUnits * (annual ? 12 : 1)) / UNITS_PER_CREDIT;
+            return (
+              <Card key={p.id} className="flex flex-col space-y-4 p-5" data-plan={p.id}>
+                <div>
                   <h3 className="text-base font-semibold text-slate-100">{p.name}</h3>
-                  {p.popular && <span className="rounded-full bg-violet-500/25 px-2 py-0.5 text-[10px] font-medium text-violet-200">Most chosen</span>}
+                  <p className="mt-1 text-xs text-slate-400">{p.description}</p>
                 </div>
-                <p className="mt-1 text-xs text-slate-400">{p.tagline}</p>
-              </div>
-              <p className="text-3xl font-semibold tabular-nums text-slate-100">
-                {p.monthly === 0 ? "Free" : formatINR(perMonth)}
-                {p.monthly > 0 && <span className="text-xs font-normal text-slate-500"> / month</span>}
-              </p>
-              {yearly && p.monthly > 0 && <p className="-mt-3 text-[11px] text-slate-500">{formatINR(p.monthly * YEARLY_MONTHS)} billed once a year</p>}
-              <ul className="flex-1 space-y-2 text-xs">
-                {p.features.map((f) => (
-                  <li key={f.text} className={cn("flex items-start gap-2", f.on ? "text-slate-200" : "text-slate-600")}>
-                    {f.on ? <Check size={14} className="mt-px shrink-0 text-emerald-300" /> : <Minus size={14} className="mt-px shrink-0" />}
-                    <span>{f.text}</span>
-                  </li>
-                ))}
-              </ul>
-              <button disabled className="w-full cursor-not-allowed rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-500" title="Payment is not connected yet">Billing not connected yet</button>
-            </Card>
-          );
-        })}
-      </div>
+                <p className="text-3xl font-semibold tabular-nums text-slate-100">
+                  {price === null ? "Custom" : price === 0 ? "Free" : rupees(price)}
+                  {price !== null && price > 0 && <span className="text-xs font-normal text-slate-500"> / {annual ? "year" : "month"}</span>}
+                </p>
+                <ul className="flex-1 space-y-2 text-xs text-slate-200">
+                  {!p.isCustom && (
+                    <li className="flex items-start gap-2"><Check size={14} className="mt-px shrink-0 text-emerald-300" /><span>{credits.toLocaleString("en-IN")} credits {annual ? "per year" : "per month"}</span></li>
+                  )}
+                  <li className="flex items-start gap-2"><Check size={14} className="mt-px shrink-0 text-emerald-300" /><span>{p.maxActiveProjects === null ? "No project limit" : `${p.maxActiveProjects} active projects`}</span></li>
+                  {p.isCustom && <li className="flex items-start gap-2"><Check size={14} className="mt-px shrink-0 text-emerald-300" /><span>Credits and terms arranged with you</span></li>}
+                </ul>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
