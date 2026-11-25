@@ -22,12 +22,12 @@ Written from the repository as it is today (commit `29e1cfa`). Nothing here is a
 |---|---|---|
 | 2 Pricing | **Mostly done (step 3, built)** | The six plans from the brief, prices per currency in `plan_prices`, prices and credit allowances locked at sale, coupons, trials, an admin screen. See section 9. Still open: refunds (step 4), promotional pricing campaigns beyond coupons, ten currencies with real price points (the table supports them; only dollars, rupees and pounds have prices), a "move everyone to the new price" tool. Earlier text of this row: | Plan prices are columns for three currencies (rupee, dollar, pound). The brief wants `plan_prices` rows per currency and interval for ten currencies. Missing: coupons, promotions, trials, per-country price IDs, an admin screen for plans, refunds. The brief's plan table differs from the live catalogue (see section 3). |
 | 3 Wallet | **Done (step 1, built)** | Three buckets (promotional, subscription, purchased), spend order, expiry with a daily sweep, per-bucket holds, reconciliation (`auditBuckets`). See section 7. Still open: a separate grants table and a scheduled reconciliation job (the audit exists; nothing calls it on a timer). |
-| 4 Providers | **Partial** | Only Anthropic (plus a free demo model). Missing: Gemini and OpenAI adapters, streaming, circuit breakers, `getModels`, cached-token and tool charges. |
+| 4 Providers | **Mostly done (step 5, built)** | Anthropic, OpenAI and Gemini adapters (never called against the real APIs yet), circuit breaker per provider, new models arrive switched off. Missing: streaming. |
 | 5 Routing | **Partial** | Routing is tiers in code (`autoTier`, `modelFor`). Missing: admin-configurable routing rules, task types, model-level spend limits, plan-based model access. |
 | 6 Metering | **Done (step 2, built)** | Versioned prices, cached-token prices, other billable charges, markup rules by provider, model and task, minimum charge and rounding settings, raw usage kept, missing usage handled, every attempt logged. See section 8. Still open: image, audio and video charges (the field for "other charges" exists; no provider reports them yet) and the stage-level run record of phase 7. |
 | 7 Agent workflow | **Partial** | The builder covers plan, files and review. Missing: document analysis and testing stages, an execution id per stage with provider cost, customer charge and reserved versus consumed credits on one row. |
-| 8 Top-ups | **Missing** | No packages, no purchase flow. |
-| 9 Payments | **Missing** | No Stripe or Razorpay code, no webhooks, no payment table. Payments are recorded by hand. |
+| 8 Top-ups | **Partial (step 4)** | Packs, orders, payment confirmation and credit grant exist as APIs. Missing: the customer screen (step 6). |
+| 9 Payments | **Partial** | Provider-neutral layer, payment records, signed notices with duplicate prevention, refunds, chargebacks, credit packs built (section 10). Missing: the Stripe and Razorpay adapters themselves (need accounts). |
 | 10 Currency, tax | **Partial** | Display by country for three currencies. Missing: exchange-rate table, ten currencies, billing addresses, tax provider, currency on invoices. Invoices and GST are rupees only. |
 | 11 Admin dashboard | **Partial** | No revenue, churn, margin or cost-by-provider views; no audit log. |
 | 12 User billing dashboard | **Partial** | APIs exist (`/api/workspace/billing`); the screens (plan, credits, history, invoices, top-up) do not. A usage page exists. |
@@ -145,4 +145,45 @@ Add: `plan_prices`, `credit_buckets` (with expiry), `credit_grants`, `credit_pac
 - The pound prices are unverified, and the rupee and dollar prices have not been tested with customers.
 - No proration: an upgrade starts a new period when it is paid.
 - Credits for an upgrade or a coupon never carry a tax calculation beyond GST on rupees (step 8).
-- Payments are still recorded by the administrator. Refunds, payment events and the card and UPI providers are step 4.
+- Payments are still recorded by the administrator until a provider is connected (see section 10).
+
+## 10. Step 4 built: the payments layer (migration 14)
+
+**What it is.** One way for money to enter the system, whoever sends it. A payment provider is a small adapter (`src/server/payments/provider.ts`): it checks a signed notice and turns it into plain events (payment succeeded or failed, refund made, dispute opened, won or lost) and, if it can, makes refunds. The built-in `manual` provider has no notices: the administrator records the payment by hand, exactly as before. No Stripe or Razorpay code exists yet; when you have accounts, each is one adapter file. No fake payment exists in the product code.
+
+**Tables.** `billing_payments` (named so to keep the agency's own `payments` table untouched), `payment_webhook_events` (unique per provider and event id), `refunds`, `topups`, `credit_packages`, `credit_package_prices`.
+
+**Rules that protect the money.**
+- A notice with a missing or wrong signature is refused before anything is read. Timestamped signatures older than five minutes are refused (replay).
+- Each notice is stored once. The same event again does nothing; the same payment under a new event id also does nothing.
+- The amount and currency must match the invoice or order, otherwise the notice is recorded as failed and nothing is applied.
+- A second payment for something already paid is kept and flagged so it can be refunded; it applies and grants nothing, and refunding it takes no credits.
+- A failed attempt never undoes a success.
+- Paying an invoice or a top-up and granting the credits happen in one transaction.
+
+**Refunds.** Full or partial, with a reason, idempotent by key. The credits that payment bought are taken back in the same proportion (rounded down, so the shares add up exactly), from the bucket they went into, only as far as they are unspent or not held by a running job. What was already spent is recorded as unrecovered; the balance never goes negative. For a provider that can refund, the provider is asked first and the books change only if it agrees. Refunds made at the provider's dashboard arrive as notices and are recorded once. A lost dispute counts as a full refund; an open one blocks refunding.
+
+**Credit packs.** 100, 250, 500 and 1,000 credits at $3, $7, $14, $27 (and rupee and pound prices; pounds are proposed). An order fixes its price and carries GST on rupees only. Credits arrive only when payment is confirmed. At most five unpaid orders per organization. Admin can edit packs and per-currency prices; price changes reach new orders only.
+
+**Admin.** `/ai/admin` has Payments: record a payment, list with refunds, refund, packs and prices, provider notices. APIs: `POST /api/webhooks/[provider]` (public, signature only), `GET /api/admin/payments`, `POST …/payments/record`, `POST …/payments/refund`, `GET/PUT …/credit-packages`, `PUT …/credit-packages/prices`, `GET …/webhook-events`, customer `GET/POST/DELETE /api/workspace/billing/topup`.
+
+**Tests.** `tests/payments.test.ts` (43) and `tests/payments-migration.test.ts` (4, on a database with agency data: tables added, old rows kept, backup made first). Mutation checks on the duplicate guard, event de-duplication, amount check and refund rounding were all caught.
+
+**Not done.** The Stripe and Razorpay adapters; a customer-facing top-up screen (step 6); an automatic job to process renewals; tax beyond GST on rupees (step 8).
+
+## 11. Step 5 built: more providers and a circuit breaker (no migration)
+
+**Adapters.** `src/server/ai/providers-extra.ts` adds OpenAI (Chat Completions, key `OPENAI_API_KEY`) and Gemini (`generateContent`, key `GEMINI_API_KEY`, sent in a header, never in the address). Each reads its provider's usage the way that provider bills it: OpenAI counts cached tokens inside the prompt count, so they are taken out and priced at the cache-read price; Gemini counts "thinking" tokens apart from the answer's tokens, so they are added to the output. If a provider returns no usable usage, the answer is kept and the gateway prices it from its own estimate and flags it (as before). A Gemini model name that could change the request address is refused before anything is sent. Base addresses can be overridden (`OPENAI_BASE_URL`, `GEMINI_BASE_URL`) for a proxy.
+
+**No guessed models or prices.** Nothing is seeded for these two providers, because current model names and prices cannot be verified from here. In `/ai/admin` the administrator uses **Add a model**: it is created switched off with a zero price, and the catalogue refuses to switch a real model on at a zero price. So a model only starts serving after someone has typed the name and prices from the provider's own page. Price changes keep their history as before.
+
+**Circuit breaker.** `src/server/ai/circuit.ts`. After 5 failures in a row a provider is skipped for 30 seconds; then one request probes it; success closes the circuit, failure reopens it. Temporary errors and a rejected key (401/403) count against the provider; a request it rejects as malformed (400) does not. While open, the next model of the same tier answers; if none is left the request is refused at once with a new code `provider-unavailable` (HTTP 503), before any credits are held. The builder pauses a job with a clear message instead of failing steps. State is kept in memory per server process.
+
+**Admin.** `/ai/admin` shows each provider's key status (never the key) and circuit state, and the Add a model form. `GET /api/admin/ai` now includes `providers`.
+
+**Tests.** `tests/ai-providers.test.ts` (29): the breaker, both adapters against a stand-in for `fetch` (request shape, usage mapping, error classes), models arriving off, charging through the gateway on split usage, skipping an open provider, probing after cooldown, and the admin view. Seven deliberate breakages (cached tokens, thinking tokens, ignoring the breaker, not counting a bad key, key in the address, two probes, a success not clearing failures) were all caught.
+
+**Not done.**
+- Streaming. It needs the charge to be settled when a stream ends or is cut off; worth building together with the playground screen.
+- Admin-editable routing rules by task. Routing is still tier plus priority, or an explicit model.
+- None of the three adapters has been called against a real API. Do that once with a small key before relying on them.

@@ -6,12 +6,14 @@ import { Loader2, Lock } from "lucide-react";
 import { Customers } from "./customers";
 import { MarkupRules, type Rule } from "./markups";
 import { CouponsAdmin, PlansAdmin } from "./plans-admin";
+import { PaymentsAdmin } from "./payments-admin";
 import { api, ApiError, Button, Card, credits, inputClass, Notice, Pill, usd } from "./light";
 
 type Model = { cacheReadUsdMicroPerMtok: number | null; cacheWriteUsdMicroPerMtok: number | null; priceVersion: number; id: string; provider: string; providerModel: string; label: string; tier: string; inputUsdMicroPerMtok: number; outputUsdMicroPerMtok: number; markupBasisPoints: number; maxOutputTokens: number; priority: number; enabled: boolean };
 type Org = { orgId: string; orgName: string; requests: number; failed: number; providerCostMicroUsd: number; chargedUnits: number; chargedUsdAtCurrentRate: number; dailyCapUnits: number | null };
 type Policy = { rounding: "up" | "nearest"; minChargeUnits: number };
-type Overview = { unitsPerUsd: number; policy: Policy; markupRules: Rule[]; models: Model[]; organizations: Org[] };
+type ProviderStatus = { id: string; configured: boolean; circuit: "closed" | "open" | "half-open" };
+type Overview = { providers: ProviderStatus[]; unitsPerUsd: number; policy: Policy; markupRules: Rule[]; models: Model[]; organizations: Org[] };
 
 /** Administrator view: what the AI really costs, what customers are charged, and the dials. Needs the administrator token. */
 export function AiAdmin() {
@@ -40,9 +42,12 @@ export function AiAdmin() {
       <Customers onChanged={flash} onError={fail} />
       <PlansAdmin onNote={flash} onError={fail} />
       <CouponsAdmin onNote={flash} onError={fail} />
+      <PaymentsAdmin onNote={flash} onError={fail} />
       <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>
       <Charging value={overview.unitsPerUsd} policy={overview.policy} onSaved={() => { flash("Charging settings saved."); load(); }} onError={fail} />
       <MarkupRules rules={overview.markupRules} modelIds={overview.models.map((m) => m.id)} providers={[...new Set(overview.models.map((m) => m.provider))]} onSaved={() => { flash("Markup rules saved."); load(); }} onError={fail} />
+      <Providers providers={overview.providers} />
+      <AddModel providers={overview.providers.map((p) => p.id)} onSaved={() => { flash("Model added, switched off. Check its prices, then turn it on."); load(); }} onError={fail} />
       <Models models={overview.models} onSaved={() => { flash("Model saved."); load(); }} onError={fail} />
       <Orgs orgs={overview.organizations} onSaved={() => { flash("Limit saved."); load(); }} onError={fail} />
     </div>
@@ -117,6 +122,52 @@ function Charging({ value, policy, onSaved, onError }: { value: number; policy: 
 
 const perMtok = (micro: number) => (micro / 1_000_000).toString();
 const toMicro = (s: string) => Math.round(Number(s) * 1_000_000);
+
+const KEY_NAME: Record<string, string> = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", gemini: "GEMINI_API_KEY" };
+
+function Providers({ providers }: { providers: ProviderStatus[] }) {
+  return (
+    <Card className="space-y-3">
+      <h2 className="text-sm font-semibold text-slate-900">AI providers</h2>
+      <p className="text-xs leading-5 text-slate-600">A provider works once its key is set on the server (in the environment file, then restart). If a provider keeps failing its circuit opens: it is skipped for 30 seconds so customers are not kept waiting, then tried again.</p>
+      <ul className="divide-y divide-slate-100 text-sm">
+        {providers.map((p) => (
+          <li key={p.id} className="flex flex-wrap items-center gap-3 py-2">
+            <span className="min-w-24 font-semibold text-slate-900">{p.id}</span>
+            {p.configured ? <Pill tone="green">key set</Pill> : <Pill tone="slate">no key: {KEY_NAME[p.id] ?? "key"}</Pill>}
+            {p.configured && <Pill tone={p.circuit === "closed" ? "green" : p.circuit === "open" ? "red" : "amber"}>{p.circuit === "closed" ? "working" : p.circuit === "open" ? "paused after failures" : "testing"}</Pill>}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function AddModel({ providers, onSaved, onError }: { providers: string[]; onSaved: () => void; onError: (e: unknown) => void }) {
+  const [f, setF] = useState({ id: "", provider: providers[0] ?? "openai", providerModel: "", label: "", tier: "balanced" });
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    setBusy(true);
+    try { await api("/api/admin/ai/models", { method: "PUT", body: { ...f, id: f.id.trim(), providerModel: f.providerModel.trim(), label: f.label.trim() } }); setF({ ...f, id: "", providerModel: "", label: "" }); onSaved(); } catch (e) { onError(e); } finally { setBusy(false); }
+  };
+  const sel = "rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500";
+  return (
+    <Card className="space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-900">Add a model</h2>
+        <p className="mt-1 text-xs leading-5 text-slate-600">Type the model name exactly as the provider documents it. A new model is always added switched off with no price: set its prices from the provider&apos;s own price page below, then turn it on. It cannot be turned on at a zero price.</p>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs text-slate-600">Provider<select value={f.provider} onChange={(e) => setF({ ...f, provider: e.target.value })} className={sel + " mt-1 block"} aria-label="Provider">{providers.map((p) => <option key={p}>{p}</option>)}</select></label>
+        <label className="text-xs text-slate-600">Provider&apos;s model name<input value={f.providerModel} onChange={(e) => setF({ ...f, providerModel: e.target.value })} className={inputClass + " mt-1 w-56"} aria-label="Provider model name" /></label>
+        <label className="text-xs text-slate-600">Our id (lowercase)<input value={f.id} onChange={(e) => setF({ ...f, id: e.target.value.toLowerCase() })} className={inputClass + " mt-1 w-40"} aria-label="Model id" /></label>
+        <label className="text-xs text-slate-600">Name shown<input value={f.label} onChange={(e) => setF({ ...f, label: e.target.value })} className={inputClass + " mt-1 w-40"} aria-label="Model label" /></label>
+        <label className="text-xs text-slate-600">Tier<select value={f.tier} onChange={(e) => setF({ ...f, tier: e.target.value })} className={sel + " mt-1 block"} aria-label="Tier"><option value="fast">fast</option><option value="balanced">balanced</option><option value="best">best</option></select></label>
+        <Button onClick={() => void add()} disabled={busy || f.id.trim().length < 2 || !f.providerModel.trim() || !f.label.trim()}>{busy && <Loader2 size={15} className="animate-spin" />} Add (switched off)</Button>
+      </div>
+    </Card>
+  );
+}
 
 function Models({ models, onSaved, onError }: { models: Model[]; onSaved: () => void; onError: (e: unknown) => void }) {
   return (

@@ -3,6 +3,8 @@
  * provider is one new adapter and a row in ai_models: nothing else changes. Server only.
  */
 
+import { geminiAdapter, openaiAdapter } from "./providers-extra";
+
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ProviderRequest = { providerModel: string; system?: string; messages: ChatMessage[]; maxOutputTokens: number; signal?: AbortSignal };
 /**
@@ -100,4 +102,4 @@ export const echoAdapter: ProviderAdapter = {
   },
 };
 
-export const defaultProviders = (): Record<string, ProviderAdapter> => ({ anthropic: anthropicAdapter, echo: echoAdapter });
+export const defaultProviders = (): Record<string, ProviderAdapter> => ({ anthropic: anthropicAdapter, openai: openaiAdapter, gemini: geminiAdapter, echo: echoAdapter });

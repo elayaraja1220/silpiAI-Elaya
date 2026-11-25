@@ -4,7 +4,7 @@ import { apiHandle } from "@/server/http";
 import { GatewayError, type GatewayErrorCode } from "./gateway";
 import { JobError } from "./orchestrator";
 
-const STATUS: Record<GatewayErrorCode, number> = { invalid: 400, "model-unavailable": 404, "provider-not-configured": 503, "daily-cap": 429, "too-many-requests": 429, "in-progress": 409, "provider-failed": 502 };
+const STATUS: Record<GatewayErrorCode, number> = { invalid: 400, "model-unavailable": 404, "provider-not-configured": 503, "daily-cap": 429, "too-many-requests": 429, "in-progress": 409, "provider-failed": 502, "provider-unavailable": 503 };
 
 const refusal = (e: GatewayError | JobError) =>
   e instanceof JobError

@@ -4,6 +4,7 @@ import { getDb, transaction } from "@/lib/business/db";
 import { CreditError, extendReservation, getWallet, releaseReservation, reserveCredits, settleReservation, type Wallet } from "@/server/credits";
 import { getDailyCap, getMeteringPolicy, getModel, getUnitsPerUsd, listModels, resolveMarkup, TASK_TYPES, TIERS, type AiModel, type Tier } from "./catalog";
 import { chargeUnits, estimateTokens, usageCostMicroUsd, worstInputPrice, type MeteringPolicy, type Usage } from "./pricing";
+import { providerBreaker, type Breaker } from "./circuit";
 import { defaultProviders, ProviderError, type ChatMessage, type ProviderAdapter } from "./providers";
 
 /**
@@ -18,7 +19,7 @@ import { defaultProviders, ProviderError, type ChatMessage, type ProviderAdapter
  * answers are not stored. Prices and the credit conversion are database rows, never constants in this file.
  */
 
-export type GatewayErrorCode = "invalid" | "model-unavailable" | "provider-not-configured" | "daily-cap" | "too-many-requests" | "in-progress" | "provider-failed";
+export type GatewayErrorCode = "invalid" | "model-unavailable" | "provider-not-configured" | "daily-cap" | "too-many-requests" | "in-progress" | "provider-failed" | "provider-unavailable";
 export class GatewayError extends Error {
   code: GatewayErrorCode;
   details: Record<string, unknown>;
@@ -56,7 +57,7 @@ export type GatewayInput = {
   /** What the request is for (chat, document_analysis, architecture_planning, code_generation, bug_fixing, code_review, other). It selects the markup rule. */
   taskType?: string;
 };
-export type GatewayDeps = { providers?: Record<string, ProviderAdapter>; sleep?: (ms: number) => Promise<void>; now?: () => number };
+export type GatewayDeps = { providers?: Record<string, ProviderAdapter>; sleep?: (ms: number) => Promise<void>; now?: () => number; breaker?: Breaker };
 
 export type GatewayResult = {
   requestId: string;
@@ -183,8 +184,12 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
   // The model chain, kept only where its provider can answer: no credits are ever held for a model that cannot run.
   const requested = String(input.model ?? "auto");
   const all = candidatesFor(requested, c.promptChars, c.maxOutputTokens ?? LIMITS.defaultOutputTokens);
-  const chain = all.filter((m) => providers[m.provider]?.isConfigured());
-  if (!chain.length) throw new GatewayError("provider-not-configured", "The AI provider for this model is not set up yet. Nothing was charged.");
+  const breaker = deps.breaker ?? providerBreaker;
+  const configured = all.filter((m) => providers[m.provider]?.isConfigured());
+  if (!configured.length) throw new GatewayError("provider-not-configured", "The AI provider for this model is not set up yet. Nothing was charged.");
+  // A provider whose circuit is open is skipped, so a customer is not made to wait through retries that will fail.
+  const chain = configured.filter((m) => breaker.state(m.provider) !== "open");
+  if (!chain.length) throw new GatewayError("provider-unavailable", "The AI provider for this model is having problems right now. Nothing was charged. Try again in a minute, or choose another model.");
   const rate = getUnitsPerUsd(db);
   const policy = getMeteringPolicy(db);
   const hold = Math.max(...chain.map((m) => worstCaseUnits(m, c.promptChars, c.maxOutputTokens, rate, policy, c.taskType)));
@@ -241,6 +246,7 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i]!;
     const provider = providers[model.provider]!;
+    if (!breaker.allow(model.provider)) { lastError = "The provider's circuit is open."; continue; } // opened a moment ago, or another request holds the probe
     for (let a = 1; a <= LIMITS.attemptsPerModel; a++) {
       if (clock() - started > LIMITS.totalDeadlineMs) { lastError = "The request ran out of time."; break; }
       attempts++;
@@ -261,6 +267,7 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
         const markup = resolveMarkup(model, c.taskType, db);
         const priced = chargeUnits(costUsd, markup.basisPoints, rate, policy);
         const units = priced.units;
+        breaker.success(model.provider);
         logAttempt(attempts, model.id, "success", { latencyMs: clock() - tryStarted, input: usage.inputTokens, output: usage.outputTokens });
         let held = hold;
         if (reservationId && units > held) {
@@ -282,6 +289,10 @@ export async function complete(input: GatewayInput, deps: GatewayDeps = {}): Pro
         if (!(e instanceof ProviderError)) { logAttempt(attempts, model.id, "error", { error: (e as Error).message, latencyMs: clock() - started }); giveBack("ai request failed"); fail("error", (e as Error).message, { attempts }); throw e; }
         logAttempt(attempts, model.id, e.retryable ? "retryable-error" : "error", { error: e.message, latencyMs: clock() - started });
         lastError = e.message;
+        // Provider trouble (temporary errors, a rejected key) counts against the provider; a request it rejects as malformed is our problem, not its health.
+        if (e.retryable || e.status === 401 || e.status === 403) breaker.failure(model.provider);
+        else breaker.success(model.provider);
+        if (breaker.state(model.provider) === "open") break; // it just opened: stop asking it
         if (!e.retryable) break; // a request the provider rejects will be rejected again: try the next model, not the same one
         if (a < LIMITS.attemptsPerModel) await sleep(400 * a);
       }

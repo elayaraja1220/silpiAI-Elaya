@@ -254,6 +254,7 @@ export async function runJob(jobId: string, deps: GatewayDeps = {}): Promise<voi
           setStep(jobId, step.seq, back);
           if (e.code === "daily-cap") { pause(jobId, "daily_cap", "Your organization's daily AI limit was reached. Resume after it resets (midnight UTC) or ask for a higher limit."); return; }
           if (e.code === "provider-not-configured") { pause(jobId, "provider", "The AI provider for this quality level is not connected. Nothing was charged. Try Demo quality, or ask the administrator to add the provider key."); return; }
+          if (e.code === "provider-unavailable") { pause(jobId, "provider", "The AI provider is having problems right now. Nothing was charged. Resume in a minute."); return; }
           if (e.code === "provider-failed" && ++providerFailures < JOB_LIMITS.providerFailuresPerRun) continue;
           setStep(jobId, step.seq, { ...back, status: "failed", error: e.message.slice(0, 300) });
           pause(jobId, "error", `A step failed: ${e.message} Nothing was charged for it. Resume to try again.`);

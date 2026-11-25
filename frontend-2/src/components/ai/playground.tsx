@@ -79,6 +79,7 @@ export function Playground() {
       if (err.status === 402) setError({ message: "Not enough credits for this request. Reduce the answer length, choose a cheaper model, or ask your administrator for more credits.", tone: "amber" });
       else if (b.code === "daily-cap") setError({ message: "Your organization's daily AI limit has been reached. It resets at midnight UTC.", tone: "amber" });
       else if (b.code === "provider-not-configured") setError({ message: "This model's AI provider is not connected yet. Nothing was charged. Try Demo, or ask the administrator to add the provider key.", tone: "amber" });
+      else if (b.code === "provider-unavailable") setError({ message: "This model's AI provider is having problems right now. Nothing was charged. Try again in a minute, or choose another model.", tone: "amber" });
       else setError({ message: err.message || "Something went wrong. You were not charged.", tone: "red" });
     } finally {
       setBusy(false);
