@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Eye, EyeOff, Loader2, ShieldCheck, Sparkles, Undo2, WalletCards } from "lucide-react";
+import { Eye, EyeOff, Loader2, ShieldCheck, Undo2, WalletCards } from "lucide-react";
 
 import { api, Button, inputClass, Notice } from "./light";
 
@@ -39,7 +39,8 @@ export function SignIn({ onDone }: { onDone: () => void }) {
     <div className="mx-auto grid max-w-4xl items-center gap-8 py-6 md:grid-cols-2 md:py-12">
       <div className="space-y-6">
         <div>
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm"><Sparkles size={22} /></span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/silpi-mark-512.png" alt="SILPI AI" width={64} height={64} className="h-16 w-16" />
           <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">Welcome to SILPI AI</h1>
           <p className="mt-2 text-slate-600">Chat with AI models and build whole projects from a short description, paid with simple credits.</p>
         </div>

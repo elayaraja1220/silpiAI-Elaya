@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Coins, Loader2, LogOut, Sparkles } from "lucide-react";
+import { ArrowLeft, Coins, Loader2, LogOut } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { api, Card, credits } from "./light";
@@ -58,9 +58,11 @@ export function AiShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900" style={{ colorScheme: "light" }} data-theme="light" data-testid="ai-section">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-2.5 sm:px-6">
-          <Link href="/ai" className="flex shrink-0 items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white"><Sparkles size={16} /></span>
-            <span className="hidden text-[15px] font-semibold tracking-tight sm:inline">SILPI AI</span>
+          <Link href="/ai" className="flex shrink-0 items-center" aria-label="SILPI AI home">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/silpi-mark-64.png" alt="" width={32} height={32} className="h-8 w-8 sm:hidden" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/silpi-logo.png" alt="SILPI AI, Intelligent Development Agent" className="hidden h-9 w-auto sm:block" />
           </Link>
           <nav className="-mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1" aria-label="SILPI AI sections">
             {TABS.map((t) => {
