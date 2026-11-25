@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, ChevronDown, Coins, FileCode2, ListChecks, MessageSquare, ShieldCheck, Undo2 } from "lucide-react";
 
+import { currencyFromQuery, formatMoney, pickCurrency, priceIn, type Currency } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 import { BrandLogo } from "./brand-logo";
 import { FlowMock, LimitMock, MeterMock, PlanMock, PrivacyMock, TierMock, ChatMock } from "./landing-visuals";
@@ -18,9 +19,8 @@ import { FlowMock, LimitMock, MeterMock, PlanMock, PrivacyMock, TierMock, ChatMo
 const BRIEF_KEY = "silpi:brief";
 const EXAMPLES = ["A one-page website for my bakery", "A portfolio site for a photographer", "A booking page for a yoga studio"];
 
-type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean };
+type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyPriceUsdCents: number | null; annualPriceUsdCents: number | null; monthlyPriceGbpPence: number | null; annualPriceGbpPence: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean };
 type Price = { id: string; label: string; tier: string; creditsPer1kInput: number; creditsPer1kOutput: number };
-const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 // ---- what credits buy, worked out from the LIVE credit prices (never typed here) -----------------------------------------------------------
 const tierOf = (prices: Price[], tier: string) => prices.find((p) => p.tier === tier);
@@ -51,9 +51,15 @@ export function Landing() {
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [prices, setPrices] = useState<Price[]>([]);
   const [yearly, setYearly] = useState(false);
+  // The currency follows the visitor's country: rupees in India, pounds in the UK, dollars everywhere else. There is no switch to fiddle with.
+  const [currency, setCurrency] = useState<Currency>("USD");
 
   useEffect(() => {
-    fetch("/api/plans", { cache: "no-store" }).then((r) => r.json()).then((b: { plans?: Plan[]; aiPrices?: Price[] }) => { setPlans(b.plans ?? null); setPrices(b.aiPrices ?? []); }).catch(() => setPlans(null));
+    fetch("/api/plans", { cache: "no-store" }).then((r) => r.json()).then((b: { plans?: Plan[]; aiPrices?: Price[]; country?: string | null }) => {
+      setPlans(b.plans ?? null);
+      setPrices(b.aiPrices ?? []);
+      setCurrency(currencyFromQuery(new URLSearchParams(window.location.search).get("currency")) ?? pickCurrency({ country: b.country, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, language: navigator.language }));
+    }).catch(() => setPlans(null));
   }, []);
 
   /** Keep what was typed and carry it through sign-in, so the first thing the person wrote is waiting in the builder. */
@@ -241,22 +247,22 @@ export function Landing() {
       {/* --------------------------------------------------------------- pricing */}
       <section id="pricing" className="scroll-mt-20 bg-slate-50 py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <h2 className="text-center text-4xl font-semibold tracking-tight sm:text-5xl">Simple plans, paid in credits</h2>
-          <p className="mx-auto mt-4 max-w-xl text-center text-slate-600">Every plan adds credits to your balance each period. Not sure what a credit buys? <a href="#credits" className="text-indigo-700 underline-offset-2 hover:underline">See what a credit is</a>. Prices exclude GST and may change as the product grows.</p>
+          <h2 className="text-center text-4xl font-semibold tracking-tight sm:text-5xl">Start free. Upgrade when you're ready.</h2>
+          <p className="mx-auto mt-4 max-w-xl text-center text-slate-600">Credits power every chat and build, and you see the cost first. <a href="#credits" className="text-indigo-700 underline-offset-2 hover:underline">What's a credit?</a></p>
           <div className="mx-auto mt-6 flex w-fit rounded-full border border-slate-200 bg-white p-0.5 text-sm" role="group" aria-label="Billing period">
             {[{ y: false, l: "Monthly" }, { y: true, l: "Yearly" }].map((o) => <button key={o.l} onClick={() => setYearly(o.y)} aria-pressed={yearly === o.y} className={cn("rounded-full px-4 py-1.5 transition", yearly === o.y ? "bg-slate-900 text-white" : "text-slate-600 hover:text-slate-900")}>{o.l}</button>)}
           </div>
           {plans === null ? <p className="mt-10 text-center text-sm text-slate-400">Loading plans...</p> : (
-            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {plans.map((p) => {
-                const annual = yearly && p.annualPricePaise !== null && p.annualPricePaise > 0;
-                const price = p.isCustom ? null : annual ? p.annualPricePaise : p.monthlyPricePaise;
+                const annual = yearly && (priceIn(p, currency, true) ?? 0) > 0;
+                const price = p.isCustom ? null : priceIn(p, currency, annual);
                 const creditCount = (p.monthlyCreditUnits * (annual ? 12 : 1)) / 1000;
                 return (
                   <article key={p.id} className="flex flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                     <h3 className="text-base font-semibold">{p.name}</h3>
                     <p className="mt-1 min-h-10 text-xs leading-5 text-slate-500">{p.description}</p>
-                    <p className="mt-4 text-3xl font-semibold tabular-nums">{price === null ? "Custom" : price === 0 ? "Free" : rupees(price)}{price !== null && price > 0 && <span className="text-xs font-normal text-slate-400"> / {annual ? "year" : "month"}</span>}</p>
+                    <p className="mt-4 text-3xl font-semibold tabular-nums">{price === null ? "Custom" : price === 0 ? "Free" : formatMoney(price, currency)}{price !== null && price > 0 && <span className="text-xs font-normal text-slate-400"> / {annual ? "year" : "month"}</span>}</p>
                     <ul className="mt-4 flex-1 space-y-2 text-sm text-slate-700">
                       {!p.isCustom && <li className="flex gap-2"><Check size={15} className="mt-0.5 shrink-0 text-emerald-500" />{creditCount.toLocaleString("en-IN")} credits {annual ? "a year" : "a month"}</li>}
                       {!p.isCustom && prices.length > 0 && <li className="flex gap-2 text-xs text-slate-500"><span className="w-[15px] shrink-0" />about {about(answers(prices, "fast", creditCount))} Fast answers, or {about(projects(prices, creditCount))} small projects</li>}
@@ -268,7 +274,7 @@ export function Landing() {
               })}
             </div>
           )}
-          <p className="mt-6 text-center text-xs text-slate-500">Payments are recorded by the administrator for now. Online payment is not connected yet.</p>
+          <p className="mt-6 text-center text-xs text-slate-500">Prices exclude taxes and may change. Payments are recorded by the administrator for now; online payment, and billing in your local currency, start with it.</p>
         </div>
       </section>
 

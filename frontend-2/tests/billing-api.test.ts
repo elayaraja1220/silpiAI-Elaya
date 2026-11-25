@@ -70,9 +70,9 @@ after(() => {
 describe("1. the public price list", () => {
   it("anyone can read the active plans, and the route cannot change anything", async () => {
     const { plans } = await mods();
-    const res = await plans.GET();
+    const res = await plans.GET(req("/api/plans"));
     const body = await res.json();
-    assert.deepEqual(body.plans.map((p: { id: string }) => p.id), ["free", "starter", "pro", "professional", "enterprise"]);
+    assert.deepEqual(body.plans.map((p: { id: string }) => p.id), ["free", "pro", "professional", "enterprise"], "Starter is retired");
     assert.deepEqual(Object.keys(plans).filter((k) => ["POST", "PUT", "PATCH", "DELETE"].includes(k)), []);
   });
 });
@@ -151,6 +151,7 @@ describe("3. changing plan through the API", () => {
     const { planChange, cancel, adminInvoices } = await mods();
     const cookie = await signIn("owner@theta.example");
     assert.equal((await cancel.POST(req("/api/workspace/billing/cancel", { method: "POST", cookie, body: { action: "cancel" } }))).status, 400, "Free");
+    (await import("@/server/subscriptions")).updatePlan("starter", { active: true }); // retired in the real catalogue; this test needs a cheaper paid plan
     const asked = await (await planChange.POST(req("/api/workspace/billing/plan", { method: "POST", cookie, body: { planId: "starter" } }))).json();
     await adminInvoices.POST(req("/api/admin/invoices", { method: "POST", headers: admin, body: { invoiceId: asked.result.invoice.id, providerRef: "UPI-THE001" } }));
     const cancelled = await (await cancel.POST(req("/api/workspace/billing/cancel", { method: "POST", cookie, body: { action: "cancel" } }))).json();

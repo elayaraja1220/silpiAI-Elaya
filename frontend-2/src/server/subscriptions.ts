@@ -27,15 +27,15 @@ const RENEWAL_NOTICE_DAYS = 7;
 const DAY_MS = 86_400_000;
 
 export type Period = "monthly" | "annual";
-export type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean; active: boolean; sortOrder: number };
+export type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyPriceUsdCents: number | null; annualPriceUsdCents: number | null; monthlyPriceGbpPence: number | null; annualPriceGbpPence: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean; active: boolean; sortOrder: number };
 export type Subscription = { id: string; orgId: string; planId: string; pendingPlanId: string | null; status: "pending_payment" | "active" | "past_due" | "ended"; billingPeriod: Period; currentPeriodStart: string | null; currentPeriodEnd: string | null; cancelAtPeriodEnd: boolean; createdAt: string };
 export type Invoice = { id: string; number: string; orgId: string; subscriptionId: string; planId: string; periodStart: string; periodEnd: string; subtotalPaise: number; gstBasisPoints: number; gstPaise: number; totalPaise: number; status: "open" | "paid" | "void"; provider: string; providerRef: string | null; issuedAt: string; paidAt: string | null };
 
-type PlanRow = { id: string; name: string; description: string; monthly_price_paise: number | null; annual_price_paise: number | null; monthly_credit_units: number; max_active_projects: number | null; is_custom: number; active: number; sort_order: number };
+type PlanRow = { id: string; name: string; description: string; monthly_price_paise: number | null; annual_price_paise: number | null; monthly_price_usd_cents: number | null; annual_price_usd_cents: number | null; monthly_price_gbp_pence: number | null; annual_price_gbp_pence: number | null; monthly_credit_units: number; max_active_projects: number | null; is_custom: number; active: number; sort_order: number };
 type SubRow = { id: string; org_id: string; plan_id: string; pending_plan_id: string | null; status: Subscription["status"]; billing_period: Period; current_period_start: string | null; current_period_end: string | null; cancel_at_period_end: number; created_at: string };
 type InvoiceRow = { id: string; number: string; org_id: string; subscription_id: string; plan_id: string; period_start: string; period_end: string; subtotal_paise: number; gst_basis_points: number; gst_paise: number; total_paise: number; status: Invoice["status"]; provider: string; provider_ref: string | null; issued_at: string; paid_at: string | null };
 
-const toPlan = (r: PlanRow): Plan => ({ id: r.id, name: r.name, description: r.description, monthlyPricePaise: r.monthly_price_paise, annualPricePaise: r.annual_price_paise, monthlyCreditUnits: r.monthly_credit_units, maxActiveProjects: r.max_active_projects, isCustom: r.is_custom === 1, active: r.active === 1, sortOrder: r.sort_order });
+const toPlan = (r: PlanRow): Plan => ({ id: r.id, name: r.name, description: r.description, monthlyPricePaise: r.monthly_price_paise, annualPricePaise: r.annual_price_paise, monthlyPriceUsdCents: r.monthly_price_usd_cents, annualPriceUsdCents: r.annual_price_usd_cents, monthlyPriceGbpPence: r.monthly_price_gbp_pence, annualPriceGbpPence: r.annual_price_gbp_pence, monthlyCreditUnits: r.monthly_credit_units, maxActiveProjects: r.max_active_projects, isCustom: r.is_custom === 1, active: r.active === 1, sortOrder: r.sort_order });
 const toSub = (r: SubRow): Subscription => ({ id: r.id, orgId: r.org_id, planId: r.plan_id, pendingPlanId: r.pending_plan_id, status: r.status, billingPeriod: r.billing_period, currentPeriodStart: r.current_period_start, currentPeriodEnd: r.current_period_end, cancelAtPeriodEnd: r.cancel_at_period_end === 1, createdAt: r.created_at });
 const toInvoice = (r: InvoiceRow): Invoice => ({ id: r.id, number: r.number, orgId: r.org_id, subscriptionId: r.subscription_id, planId: r.plan_id, periodStart: r.period_start, periodEnd: r.period_end, subtotalPaise: r.subtotal_paise, gstBasisPoints: r.gst_basis_points, gstPaise: r.gst_paise, totalPaise: r.total_paise, status: r.status, provider: r.provider, providerRef: r.provider_ref, issuedAt: r.issued_at, paidAt: r.paid_at });
 
@@ -69,25 +69,35 @@ const paise = (v: unknown, name: string): number | null => {
   return v;
 };
 
+const cents = (v: unknown, name: string): number | null => {
+  if (v === null) return null;
+  if (typeof v !== "number" || !Number.isSafeInteger(v) || v < 0) throw bad(`${name} must be a whole number of the currency's smallest unit (cents or pence, 0 or more), or null when the plan is not sold in that currency.`);
+  return v;
+};
+
 /** Edits a plan (admin). Only the fields given change; the id never does. Existing subscriptions and invoices are unaffected. */
-export function updatePlan(id: string, patch: Partial<Pick<Plan, "name" | "description" | "monthlyPricePaise" | "annualPricePaise" | "monthlyCreditUnits" | "maxActiveProjects" | "active" | "sortOrder">>): Plan {
+export function updatePlan(id: string, patch: Partial<Pick<Plan, "name" | "description" | "monthlyPricePaise" | "annualPricePaise" | "monthlyPriceUsdCents" | "annualPriceUsdCents" | "monthlyPriceGbpPence" | "annualPriceGbpPence" | "monthlyCreditUnits" | "maxActiveProjects" | "active" | "sortOrder">>): Plan {
   const current = getPlan(id);
   if (!current) throw bad("That plan does not exist.");
-  const known = new Set(["name", "description", "monthlyPricePaise", "annualPricePaise", "monthlyCreditUnits", "maxActiveProjects", "active", "sortOrder"]);
+  const known = new Set(["name", "description", "monthlyPricePaise", "annualPricePaise", "monthlyPriceUsdCents", "annualPriceUsdCents", "monthlyPriceGbpPence", "annualPriceGbpPence", "monthlyCreditUnits", "maxActiveProjects", "active", "sortOrder"]);
   for (const k of Object.keys(patch)) if (!known.has(k)) throw bad(`Unknown plan field "${k}".`);
   const next = { ...current, ...patch };
   if (typeof next.name !== "string" || !next.name.trim() || next.name.length > 80) throw bad("The plan name is required (up to 80 characters).");
   if (typeof next.description !== "string" || next.description.length > 300) throw bad("The description must be text of up to 300 characters.");
   paise(next.monthlyPricePaise, "The monthly price");
   paise(next.annualPricePaise, "The annual price");
+  cents(next.monthlyPriceUsdCents, "The monthly dollar price");
+  cents(next.annualPriceUsdCents, "The annual dollar price");
+  cents(next.monthlyPriceGbpPence, "The monthly pound price");
+  cents(next.annualPriceGbpPence, "The annual pound price");
   if (!Number.isSafeInteger(next.monthlyCreditUnits) || next.monthlyCreditUnits < 0) throw bad("The monthly credits must be a whole number of units (0 or more).");
   if (next.maxActiveProjects !== null && (!Number.isSafeInteger(next.maxActiveProjects) || next.maxActiveProjects < 0)) throw bad("The project limit must be a whole number, or null for no limit.");
   if (typeof next.active !== "boolean") throw bad("active must be true or false.");
   if (!Number.isSafeInteger(next.sortOrder)) throw bad("sortOrder must be a whole number.");
   if (!next.isCustom && next.monthlyPricePaise === null) throw bad("A plan that is not custom needs a monthly price.");
   getDb()
-    .prepare("UPDATE plans SET name = ?, description = ?, monthly_price_paise = ?, annual_price_paise = ?, monthly_credit_units = ?, max_active_projects = ?, active = ?, sort_order = ?, updated_at = ? WHERE id = ?")
-    .run(next.name.trim(), next.description, next.monthlyPricePaise, next.annualPricePaise, next.monthlyCreditUnits, next.maxActiveProjects, next.active ? 1 : 0, next.sortOrder, new Date().toISOString(), id);
+    .prepare("UPDATE plans SET name = ?, description = ?, monthly_price_paise = ?, annual_price_paise = ?, monthly_price_usd_cents = ?, annual_price_usd_cents = ?, monthly_price_gbp_pence = ?, annual_price_gbp_pence = ?, monthly_credit_units = ?, max_active_projects = ?, active = ?, sort_order = ?, updated_at = ? WHERE id = ?")
+    .run(next.name.trim(), next.description, next.monthlyPricePaise, next.annualPricePaise, next.monthlyPriceUsdCents, next.annualPriceUsdCents, next.monthlyPriceGbpPence, next.annualPriceGbpPence, next.monthlyCreditUnits, next.maxActiveProjects, next.active ? 1 : 0, next.sortOrder, new Date().toISOString(), id);
   return getPlan(id)!;
 }
 

@@ -14,7 +14,11 @@ let n = 0;
 const newOrg = async (type: "business" | "freelancer" = "business") => (await mods()).t.createOrganization({ name: `Org ${++n}`, type }).id;
 const fails = (fn: () => unknown, pattern: RegExp) => assert.throws(fn, pattern);
 
-before(() => { process.env.SILPI_DB_PATH = path.join(dir, "subs.db"); });
+before(async () => {
+  process.env.SILPI_DB_PATH = path.join(dir, "subs.db");
+  // Starter is retired in the real catalogue (migration 6). These tests use it as "a cheaper paid plan", so they switch it back on in their own database.
+  (await import("@/server/subscriptions")).updatePlan("starter", { active: true });
+});
 after(() => {
   const cached = globalThis as unknown as { silpiDb?: { close(): void } };
   cached.silpiDb?.close();
@@ -158,7 +162,7 @@ describe("4. paying an invoice", () => {
     assert.equal(invoice!.subtotalPaise, 3_999_000);
     const { subscription } = s.markInvoicePaid({ invoiceId: invoice!.id, providerRef: "NEFT-9988", now: T0 });
     assert.equal(subscription.currentPeriodEnd, "2027-01-15T10:00:00.000Z");
-    assert.equal(c.getWallet(org).balanceUnits, 18_000_000);
+    assert.equal(c.getWallet(org).balanceUnits, 14_400_000, "twelve months of the Professional allowance (1,200 credits a month)");
   });
   it("the invoice, subscription and credits change together: if the grant fails, nothing is marked paid", async () => {
     const { s, c, db } = await mods();

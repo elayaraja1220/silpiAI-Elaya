@@ -331,6 +331,43 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 6,
+    name: "dollar prices on plans; Starter plan retired; Professional credits 1,200",
+    up(db) {
+      // Prices shown to customers outside India. Whole US cents, beside the paise columns: invoices and GST are still rupees only
+      // (dollar billing arrives with a payment gateway that can charge in dollars). PROPOSED values, edited from the admin plan API.
+      db.exec(`
+        ALTER TABLE plans ADD COLUMN monthly_price_usd_cents INTEGER CHECK (monthly_price_usd_cents IS NULL OR monthly_price_usd_cents >= 0);
+        ALTER TABLE plans ADD COLUMN annual_price_usd_cents  INTEGER CHECK (annual_price_usd_cents  IS NULL OR annual_price_usd_cents  >= 0);
+      `);
+      const at = new Date().toISOString();
+      const usd = db.prepare("UPDATE plans SET monthly_price_usd_cents = ?, annual_price_usd_cents = ?, updated_at = ? WHERE id = ?");
+      usd.run(0, 0, at, "free");
+      usd.run(2500, 25_000, at, "pro"); // annual = 10 x monthly (2 months free), as in rupees
+      usd.run(7000, 70_000, at, "professional");
+      // Starter is retired, not deleted: a plan with history stays in the table, it just stops being offered or chosen.
+      db.prepare("UPDATE plans SET active = 0, updated_at = ? WHERE id = 'starter'").run(at);
+      // The Professional allowance was too generous for its price. Only moved if nobody has edited it since it was seeded.
+      db.prepare("UPDATE plans SET monthly_credit_units = 1200000, updated_at = ? WHERE id = 'professional' AND monthly_credit_units = 1500000").run(at);
+    },
+  },
+  {
+    id: 7,
+    name: "pound prices on plans, for customers in the United Kingdom",
+    up(db) {
+      // Whole pence. PROPOSED values: round local price points near the dollar prices, edited from the admin plan API.
+      db.exec(`
+        ALTER TABLE plans ADD COLUMN monthly_price_gbp_pence INTEGER CHECK (monthly_price_gbp_pence IS NULL OR monthly_price_gbp_pence >= 0);
+        ALTER TABLE plans ADD COLUMN annual_price_gbp_pence  INTEGER CHECK (annual_price_gbp_pence  IS NULL OR annual_price_gbp_pence  >= 0);
+      `);
+      const at = new Date().toISOString();
+      const gbp = db.prepare("UPDATE plans SET monthly_price_gbp_pence = ?, annual_price_gbp_pence = ?, updated_at = ? WHERE id = ?");
+      gbp.run(0, 0, at, "free");
+      gbp.run(1900, 19_000, at, "pro"); // annual = 10 x monthly
+      gbp.run(5500, 55_000, at, "professional");
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {
