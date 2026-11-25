@@ -8,6 +8,7 @@ import { ArrowRight, Check, ChevronDown, Coins, FileCode2, ListChecks, MessageSq
 import { currencyFromQuery, formatMoney, pickCurrency, priceIn, type Currency } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 import { BrandLogo } from "./brand-logo";
+import { SizePicker } from "./size-picker";
 import { FlowMock, LimitMock, MeterMock, PlanMock, PrivacyMock, TierMock, ChatMock } from "./landing-visuals";
 
 /**
@@ -19,7 +20,7 @@ import { FlowMock, LimitMock, MeterMock, PlanMock, PrivacyMock, TierMock, ChatMo
 const BRIEF_KEY = "silpi:brief";
 const EXAMPLES = ["A one-page website for my bakery", "A portfolio site for a photographer", "A booking page for a yoga studio"];
 
-type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyPriceUsdCents: number | null; annualPriceUsdCents: number | null; monthlyPriceGbpPence: number | null; annualPriceGbpPence: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean };
+type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyPriceUsdCents: number | null; annualPriceUsdCents: number | null; monthlyPriceGbpPence: number | null; annualPriceGbpPence: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean; family: string | null };
 type Price = { id: string; label: string; tier: string; creditsPer1kInput: number; creditsPer1kOutput: number };
 
 // ---- what credits buy, worked out from the LIVE credit prices (never typed here) -----------------------------------------------------------
@@ -34,7 +35,7 @@ const projects = (prices: Price[], credits: number) => {
   const one = costOf(bal, 300, 500) + 2 * costOf(fast, 600, 1000) + costOf(bal, 800, 2500);
   return credits / one;
 };
-const about = (n: number | null) => (n === null || !Number.isFinite(n) ? "-" : n >= 100 ? (Math.round(n / 10) * 10).toLocaleString("en-IN") : n >= 1 ? Math.floor(n).toLocaleString("en-IN") : "<1");
+const aboutIn = (n: number | null, locale: string) => (n === null || !Number.isFinite(n) ? "-" : n >= 100 ? (Math.round(n / 10) * 10).toLocaleString(locale) : n >= 1 ? Math.floor(n).toLocaleString(locale) : "<1");
 
 const FAQ = [
   ["What does a credit buy?", "Credits pay for AI work. The cost depends on the model tier you choose and the size of the request. Before you send anything, SILPI AI shows the most it could cost, and afterwards the real cost of each answer."],
@@ -51,6 +52,8 @@ export function Landing() {
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [prices, setPrices] = useState<Price[]>([]);
   const [yearly, setYearly] = useState(false);
+  // A plan that comes in several credit sizes (Pro) is shown as ONE card with a dropdown. Each size is a real plan; this remembers the choice per card.
+  const [sizes, setSizes] = useState<Record<string, string>>({});
   // The currency follows the visitor's country: rupees in India, pounds in the UK, dollars everywhere else. There is no switch to fiddle with.
   const [currency, setCurrency] = useState<Currency>("USD");
 
@@ -61,6 +64,12 @@ export function Landing() {
       setCurrency(currencyFromQuery(new URLSearchParams(window.location.search).get("currency")) ?? pickCurrency({ country: b.country, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, language: navigator.language }));
     }).catch(() => setPlans(null));
   }, []);
+
+  // Digits are grouped the way the visitor's currency is written: 1,31,690 in India, 131,690 elsewhere.
+  const about = (n: number | null) => aboutIn(n, currency === "INR" ? "en-IN" : currency === "GBP" ? "en-GB" : "en-US");
+  const headline = (plans ?? []).filter((p) => !p.family || p.family === p.id);
+  const membersOf = (h: Plan) => (h.family ? (plans ?? []).filter((p) => p.family === h.family).sort((a, b) => a.monthlyCreditUnits - b.monthlyCreditUnits) : [h]);
+  const chosen = (h: Plan) => membersOf(h).find((m) => m.id === sizes[h.id]) ?? h;
 
   /** Keep what was typed and carry it through sign-in, so the first thing the person wrote is waiting in the builder. */
   const start = (text = brief) => {
@@ -221,9 +230,9 @@ export function Landing() {
                   <table className="w-full min-w-[460px] text-sm">
                     <thead><tr className="border-b border-slate-200 text-left text-xs text-slate-500"><th className="py-2 pr-3 font-medium">Plan</th><th className="py-2 pr-3 text-right font-medium">Credits</th><th className="py-2 pr-3 text-right font-medium">Fast answers</th><th className="py-2 pr-3 text-right font-medium">Best answers</th><th className="py-2 text-right font-medium">Small projects</th></tr></thead>
                     <tbody>
-                      {plans.filter((p) => !p.isCustom).map((p) => { const c = p.monthlyCreditUnits / 1000; return (
+                      {headline.filter((h) => !h.isCustom).map((h) => { const p = chosen(h); const c = p.monthlyCreditUnits / 1000; return (
                         <tr key={p.id} className="border-b border-slate-100 last:border-0">
-                          <td className="py-2.5 pr-3 font-medium text-slate-900">{p.name}</td>
+                          <td className="py-2.5 pr-3 font-medium text-slate-900">{h.name}</td>
                           <td className="py-2.5 pr-3 text-right font-semibold tabular-nums">{c.toLocaleString("en-IN")}</td>
                           <td className="py-2.5 pr-3 text-right tabular-nums text-slate-700">about {about(answers(prices, "fast", c))}</td>
                           <td className="py-2.5 pr-3 text-right tabular-nums text-slate-700">about {about(answers(prices, "best", c))}</td>
@@ -254,18 +263,34 @@ export function Landing() {
           </div>
           {plans === null ? <p className="mt-10 text-center text-sm text-slate-400">Loading plans...</p> : (
             <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {plans.map((p) => {
+              {headline.map((h) => {
+                const members = membersOf(h);
+                const p = chosen(h);
                 const annual = yearly && (priceIn(p, currency, true) ?? 0) > 0;
                 const price = p.isCustom ? null : priceIn(p, currency, annual);
                 const creditCount = (p.monthlyCreditUnits * (annual ? 12 : 1)) / 1000;
                 return (
-                  <article key={p.id} className="flex flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <h3 className="text-base font-semibold">{p.name}</h3>
-                    <p className="mt-1 min-h-10 text-xs leading-5 text-slate-500">{p.description}</p>
+                  <article key={h.id} className="flex flex-col rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <h3 className="text-base font-semibold">{h.name}</h3>
+                    <p className="mt-1 min-h-10 text-xs leading-5 text-slate-500">{h.description}</p>
                     <p className="mt-4 text-3xl font-semibold tabular-nums">{price === null ? "Custom" : price === 0 ? "Free" : formatMoney(price, currency)}{price !== null && price > 0 && <span className="text-xs font-normal text-slate-400"> / {annual ? "year" : "month"}</span>}</p>
+                    {members.length > 1 && (
+                      <SizePicker
+                        label={`${h.name} credits`}
+                        suffix={`/ ${annual ? "year" : "month"}`}
+                        value={p.id}
+                        onChange={(id) => setSizes((cur) => ({ ...cur, [h.id]: id }))}
+                        options={members.map((m) => {
+                          const full = priceIn(m, currency, annual) ?? 0;
+                          const base = priceIn(h, currency, annual) ?? 0;
+                          // Saving = how much cheaper each credit is than on the smallest size, in this currency.
+                          const save = base > 0 && full > 0 ? Math.round((1 - full / m.monthlyCreditUnits / (base / h.monthlyCreditUnits)) * 100) : 0;
+                          return { id: m.id, label: `${(m.monthlyCreditUnits * (annual ? 12 : 1) / 1000).toLocaleString("en-US")} credits`, price: `${formatMoney(full, currency)}/${annual ? "yr" : "mo"}`, save };
+                        })}
+                      />
+                    )}
                     <ul className="mt-4 flex-1 space-y-2 text-sm text-slate-700">
                       {!p.isCustom && <li className="flex gap-2"><Check size={15} className="mt-0.5 shrink-0 text-emerald-500" />{creditCount.toLocaleString("en-IN")} credits {annual ? "a year" : "a month"}</li>}
-                      {!p.isCustom && prices.length > 0 && <li className="flex gap-2 text-xs text-slate-500"><span className="w-[15px] shrink-0" />about {about(answers(prices, "fast", creditCount))} Fast answers, or {about(projects(prices, creditCount))} small projects</li>}
                       <li className="flex gap-2"><Check size={15} className="mt-0.5 shrink-0 text-emerald-500" />{p.maxActiveProjects === null ? "No project limit" : `${p.maxActiveProjects} active projects`}</li>
                       {p.isCustom && <li className="flex gap-2"><Check size={15} className="mt-0.5 shrink-0 text-emerald-500" />Credits and terms arranged with you</li>}
                     </ul>

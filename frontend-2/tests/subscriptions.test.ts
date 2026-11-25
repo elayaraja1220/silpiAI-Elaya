@@ -40,13 +40,13 @@ describe("1. months are calendar months", () => {
 
 // =================================================================================================
 describe("2. plans are data", () => {
-  it("starts with the five proposed plans, as ordinary rows, in order", async () => {
+  it("starts with the proposed plans (Pro in five sizes), as ordinary rows, in order", async () => {
     const { s } = await mods();
     const plans = s.listPlans();
-    assert.deepEqual(plans.map((p) => p.id), ["free", "starter", "pro", "professional", "enterprise"]);
+    assert.deepEqual(plans.map((p) => p.id), ["free", "starter", "pro", "pro-800", "pro-1600", "pro-3200", "pro-6400", "professional", "professional-2400", "professional-4800", "professional-9600", "professional-19200", "enterprise"]);
     const pro = plans.find((p) => p.id === "pro")!;
     assert.deepEqual([pro.monthlyPricePaise, pro.annualPricePaise, pro.monthlyCreditUnits], [149_900, 1_499_000, 400_000]);
-    assert.deepEqual([plans[4].isCustom, plans[4].monthlyPricePaise], [true, null]);
+    assert.deepEqual([plans[plans.length - 1].isCustom, plans[plans.length - 1].monthlyPricePaise], [true, null]);
   });
   it("an administrator can change a price; new invoices use it, nothing hardcoded", async () => {
     const { s } = await mods();
@@ -159,7 +159,7 @@ describe("4. paying an invoice", () => {
     const { s, c } = await mods();
     const org = await newOrg();
     const { invoice } = s.startSubscription({ orgId: org, planId: "professional", period: "annual", now: T0 });
-    assert.equal(invoice!.subtotalPaise, 3_999_000);
+    assert.equal(invoice!.subtotalPaise, 4_499_000, "ten months of Rs 4,499");
     const { subscription } = s.markInvoicePaid({ invoiceId: invoice!.id, providerRef: "NEFT-9988", now: T0 });
     assert.equal(subscription.currentPeriodEnd, "2027-01-15T10:00:00.000Z");
     assert.equal(c.getWallet(org).balanceUnits, 14_400_000, "twelve months of the Professional allowance (1,200 credits a month)");

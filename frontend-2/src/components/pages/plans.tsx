@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
  * prices, credits and limits are whatever is stored. Money arrives as whole paise, credits as whole units (1 credit = 1000).
  * Choosing a plan is done by an owner or admin from their workspace; that screen is not built yet, so no button is offered.
  */
-type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean };
+type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean; family?: string | null };
 
 const UNITS_PER_CREDIT = 1000;
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
@@ -24,7 +24,7 @@ export function PlansPage() {
   useEffect(() => {
     fetch("/api/plans", { cache: "no-store" })
       .then((r) => r.json())
-      .then((b: { success?: boolean; plans?: Plan[]; error?: string }) => (b.success && b.plans ? setPlans(b.plans) : setError(b.error || "Could not load the plans.")))
+      .then((b: { success?: boolean; plans?: Plan[]; error?: string }) => (b.success && b.plans ? setPlans(b.plans.filter((p) => !p.family || p.family === p.id)) : setError(b.error || "Could not load the plans.")))
       .catch(() => setError("Could not load the plans."));
   }, []);
 

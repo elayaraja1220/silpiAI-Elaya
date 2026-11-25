@@ -368,6 +368,61 @@ export const MIGRATIONS: Migration[] = [
       gbp.run(5500, 55_000, at, "professional");
     },
   },
+  {
+    id: 8,
+    name: "credit sizes for the Pro plan: a plan family with larger monthly credit packs",
+    up(db) {
+      // Like a "choose your credits" selector, but every size is a REAL plan row, so subscriptions, invoices and plan changes work
+      // for it unchanged. "family" groups the sizes of one plan; the row whose id equals its family is the headline (smallest) size.
+      // The per-credit price falls by at most 10% from the smallest size to the largest. PROPOSED values, edited from the admin plan API.
+      db.exec("ALTER TABLE plans ADD COLUMN family TEXT");
+      db.prepare("UPDATE plans SET family = 'pro' WHERE id = 'pro'").run();
+      const at = new Date().toISOString();
+      const insert = db.prepare(
+        `INSERT INTO plans (id, name, description, monthly_price_paise, annual_price_paise, monthly_price_usd_cents, annual_price_usd_cents, monthly_price_gbp_pence, annual_price_gbp_pence,
+                            monthly_credit_units, max_active_projects, is_custom, active, sort_order, family, created_at, updated_at)
+         VALUES (?, ?, 'For a working freelancer.', ?, ?, ?, ?, ?, ?, ?, NULL, 0, 1, 3, 'pro', ?, ?)`,
+      );
+      // id, name, credit units, rupees (paise), dollars (cents), pounds (pence): the monthly price; the yearly price is 10 x monthly.
+      const sizes: [string, string, number, number, number, number][] = [
+        ["pro-800", "Pro 800 credits", 800_000, 299_800, 5000, 3800],
+        ["pro-1600", "Pro 1,600 credits", 1_600_000, 569_900, 9600, 7300],
+        ["pro-3200", "Pro 3,200 credits", 3_200_000, 1_119_900, 18_600, 14_100],
+        ["pro-6400", "Pro 6,400 credits", 6_400_000, 2_159_900, 36_000, 27_400],
+      ];
+      for (const [id, name, units, inr, usd, gbp] of sizes) insert.run(id, name, inr, inr * 10, usd, usd * 10, gbp, gbp * 10, units, at, at);
+    },
+  },
+  {
+    id: 9,
+    name: "credit sizes for the Professional plan, priced at the same rate per credit as Pro",
+    up(db) {
+      // Professional becomes a family like Pro: bigger monthly packs, each a REAL plan row (so billing works for it unchanged).
+      // There is no team feature yet to justify a higher price per credit, so the per-credit rate matches Pro (USD 0.0625) and only the
+      // volume discount grows with the pack (up to 14%). PROPOSED values, edited from the admin plan API.
+      const at = new Date().toISOString();
+      // The headline size moves to the new rate, but only if nobody has edited it since it was seeded.
+      db.prepare(
+        `UPDATE plans SET family = 'professional', monthly_price_paise = 449900, annual_price_paise = 4499000, monthly_price_usd_cents = 7500, annual_price_usd_cents = 75000,
+           monthly_price_gbp_pence = 5700, annual_price_gbp_pence = 57000, updated_at = ?
+         WHERE id = 'professional' AND monthly_price_paise = 399900`,
+      ).run(at);
+      db.prepare("UPDATE plans SET family = 'professional' WHERE id = 'professional' AND family IS NULL").run();
+      const insert = db.prepare(
+        `INSERT INTO plans (id, name, description, monthly_price_paise, annual_price_paise, monthly_price_usd_cents, annual_price_usd_cents, monthly_price_gbp_pence, annual_price_gbp_pence,
+                            monthly_credit_units, max_active_projects, is_custom, active, sort_order, family, created_at, updated_at)
+         VALUES (?, ?, 'For a small agency.', ?, ?, ?, ?, ?, ?, ?, NULL, 0, 1, 4, 'professional', ?, ?)`,
+      );
+      // id, name, credit units, rupees (paise), dollars (cents), pounds (pence): the monthly price; the yearly price is 10 x monthly.
+      const sizes: [string, string, number, number, number, number][] = [
+        ["professional-2400", "Professional 2,400 credits", 2_400_000, 899_800, 15_000, 11_400],
+        ["professional-4800", "Professional 4,800 credits", 4_800_000, 1_709_900, 28_500, 21_700],
+        ["professional-9600", "Professional 9,600 credits", 9_600_000, 3_239_900, 54_000, 41_000],
+        ["professional-19200", "Professional 19,200 credits", 19_200_000, 6_189_900, 103_200, 78_400],
+      ];
+      for (const [id, name, units, inr, usd, gbp] of sizes) insert.run(id, name, inr, inr * 10, usd, usd * 10, gbp, gbp * 10, units, at, at);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {
