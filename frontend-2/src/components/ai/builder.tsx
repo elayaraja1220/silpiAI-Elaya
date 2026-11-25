@@ -30,6 +30,10 @@ export function BuilderHome() {
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<JobSummary[] | null>(null);
 
+  // A project idea typed on the front page before signing in is waiting here.
+  useEffect(() => {
+    try { const saved = sessionStorage.getItem("silpi:brief"); if (saved) { setBrief(saved); sessionStorage.removeItem("silpi:brief"); } } catch { /* ignore */ }
+  }, []);
   useEffect(() => { api<{ jobs: JobSummary[] }>("/api/workspace/jobs").then((r) => setJobs(r.jobs)).catch(() => setJobs([])); }, []);
 
   const start = async () => {

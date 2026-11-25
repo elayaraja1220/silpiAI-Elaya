@@ -7,6 +7,7 @@ import { ArrowLeft, Coins, Loader2, LogOut } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { api, Card, credits } from "./light";
+import { Landing } from "./landing";
 import { SignIn } from "./sign-in";
 
 type Me = { user: { name: string; email: string }; organization: { id: string; name: string }; role: string };
@@ -53,6 +54,9 @@ export function AiShell({ children }: { children: ReactNode }) {
     await api("/api/auth/logout", { method: "POST", body: {} }).catch(() => {});
     setMe(null);
   };
+
+  // Anyone not signed in who opens the front address sees the public landing page, with its own header and footer.
+  if (!checking && !me && pathname === "/ai") return <Landing />;
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900" style={{ colorScheme: "light" }} data-theme="light" data-testid="ai-section">

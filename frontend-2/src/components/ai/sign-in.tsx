@@ -36,7 +36,9 @@ export function SignIn({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="mx-auto grid max-w-4xl items-center gap-8 py-6 md:grid-cols-2 md:py-12">
+    <div className="mx-auto max-w-4xl py-6 md:py-10">
+      <Link href="/ai" className="mb-6 inline-block text-sm text-slate-500 hover:text-slate-800">← Back to home</Link>
+      <div className="grid items-center gap-8 md:grid-cols-2">
       <div className="space-y-6">
         <div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -74,6 +76,7 @@ export function SignIn({ onDone }: { onDone: () => void }) {
         <Button type="submit" className="w-full py-2.5" disabled={busy || !email.trim() || !password}>{busy && <Loader2 size={15} className="animate-spin" />} Sign in</Button>
         <p className="text-center text-xs text-slate-500">No account yet? Ask your administrator to create one. <Link href="/ai/admin" className="text-indigo-700 underline-offset-2 hover:underline">I am the administrator</Link></p>
       </form>
+      </div>
     </div>
   );
 }
