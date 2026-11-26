@@ -163,6 +163,28 @@ describe("3b. a changed exchange rate after approval", () => {
   });
 });
 
+describe("3c. a scope change after approval", () => {
+  it("changing the package after approval needs a reopen, makes a new version that names the scope and price it changes, and the first approval stays intact", async () => {
+    const { s } = await mods();
+    const lead = s.createLead(uk(), fixed());
+    const tiers = (lead.quotation!.proposals ?? []).map((p) => p.tier);
+    const other = tiers.find((x) => x !== lead.quotation!.tier)!;
+    assert.ok(other, "there is another package to choose");
+    s.setStage(lead.id, "approved", "ok");
+    await fails(() => s.chooseTier(lead.id, other), /locked once approved/);
+    s.setStage(lead.id, "quoted", "client wants a different package");
+    s.chooseTier(lead.id, other);
+    const rec = s.approvalRecord(lead.id);
+    assert.equal(rec.approvals.length, 1);
+    assert.equal(rec.approvals[0]!.intact, true);
+    assert.equal(rec.pending?.needsApproval, true);
+    assert.ok(rec.pending!.changes.includes("scope") || rec.pending!.changes.includes("price"), JSON.stringify(rec.pending));
+    assert.equal(s.getLead(lead.id)!.stage, "quoted", "it is open again, not approved");
+    s.setStage(lead.id, "approved", "approved the new package");
+    assert.deepEqual(s.approvalRecord(lead.id).approvals.map((x) => x.versionNo), [1, 2]);
+  });
+});
+
 describe("4. the terms comparison", () => {
   const t = (over: Record<string, unknown> = {}) => ({ mode: "hourly", currency: "GBP", inrPerUnit: 120, grandTotal: 1000, subtotal: 1000, discount: 0, tax: { mode: "export", rate: 0, total: 0 }, totalHours: 40, hourlyRate: 6000, scope: { tier: null, pages: ["Home"], modules: [], deferredModules: [] }, market: null, validUntil: "2026-12-31", ...over }) as Parameters<typeof termChanges>[0];
   it("reports nothing when nothing agreed has moved, and names each thing that has", () => {

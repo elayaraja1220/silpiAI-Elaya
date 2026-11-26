@@ -119,3 +119,32 @@ Written before any change, as the brief asked. No code was changed for this docu
   - **C AI cost, D infrastructure cost, E margin:** read from the existing cost estimate (`computeLeadCosts`), not recomputed: C from the AI cost records, D from the studio's infrastructure settings, E = price without GST less the internal delivery cost (people + C + D + other studio costs). "Not recorded" and "provisional" are shown as such, with a warning.
 - The rules are shown with the report and tested: A feeds nothing (no pricing, quotation, hour or approval source imports the report; a huge market value changes B, C, D and E by nothing), B moves with the price and A does not, A moves with the market and B does not. E is the one result figure and says so.
 - Not built: a cross-project total, saving a snapshot of the report with an approval, and reading the cost of the hour-split AI call into C (its tokens are recorded; pricing them in rupees needs the exchange rate setting).
+
+## Step 10: final verification
+
+Run on the finished work: `tsc` clean, the full suite 1222 of 1222, and a production build (`Compiled successfully`), the build made in a separate folder so a running dev server is not disturbed.
+
+| Brief's test area | Where it is tested |
+|---|---|
+| USA, India, other countries | `hourly-market.test.ts` (US, GB, AU, IN), `fixed-market.test.ts` (GB, IN) |
+| Manual country override | `market-rate-engine.test.ts` (a chosen country beats profile, billing and the guessed location), `fixed-market.test.ts` (requirement country beats the client's) |
+| Developer role and experience level | `market-rate-engine.test.ts` (exact role, any-role fallback, never another level), `pricing-data.test.ts` |
+| Market rate calculations | `market-rate-engine.test.ts` (exact arithmetic, multiplier, overhead, margin, stale, illustrative, bills-at-cost) |
+| Hour estimation | `hour-split.test.ts` (always adds up to the quotation's hours; AI cannot add or remove hours); the rate card sets the hours (`hourly.test.ts`, existing quote tests) |
+| Fixed-price and hourly quotation | `fixed-market.test.ts`, `hourly-market.test.ts`, `hourly.test.ts` |
+| Currency conversion | `country-pricing.test.ts`, `market-rates.test.ts`, `hourly-market.test.ts` |
+| GST and country tax | existing tax tests; "no GST (export)" asserted in the hourly and fixed market tests |
+| Customer spending cap | `hourly.test.ts`, `hourly-market.test.ts` (the cap total), `approvals.test.ts` (the cap is frozen in the approval) |
+| Quotation approval and scope changes | `approvals.test.ts` (freezing, immutability, a reopened and changed quotation is a new version that must be approved again, including a package change) |
+| Admin permissions | `pricing-data.test.ts` (token, viewer read-only, reason required, history, export) |
+| Existing workflow regression | the whole suite, unchanged except `client-assets.test.ts` (an approved project can no longer be deleted) |
+
+Honest limits, so nobody reads more into "done" than is true:
+
+- No market rate is shipped. Until a person enters rates with sources, quotations use the rate card or a typed price. India's three starting wages are an illustrative assumption.
+- Screens were verified by type-check, build and tests, and the server by tests; they were not driven in a real browser by the author. Use `/ai/admin` (Global pricing), the hourly form, the fixed-price wizard and a project's summary page to check them once, with a test lead.
+- The spending cap is a term the client approves and the report shows; nothing blocks logging hours past it.
+- The AI hour split has never made a real provider call (no `ANTHROPIC_API_KEY` here); the plain rule answers until one is set and a fast model is enabled.
+- The country list is fixed at 38; a new country is a code change.
+- Team approvals are recorded as "team" until team sign-in carries a name.
+- A secret was committed once by mistake in `.env.example` (commit `ea5e688`) and removed in `56d7611`; it is still in git history, so that administrator token must be replaced.
