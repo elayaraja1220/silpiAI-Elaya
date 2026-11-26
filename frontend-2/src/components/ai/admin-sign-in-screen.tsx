@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 
 import { safeNext } from "@/lib/safe-next";
-import { TokenSignIn } from "./admin";
+import { TokenSignIn } from "./admin-dashboard";
 
 function Inner() {
   const params = useSearchParams();

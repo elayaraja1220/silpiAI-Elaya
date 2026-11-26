@@ -1,4 +1,4 @@
-import { ClientsPage } from "@/components/pages/clients";
+import { ClientsPage } from "@/components/studio/clients";
 
 export default function Page() {
   return <ClientsPage />;

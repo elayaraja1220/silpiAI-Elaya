@@ -65,3 +65,9 @@ export function destroySession(token: string | undefined | null): void {
 export function destroySessionsOfUser(userId: string): number {
   return Number(getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(userId).changes);
 }
+
+/** Ends every session of a user except the one holding `keepToken` (a password change must not sign out the person making it). */
+export function destroyOtherSessions(userId: string, keepToken: string | undefined | null): number {
+  const keep = keepToken ? digest(keepToken) : "";
+  return Number(getDb().prepare("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(userId, keep).changes);
+}

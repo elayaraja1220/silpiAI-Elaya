@@ -226,7 +226,7 @@ describe("6. the screens show the same terms", () => {
     for (const needle of ["terms.documentation", "terms.security", "terms.prioritySupport", "describePriority", "terms.handover"]) assert.ok(source.includes(needle), needle);
   });
   it("Business & pricing can edit the new terms", () => {
-    const source = read("src/components/pages/pricing-settings.tsx");
+    const source = read("src/components/studio/pricing-settings.tsx");
     for (const needle of ["documentation", "security", "prioritySupport", "Reply time"]) assert.ok(source.includes(needle), needle);
   });
   it("the comparison reaches the client page and documents through the same rows", () => {

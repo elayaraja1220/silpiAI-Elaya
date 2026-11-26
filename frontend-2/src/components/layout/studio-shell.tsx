@@ -13,7 +13,7 @@ const nav = [
 ];
 
 /** Sidebar, header and page frame. Every screen is its own URL (see lib/routes.ts); `children` is the current page. */
-export function AppShell({ children }: { children: ReactNode }) {
+export function StudioShell({ children }: { children: ReactNode }) {
  const pathname = usePathname();
  const { view, title } = viewForPath(pathname);
  const [mobileOpen,setMobileOpen] = useState(false);

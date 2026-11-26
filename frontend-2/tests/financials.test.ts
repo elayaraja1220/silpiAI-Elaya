@@ -202,7 +202,7 @@ describe("4. A never feeds a price", () => {
         if (!/\.(ts|tsx)$/.test(name)) continue;
         const rel = path.relative(root, p).split(path.sep).join("/");
         if (/(^|\/)financials(-card)?\.tsx?$/.test(rel) || rel.startsWith("app/api/business/leads/[id]/financials")) continue;
-        if (/business\/financials|server\/financials|humanEquivalent|leadFinancials/.test(readFileSync(p, "utf8")) && rel !== "components/pages/clients.tsx") offenders.push(rel);
+        if (/business\/financials|server\/financials|humanEquivalent|leadFinancials/.test(readFileSync(p, "utf8")) && rel !== "components/studio/clients.tsx") offenders.push(rel);
       }
     };
     walk(root);

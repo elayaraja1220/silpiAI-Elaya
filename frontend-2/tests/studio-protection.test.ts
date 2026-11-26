@@ -123,7 +123,7 @@ describe("4. nothing is left outside the guard, and nothing public is caught by 
 
 describe("5. recurring income is for administrators only", () => {
   it("is not on the Overview, has its own studio page behind the guard, and its API checks the administrator itself", async () => {
-    assert.ok(!/RecurringIncomeCard|recurring-income-card/.test(read("src/components/pages/dashboard.tsx")), "the Overview does not show it");
+    assert.ok(!/RecurringIncomeCard|recurring-income-card/.test(read("src/components/studio/dashboard.tsx")), "the Overview does not show it");
     assert.match(read("src/app/(app)/recurring-income/page.tsx"), /RecurringIncomeCard/);
     const { mw } = await mods();
     assert.ok(mw.config.matcher.includes("/recurring-income"));
@@ -144,8 +144,8 @@ describe("6. no public page links to an administrator area", () => {
     assert.ok(!/href="\/"[^>]*>[^<]*Workspace/.test(read("src/components/ai/ai-shell.tsx")), "the customer header does not send customers to the studio");
   });
   it("administrators reach the console from the studio, and the studio from the console", () => {
-    assert.match(read("src/components/layout/app-shell.tsx"), /href="\/ai\/admin"/);
-    assert.match(read("src/components/ai/admin.tsx"), /Open the studio/);
+    assert.match(read("src/components/layout/studio-shell.tsx"), /href="\/ai\/admin"/);
+    assert.match(read("src/components/ai/admin-dashboard.tsx"), /Open the studio/);
   });
   it("the sign-in page exists, is not indexed, and returns only to this site", () => {
     const page = read("src/app/admin/sign-in/page.tsx");

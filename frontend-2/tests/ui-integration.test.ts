@@ -448,7 +448,7 @@ describe("9. the public quotation never exposes internal costs", () => {
   it("the internal cost panel is labelled internal and kept out of the printed quotation", () => {
     const panel = readFileSync(path.resolve("src/components/business/cost-panel.tsx"), "utf8");
     assert.ok(panel.includes("Internal only, never shown to the client"));
-    const detail = readFileSync(path.resolve("src/components/pages/clients.tsx"), "utf8");
+    const detail = readFileSync(path.resolve("src/components/studio/clients.tsx"), "utf8");
     assert.match(detail, /<div className="no-print"><LeadCostPanel/);
     const wizard = readFileSync(path.resolve("src/components/business/requirement-wizard.tsx"), "utf8");
     assert.ok(wizard.includes("internal view, never shown to the client"));
@@ -467,8 +467,8 @@ describe("10. the workflow is connected end to end", () => {
     assert.ok(wizard.includes("confirmedIds: ids"));
   });
   it("a saved quotation shows the costs, and Business & pricing has the cost settings", () => {
-    assert.ok(read("src/components/pages/clients.tsx").includes("<LeadCostPanel"));
-    assert.ok(read("src/components/pages/pricing-settings.tsx").includes("<CostSettings />"));
+    assert.ok(read("src/components/studio/clients.tsx").includes("<LeadCostPanel"));
+    assert.ok(read("src/components/studio/pricing-settings.tsx").includes("<CostSettings />"));
   });
   it("generation goes through the execution runner, which builds the brief from the approved quotation for both modes", () => {
     const runner = read("src/lib/execution/runner.ts");

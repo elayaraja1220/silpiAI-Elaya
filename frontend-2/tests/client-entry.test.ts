@@ -32,14 +32,14 @@ describe("1. what is the client's and what is the studio's", () => {
   it("the studio's quotation form moved to /clients/quote, and nothing in the studio still points at /clients/new", () => {
     assert.ok(existsSync(path.join(process.cwd(), "src/app/(app)/clients/quote/page.tsx")));
     assert.ok(!existsSync(path.join(process.cwd(), "src/app/(app)/clients/new")), "the old studio page is gone, so it cannot take the chooser's address");
-    for (const f of ["src/components/layout/app-shell.tsx", "src/components/pages/clients.tsx", "src/components/pages/dashboard.tsx"]) assert.ok(!/["']\/clients\/new["']/.test(read(f)), f);
-    assert.match(read("src/components/layout/app-shell.tsx"), /href="\/clients\/quote"/);
+    for (const f of ["src/components/layout/studio-shell.tsx", "src/components/studio/clients.tsx", "src/components/studio/dashboard.tsx"]) assert.ok(!/["']\/clients\/new["']/.test(read(f)), f);
+    assert.match(read("src/components/layout/studio-shell.tsx"), /href="\/clients\/quote"/);
     assert.match(read("src/lib/routes.ts"), /pathname === "\/clients\/quote"/);
   });
   it("the client pages live in their own frame, not the studio's", () => {
     assert.ok(existsSync(path.join(process.cwd(), "src/app/(client)/layout.tsx")));
     assert.match(read("src/app/(client)/layout.tsx"), /ClientShell/);
-    assert.ok(!/AppShell/.test(read("src/app/(client)/layout.tsx")));
+    assert.ok(!/StudioShell/.test(read("src/app/(client)/layout.tsx")));
     for (const p of ["clients/new/page.tsx", "clients/new/saas/page.tsx", "clients/new/fixed-price/page.tsx"]) assert.match(read(`src/app/(client)/${p}`), /requireClient\(/, p);
   });
 });
@@ -68,7 +68,7 @@ describe("2. the choice page", () => {
     const shell = read("src/components/client/client-shell.tsx");
     const hrefs = [...shell.matchAll(/href(?:=|:\s*)\{?"([^"]+)"/g)].map((m) => m[1]);
     assert.ok(hrefs.length >= 3, hrefs.join(","));
-    for (const h of hrefs) assert.ok(["/clients/new", "/ai/builder", "/ai/billing"].includes(h!), `unexpected link ${h}`);
+    for (const h of hrefs) assert.ok(["/clients/new", "/ai/builder", "/ai/billing", "/dashboard", "/my-projects", "/profile", "/notifications"].includes(h!), `unexpected link ${h}`);
     assert.ok(!/\/ai\/admin|recurring|\/clients\/quote/i.test(shell));
   });
 });

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 
-import { Dashboard } from "@/components/pages/dashboard";
+import { Dashboard } from "@/components/studio/dashboard";
 import { ROUTES } from "@/lib/routes";
 
 export default function OverviewPage() {

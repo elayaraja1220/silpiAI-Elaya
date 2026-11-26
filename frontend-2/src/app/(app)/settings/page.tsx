@@ -1,4 +1,4 @@
-import { SettingsPage } from "@/components/pages/settings";
+import { SettingsPage } from "@/components/studio/settings";
 
 export default function Page() {
   return <SettingsPage />;

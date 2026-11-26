@@ -172,7 +172,7 @@ describe("6. it never touches the price", () => {
         if (!/\.(ts|tsx)$/.test(name)) continue;
         const rel = path.relative(root, p).split(path.sep).join("/");
         if (/hour-split|hour-split\.tsx?$/.test(rel) || rel.startsWith("app/api/business/leads/[id]/hour-split")) continue;
-        if (/hour-split|quotation_hour_estimates/.test(readFileSync(p, "utf8")) && !/migrations\.ts$|components\/business\/hour-split-card\.tsx$|components\/pages\/clients\.tsx$|server\/financials\.ts$|lib\/business\/financials\.ts$/.test(rel)) offenders.push(rel);
+        if (/hour-split|quotation_hour_estimates/.test(readFileSync(p, "utf8")) && !/migrations\.ts$|components\/business\/hour-split-card\.tsx$|components\/studio\/clients\.tsx$|server\/financials\.ts$|lib\/business\/financials\.ts$/.test(rel)) offenders.push(rel);
       }
     };
     walk(root);

@@ -9,7 +9,6 @@ import { cn } from "@/lib/utils";
 import { BrandLogo } from "./brand-logo";
 import { api, Card, credits } from "./light";
 import { Landing } from "./landing";
-import { SignIn } from "./sign-in";
 
 type Me = { user: { name: string; email: string }; organization: { id: string; name: string }; role: string };
 const MeContext = createContext<Me | null>(null);
@@ -20,6 +19,7 @@ export const useMe = () => useContext(MeContext)!;
 export const WALLET_CHANGED = "silpi:ai-wallet-changed";
 
 const TABS = [
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/ai", label: "Chat" },
   { href: "/ai/builder", label: "Project builder" },
   { href: "/ai/usage", label: "Usage" },
@@ -56,6 +56,11 @@ export function AiShell({ children }: { children: ReactNode }) {
     setMe(null);
   };
 
+  // Anyone not signed in who opens a page inside the AI workspace is taken to the one sign-in page and brought back here afterwards.
+  useEffect(() => {
+    if (!checking && !me && !admin && pathname !== "/ai") window.location.assign(`/sign-in?next=${encodeURIComponent(pathname)}`);
+  }, [checking, me, admin, pathname]);
+
   // Anyone not signed in who opens the front address sees the public landing page, with its own header and footer.
   if (!checking && !me && pathname === "/ai") return <Landing />;
 
@@ -87,7 +92,7 @@ export function AiShell({ children }: { children: ReactNode }) {
         ) : me ? (
           <MeContext.Provider value={me}>{children}</MeContext.Provider>
         ) : (
-          <SignIn onDone={loadMe} />
+          <Card className="mx-auto flex max-w-sm items-center justify-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin" /> Taking you to sign in...</Card>
         )}
       </main>
 

@@ -229,7 +229,7 @@ describe("6. the form itself", () => {
     const t = w();
     assert.match(t, /mode = "studio"/);
     assert.match(t, /isClient \? "Get my quotation" : "Save & create quotation"/);
-    assert.match(read("src/components/pages/clients.tsx"), /<RequirementWizard onCancel=\{cancel\} onCreated=\{created\} \/>/, "the studio page passes nothing new");
+    assert.match(read("src/components/studio/clients.tsx"), /<RequirementWizard onCancel=\{cancel\} onCreated=\{created\} \/>/, "the studio page passes nothing new");
   });
   it("the client page opens the form in client mode and goes to the client's quotation page afterwards", () => {
     const c = read("src/components/client/client-fixed-price.tsx");

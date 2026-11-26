@@ -23,7 +23,7 @@ type Overview = { providers: ProviderStatus[]; unitsPerUsd: number; policy: Poli
 const ADMIN_TABS = ["Finance", "Customers & plans", "Payments", "Tax & currency", "Global pricing", "AI", "Audit log", "Security & launch"] as const;
 
 /** Administrator view: what the AI really costs, what customers are charged, and the dials. Needs the administrator token. */
-export function AiAdmin() {
+export function AdminDashboard() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [error, setError] = useState("");

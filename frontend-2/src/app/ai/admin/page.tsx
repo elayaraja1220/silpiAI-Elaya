@@ -1,5 +1,5 @@
-import { AiAdmin } from "@/components/ai/admin";
+import { AdminDashboard } from "@/components/ai/admin-dashboard";
 
 export default function Page() {
-  return <AiAdmin />;
+  return <AdminDashboard />;
 }
