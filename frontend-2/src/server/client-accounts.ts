@@ -78,6 +78,8 @@ export async function resetPassword(tokenInput: unknown, passwordInput: unknown)
     const spent = tx.prepare("UPDATE password_resets SET used_at = ? WHERE id = ? AND used_at IS NULL").run(new Date().toISOString(), row.id);
     if (Number(spent.changes) !== 1) throw new ValidationError("This reset link has expired or was already used. Ask for a new one.");
     tx.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, row.userId);
+    // Control of the address is now proven, so a connected identity the provider never vouched for (Facebook's) is removed: it may have been made by someone else.
+    tx.prepare("DELETE FROM auth_identities WHERE user_id = ? AND email_verified = 0").run(row.userId);
     tx.prepare("DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL").run(row.userId);
     destroySessionsOfUser(row.userId);
     recordAudit({ actor: `client:${row.userId}`, action: "client.password_reset", entityType: "user", entityId: row.userId });

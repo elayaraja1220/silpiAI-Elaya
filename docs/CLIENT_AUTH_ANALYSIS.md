@@ -100,3 +100,29 @@ Keep SQLite. E-mail through SMTP settings (the reset link is printed in the serv
 - `npm audit` reports two vulnerabilities in `next`'s own copy of postcss that need a breaking Next.js upgrade; they existed before this work.
 - E-mail verification (proving the address is the person's) is not built; social sign-in in step 3 brings addresses the provider has verified.
 - Terms of Service and Privacy Policy text must be written by the studio.
+
+## Step 3 built: Google and Facebook sign-in
+
+**Flow.** `GET /api/auth/oauth/google|facebook/start?next=/path` sends the person to the provider. A random one-time state (32 bytes, only its SHA-256 stored, valid 10 minutes) is kept in the database and also in a short-lived `HttpOnly`, `SameSite=Lax` cookie of that browser (Lax, because the provider returns the person from another site). Google also gets PKCE (S256). `GET .../callback` checks the state against both, spends it at once (a replay fails), exchanges the code on the server with the secret, reads the profile once, and discards the token: no provider token is stored. The destination after sign-in comes from the stored record, not from the address, and is always a path on this site. Any failure lands on `/sign-in?error=<code>` with a short code; the screen shows only its own wording for known codes.
+
+**Account policy (an e-mail address alone is never enough to enter an account).**
+1. A known identity (the provider's own stable id) signs in its account.
+2. A new identity whose address no account uses creates an account with no usable password (`oauth$none`), a personal workspace, and the terms version recorded. Google must vouch for the address (`email_verified` must be exactly `true`); Facebook cannot, so its identity is marked not vouched for and is removed if the address's owner later proves control by resetting the password.
+3. A new identity whose address already belongs to an account is refused. It can only be connected by someone already signed in to that account (`start?link=1`, which needs a session; the identity is then attached to that account and nothing else changes). An identity already connected to another account cannot be taken over.
+4. A disabled account cannot be entered, and two sign-ins at the same moment for one new person make one account.
+
+**Tables (migration 22).** `auth_identities` (provider, the provider's id, address, vouched-for flag), `oauth_states`.
+
+**What is shown.** `/api/auth/providers` answers only yes or no per method (and no on a production server with no `SILPI_PUBLIC_URL`). The sign-in screen links to the start door when a method works and shows it switched off when it does not.
+
+**Checked on a real production server** (with dummy ids, no provider contacted): providers answer, Google redirect has the exact return address and PKCE and no secret in the address, the state cookie is HttpOnly and Lax, a forged callback lands on `/sign-in?error=state`, an unknown method is 404. The round trips against a stand-in for both providers are in `tests/social-sign-in.test.ts` (27 tests). A real Google or Facebook round trip has NOT been done: it needs your credentials.
+
+### Setting up Google and Facebook (you must do this)
+
+Add the addresses below to your own site address `SILPI_PUBLIC_URL` (for local tests, `http://localhost:3000`).
+
+**Google** (console.cloud.google.com): create a project, open "APIs & Services", then "OAuth consent screen" (choose External, fill in the app name and your support e-mail, add the scopes `openid`, `email`, `profile`; while the app is in "Testing", add your own e-mail as a test user), then "Credentials", "Create credentials", "OAuth client ID", type "Web application". Under "Authorised redirect URIs" add exactly `http://localhost:3000/api/auth/oauth/google/callback` (and, for your real site, `https://your-domain/api/auth/oauth/google/callback`). Copy the client id and secret into `.env.local` as `SILPI_GOOGLE_CLIENT_ID` and `SILPI_GOOGLE_CLIENT_SECRET`. Publishing the app (leaving "Testing") may need Google's verification for a real audience.
+
+**Facebook** (developers.facebook.com): "Create app", use case "Authenticate and request data from users with Facebook Login", add the "Facebook Login" product, "Settings". Under "Valid OAuth Redirect URIs" add exactly `http://localhost:3000/api/auth/oauth/facebook/callback` (and the real one). In "App settings, Basic" copy the App ID and App Secret into `.env.local` as `SILPI_FACEBOOK_APP_ID` and `SILPI_FACEBOOK_APP_SECRET`. While the app is in Development mode only you and the roles you add can sign in; going Live needs a privacy policy URL (your `/privacy` page, once its text is written) and may need Meta's review. The "email" permission works by default for Login but a person may refuse to share it, which the screen explains.
+
+Restart the server after changing `.env.local`.

@@ -1135,6 +1135,41 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 22,
+    name: "Social sign-in: linked identities and one-time sign-in state",
+    up(db) {
+      db.exec(`
+        -- Who a person is at Google or Facebook (their stable id there, never their e-mail alone) and which SILPI AI account it is connected to. No provider token is stored.
+        -- email_verified says whether the provider vouched for the address. A password reset (which proves control of the address) removes the identities that were not vouched for.
+        CREATE TABLE auth_identities (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          provider       TEXT NOT NULL CHECK (provider IN ('google', 'facebook')),
+          subject        TEXT NOT NULL CHECK (length(subject) BETWEEN 1 AND 200),
+          email          TEXT NOT NULL DEFAULT '',
+          email_verified INTEGER NOT NULL DEFAULT 0 CHECK (email_verified IN (0, 1)),
+          created_at     TEXT NOT NULL,
+          last_login_at  TEXT,
+          UNIQUE (provider, subject)
+        );
+        CREATE INDEX auth_identities_user ON auth_identities(user_id);
+
+        -- One row per sign-in in progress: the random state (only its SHA-256), the PKCE verifier, where to go afterwards, and (when connecting an identity to a signed-in
+        -- account) which account. It works once and for ten minutes.
+        CREATE TABLE oauth_states (
+          state_hash   TEXT PRIMARY KEY CHECK (length(state_hash) = 64),
+          provider     TEXT NOT NULL CHECK (provider IN ('google', 'facebook')),
+          verifier     TEXT NOT NULL DEFAULT '',
+          next_path    TEXT NOT NULL DEFAULT '/',
+          link_user_id TEXT,
+          created_at   TEXT NOT NULL,
+          expires_at   TEXT NOT NULL
+        );
+        CREATE INDEX oauth_states_expiry ON oauth_states(expires_at);
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

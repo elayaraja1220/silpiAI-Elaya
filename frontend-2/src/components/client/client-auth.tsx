@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { CheckCircle2, Command, Facebook, Loader2, Mail } from "lucide-react";
 
 import { CLIENT_HOME } from "@/lib/client-auth";
+import { isOAuthError, OAUTH_ERRORS } from "@/lib/oauth-providers";
 import { safeNext } from "@/lib/safe-next";
 
 type Mode = "signin" | "signup" | "forgot";
@@ -36,14 +37,18 @@ function Shell({ children }: { children: ReactNode }) {
   );
 }
 
-function Social() {
-  // Google and Facebook sign-in are added in the next step; until the studio has set them up the buttons say so instead of doing nothing.
-  const base = "flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-2.5 text-sm text-slate-400 opacity-60";
+function Social({ next }: { next: string }) {
+  // Which methods work right now comes from the server (it knows whether the studio has set them up); a method that is not set up is shown switched off, with the reason.
+  const [on, setOn] = useState<{ google: boolean; facebook: boolean } | null>(null);
+  useEffect(() => { fetch("/api/auth/providers", { cache: "no-store" }).then((r) => r.json()).then((b: { google?: boolean; facebook?: boolean }) => setOn({ google: !!b.google, facebook: !!b.facebook })).catch(() => setOn({ google: false, facebook: false })); }, []);
+  const look = "flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-2.5 text-sm transition";
+  const items = [{ id: "google" as const, label: "Continue with Google", icon: <Mail size={16} /> }, { id: "facebook" as const, label: "Continue with Facebook", icon: <Facebook size={16} /> }];
   return (
     <div className="space-y-2" data-testid="social">
-      <button type="button" disabled className={base} aria-disabled="true"><Mail size={16} /> Continue with Google</button>
-      <button type="button" disabled className={base} aria-disabled="true"><Facebook size={16} /> Continue with Facebook</button>
-      <p className="text-center text-[11px] text-slate-500">Google and Facebook sign-in are not set up yet. Use your email below.</p>
+      {items.map((i) => on?.[i.id]
+        ? <a key={i.id} href={`/api/auth/oauth/${i.id}/start?next=${encodeURIComponent(next)}`} className={look + " text-slate-100 hover:border-violet-400/60 hover:bg-white/[.05]"}>{i.icon} {i.label}</a>
+        : <button key={i.id} type="button" disabled aria-disabled="true" className={look + " cursor-not-allowed text-slate-400 opacity-60"}>{i.icon} {i.label}</button>)}
+      {on && !on.google && !on.facebook && <p className="text-center text-[11px] text-slate-500">Google and Facebook sign-in are not set up yet. Use your email below.</p>}
     </div>
   );
 }
@@ -60,10 +65,13 @@ function Inner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
+  // A failed social sign-in comes back with a short code; only known codes are shown, and what is shown is our own wording.
+  const code = params.get("error");
+  const [socialError, setSocialError] = useState(isOAuthError(code) ? OAUTH_ERRORS[code] : "");
 
   useEffect(() => { fetch("/api/auth/me", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((b) => setMe(b?.success ? (b as Me) : null)).catch(() => setMe(null)); }, []);
   const go = () => window.location.assign(next);
-  const switchTo = (m: Mode) => { setMode(m); setError(""); setInfo(""); };
+  const switchTo = (m: Mode) => { setMode(m); setError(""); setInfo(""); setSocialError(""); };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -110,7 +118,7 @@ function Inner() {
         </div>
       )}
 
-      {mode !== "forgot" && <div className="mt-5"><Social /><div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-600"><span className="h-px flex-1 bg-white/10" />or with email<span className="h-px flex-1 bg-white/10" /></div></div>}
+      {mode !== "forgot" && <div className="mt-5">{socialError && <p role="alert" className="mb-4 rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{socialError}</p>}<Social next={next} /><div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-600"><span className="h-px flex-1 bg-white/10" />or with email<span className="h-px flex-1 bg-white/10" /></div></div>}
 
       <form onSubmit={(e) => void submit(e)} className={mode === "forgot" ? "mt-5 space-y-4" : "space-y-4"} noValidate>
         {mode === "signup" && (
