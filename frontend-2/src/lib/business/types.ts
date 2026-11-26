@@ -254,6 +254,18 @@ export type Requirement = {
   billing?: BillingMode;
   /** Only when billing is "hourly". */
   hourly?: HourlyEngagement;
+  /** Fixed price only: which role and level the price is based on, so a verified market rate (not just the rate card) sets the hourly price. */
+  fixedBasis?: FixedBasis;
+};
+
+/** What a fixed price is based on. `market` and `riskBp` are written by the server (see enrichFixed), never taken from the browser. */
+export type FixedBasis = {
+  country?: string;
+  roleId: string;
+  levelId: string;
+  market?: MarketSnapshot;
+  /** The risk allowance (basis points) that was added to the hourly price when the quotation was made. */
+  riskBp?: number;
 };
 
 export type RateCard = {
@@ -411,6 +423,8 @@ export type Quote = {
    */
   currency?: string;
   inrPerUnit?: number;
+  /** Present only when a fixed price was set from a verified market rate: where it came from, as it was when the quotation was made. */
+  marketBasis?: { country?: string; roleId: string; levelId: string; kind: MarketSnapshot["kind"]; currency: string; source: string; effectiveDate: string; riskBp: number; illustrative: boolean; stale: boolean };
   /** Present only for an hourly engagement: grandTotal is then the estimate, not a fixed price. */
   hourly?: HourlyTerms;
   items: LineItem[];

@@ -191,6 +191,16 @@ export function parseRequirement(input: unknown, rates: RateCard): Requirement {
     return req;
   }
 
+  // What a fixed price is based on (role, level, country). The market figure is never taken from the browser: the server looks it up (see enrichFixed).
+  const fb = obj(r.fixedBasis);
+  const fbRole = str(fb.roleId, 41).toLowerCase();
+  const fbLevel = str(fb.levelId, 20).toLowerCase();
+  if (fbRole || fbLevel) {
+    if (!/^[a-z0-9-]{2,41}$/.test(fbRole) || !/^[a-z0-9-]{2,20}$/.test(fbLevel)) throw new ValidationError("Choose both a role and an experience level for the price.");
+    const fbCountry = str(fb.country, 2).toUpperCase();
+    if (fbCountry && !countryOf(fbCountry)) throw new ValidationError(`${fbCountry} is not a country we can quote for.`);
+    req.fixedBasis = { roleId: fbRole, levelId: fbLevel, ...(fbCountry ? { country: fbCountry } : {}) };
+  }
   // Complexity follows the project type and features (never typed in by hand).
   req.complexity = autoComplexity(req, rates);
   // `needed` mirrors the choice: SILPI arranges the separate service.

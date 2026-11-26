@@ -1,3 +1,4 @@
+import { fixedBasisNote } from "@/lib/business/pricing";
 import { useMoney } from "./money-context";
 import { seoAdvice } from "@/lib/business/seo";
 
@@ -113,6 +114,7 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
         </section>
       )}
 
+      {!quotation.hourly && quotation.marketBasis && <p className="border-b border-slate-200 py-4 text-xs text-slate-600" data-testid="market-basis">{fixedBasisNote(quotation.marketBasis)}</p>}
       {quotation.hourly && (
         <section className="border-b border-slate-200 py-6" data-testid="hourly-terms">
           <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">Hourly engagement terms</p>

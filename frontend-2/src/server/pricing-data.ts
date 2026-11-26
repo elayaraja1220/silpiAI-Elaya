@@ -2,7 +2,7 @@ import { getDb, transaction } from "@/lib/business/db";
 import { minorDigits } from "@/lib/business/countries";
 import { ANY_ROLE, BENCHMARK_KINDS, DEFAULT_PRICING_CONFIG, rateProblems, resolveRate, type BenchmarkKind, type Billing, type MarketRate, type PricingConfig, type Resolved } from "@/lib/business/market-rates";
 import { quoteMoney } from "@/lib/business/pricing";
-import type { Client, MarketSnapshot, RateCard, Requirement } from "@/lib/business/types";
+import type { Client, FixedBasis, MarketSnapshot, RateCard, Requirement } from "@/lib/business/types";
 import { ValidationError } from "@/lib/business/validate";
 import { recordAuditIn } from "@/server/audit";
 
@@ -226,4 +226,25 @@ export function enrichHourly(req: Requirement, client: Pick<Client, "state" | "c
   const snapshot: MarketSnapshot = { rateId: r.rateId, kind: r.kind, currency: r.currency, minMinor: r.minMinor, medianMinor: r.medianMinor, maxMinor: r.maxMinor, billedMinor: r.billedMinor, source: r.source, effectiveDate: r.effectiveDate, illustrative: r.illustrative, stale: r.stale, billsAtCost: r.billsAtCost };
   const priced = override ? {} : money.code === "INR" ? { rate: billed } : { rateNative: billed, rate: Math.max(1, Math.round(billed * money.unit)) };
   return { ...req, hourly: { ...h, ...priced, country, market: snapshot, override: override || undefined } };
+}
+
+/**
+ * Looks up the verified market rate behind a FIXED price and writes it, with the risk allowance, into the requirement. Like enrichHourly, it is done on the server: the browser can
+ * say which role, level and country, never what the rate is. With no verified row the price stays what the rate card gives. A rate in a currency other than the quotation's is refused with
+ * the way to fix it, rather than being converted silently.
+ */
+export function enrichFixed(req: Requirement, client: Pick<Client, "state" | "currency" | "country">, rates: RateCard): Requirement {
+  const b = req.fixedBasis;
+  if (req.billing === "hourly" || !b) return req;
+  const country = b.country ?? client.country;
+  const plain: FixedBasis = { roleId: b.roleId, levelId: b.levelId, ...(country ? { country } : {}) };
+  if (!country) return { ...req, fixedBasis: plain };
+  const r = rateFor({ country, roleId: b.roleId, levelId: b.levelId, mode: "fixed" });
+  if (!r.ok) return { ...req, fixedBasis: plain };
+  const money = quoteMoney(client, rates, "fixed");
+  if (money.code !== r.currency) {
+    throw bad(`The market rate for ${country} is in ${r.currency}, but this quotation would be written in ${money.code}. ${r.currency === "INR" ? "Choose India as the client's country." : `Add ${r.currency} under "Prices for clients abroad" in Business & pricing and choose it for this client.`}`);
+  }
+  const market: MarketSnapshot = { rateId: r.rateId, kind: r.kind, currency: r.currency, minMinor: r.minMinor, medianMinor: r.medianMinor, maxMinor: r.maxMinor, billedMinor: r.billedMinor, source: r.source, effectiveDate: r.effectiveDate, illustrative: r.illustrative, stale: r.stale, billsAtCost: r.billsAtCost };
+  return { ...req, fixedBasis: { ...plain, market, riskBp: getPricingConfig().riskAllowanceBp } };
 }

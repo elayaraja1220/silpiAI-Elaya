@@ -39,6 +39,7 @@ import {
   type ModuleId,
   type PageDetail,
   type PageKind,
+  type MarketSnapshot,
   type Quote,
   type RateCard,
   type Requirement,
@@ -64,6 +65,7 @@ import { TechnologyRecommendations } from "./technology-recommendations";
 import { TechnologyChooser } from "./technology-chooser";
 import { applyClientTech } from "@/lib/business/client-tech";
 import { Card, Choice, Field, Input, Section, Select, Textarea, jsonFetch } from "./ui";
+import { FixedBasisPicker, type FixedBasisChoice } from "./fixed-market-basis";
 
 const STEPS = ["Requirement", "Pages & features", "Package", "Client & services", "Review"] as const;
 const PACKAGE_STEP = 2;
@@ -230,7 +232,12 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   // The estimate stays at zero until the document is analysed or the requirement is filled in.
   const started = step > 0 || analysis !== null;
   // Complexity follows the project type and features (the server does the same).
-  const priced = useMemo(() => (rates ? { ...req, complexity: autoComplexity(req, rates) } : req), [req, rates]);
+  const [basisChoice, setBasisChoice] = useState<FixedBasisChoice>(null);
+  const [basisPreview, setBasisPreview] = useState<{ market: MarketSnapshot; riskBp: number } | null>(null);
+  const basisCountry = client.country ?? (client.state === "Outside India" ? "" : "IN");
+  const fixedBasis = basisChoice ? { ...basisChoice, ...(basisCountry ? { country: basisCountry } : {}) } : undefined;
+  // The preview uses the figure fetched for the screen; the server looks it up again when the quotation is saved.
+  const priced = useMemo(() => (rates ? { ...req, complexity: autoComplexity(req, rates), ...(fixedBasis ? { fixedBasis: { ...fixedBasis, ...(basisPreview ?? {}) } } : {}) } : req), [req, rates, fixedBasis?.roleId, fixedBasis?.levelId, fixedBasis?.country, basisPreview]); // eslint-disable-line react-hooks/exhaustive-deps
   const quote: Quote | null = useMemo(() => {
     if (!rates || !started) return null;
     try {
@@ -376,7 +383,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
     try {
       const { lead } = await jsonFetch<{ lead: Lead }>("/api/business/leads", {
         method: "POST",
-        body: JSON.stringify({ client, requirement: withTitleAndSummary(req, client), tier: shownTier }),
+        body: JSON.stringify({ client, requirement: withTitleAndSummary(fixedBasis ? { ...req, fixedBasis } : req, client), tier: shownTier }),
       });
       onCreated(lead);
     } catch (e) {
@@ -790,6 +797,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                       </Select>
                     </Field>
                   )}
+                  <FixedBasisPicker country={basisCountry} choice={basisChoice} onChoice={setBasisChoice} onPreview={setBasisPreview} />
                   <Field label="GSTIN" hint="Optional, for business clients."><Input value={client.gstin} onChange={(e) => setC("gstin", e.target.value.toUpperCase())} placeholder="33ABCDE1234F1Z5" maxLength={15} /></Field>
                   <Field label="Billing address" className="sm:col-span-2"><Textarea value={client.address} onChange={(e) => setC("address", e.target.value)} className="min-h-16" /></Field>
                   <Field label="Client deadline (weeks)" hint={shown ? `This package needs about ${shown.estimatedWeeks} weeks. 0 = no fixed deadline.` : "0 = no fixed deadline."}>

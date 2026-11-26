@@ -3,6 +3,8 @@ import { seoAdvice } from "./seo";
 import { clientLayerIds, frontendLabel, listLabels, stylingFor, unmatchedNames } from "./tech-preference";
 import { separateServices } from "./services";
 import { INR_MONEY, isForeign, type Money } from "./money";
+import { minorDigits } from "./countries";
+import { mulDiv } from "./market-rates";
 import type { Client, LineItem, Quote, RateCard, Requirement, StackChoice, StackSuggestion } from "./types";
 
 /**
@@ -29,6 +31,15 @@ export function quoteMoney(client: Pick<Client, "state" | "currency">, rates: Ra
   const p = rates.countryPricing?.[code];
   // A fixed price needs an hourly price in that currency; an hourly engagement brings its own rate and only needs the rupee value of one unit.
   return p && p.inrPerUnit > 0 && (mode === "hourly" || p.hourlyRate > 0) ? { code, unit: p.inrPerUnit } : INR_MONEY;
+}
+
+/** One sentence for the client: which market benchmark a fixed price was based on. Undefined when the price came from the rate card. */
+export function fixedBasisNote(b: Quote["marketBasis"]): string | undefined {
+  if (!b) return undefined;
+  const kind = { employee: "employee wage", freelancer: "freelancer billing rate", agency: "agency billing rate" }[b.kind];
+  const where = [b.country, b.roleId, b.levelId].filter(Boolean).join(" / ");
+  const risk = b.riskBp ? `, with a ${b.riskBp / 100}% allowance for project risk` : "";
+  return `The hourly price is based on the ${kind} for ${where}, from ${b.effectiveDate} (${b.source})${risk}${b.illustrative ? ". That figure is an illustrative assumption, not a measured market rate" : ""}.`;
 }
 
 export function needsBackend(req: Requirement, rates: RateCard): boolean {
@@ -168,7 +179,10 @@ export function buildQuote(req: Requirement, client: Pick<Client, "state" | "cur
   // of that currency first, so what the client sees adds up exactly and never moves with the exchange rate.
   const money = quoteMoney(client, rates);
   const foreign = isForeign(money);
-  const rate = foreign ? rates.countryPricing![money.code]!.hourlyRate * money.unit : rates.hourlyRate;
+  // A verified market rate (written by the server) replaces the rate card's price when it is in the quotation's currency. The risk allowance is part of the hourly price.
+  const basis = req.fixedBasis?.market && req.fixedBasis.market.currency === money.code && req.fixedBasis.market.billedMinor > 0 ? req.fixedBasis : undefined;
+  const marketRate = basis ? mulDiv(basis.market!.billedMinor, 10_000 + (basis.riskBp ?? 0), 10_000) / 10 ** minorDigits(money.code) : undefined;
+  const rate = marketRate !== undefined ? (foreign ? marketRate * money.unit : marketRate) : foreign ? rates.countryPricing![money.code]!.hourlyRate * money.unit : rates.hourlyRate;
   const snap = (inr: number) => (foreign ? (Math.round((inr / money.unit) * 100) / 100) * money.unit : round2(inr));
   const whole = (inr: number) => (foreign ? Math.round(inr / money.unit) * money.unit : Math.round(inr));
   const stack = effectiveStack(req, rates);
@@ -251,6 +265,7 @@ export function buildQuote(req: Requirement, client: Pick<Client, "state" | "cur
 
   return {
     ...(foreign ? { currency: money.code, inrPerUnit: money.unit } : {}),
+    ...(basis ? { marketBasis: { country: basis.country, roleId: basis.roleId, levelId: basis.levelId, kind: basis.market!.kind, currency: basis.market!.currency, source: basis.market!.source, effectiveDate: basis.market!.effectiveDate, riskBp: basis.riskBp ?? 0, illustrative: basis.market!.illustrative, stale: basis.market!.stale } } : {}),
     items,
     totalHours: devHours,
     subtotal,

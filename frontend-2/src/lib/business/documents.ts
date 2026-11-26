@@ -1,3 +1,4 @@
+import { fixedBasisNote } from "@/lib/business/pricing";
 import { publicServiceLine, type PublicRunningServices } from "./running-services";
 import {
   AlignmentType,
@@ -81,6 +82,8 @@ function outline(q: Quotation, fallback: Requirement, running?: PublicRunningSer
       "The log of hours worked is available to you at any time.",
     ] });
   }
+
+  if (!q.hourly && q.marketBasis) blocks.push({ kind: "bullets", items: [fixedBasisNote(q.marketBasis)!] });
 
   if (q.proposals?.length) {
     blocks.push({ kind: "heading", text: "Proposals to choose from" });

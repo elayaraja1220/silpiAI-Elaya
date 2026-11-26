@@ -76,3 +76,10 @@ Written before any change, as the brief asked. No code was changed for this docu
 - Admin: "Global pricing" tab (settings, rates with sources, add form, CSV import, lists) and the fixed-price wizard's client country.
 - Checked: type-check, 1156 tests, mutation checks on the engine, the append-only trigger and the server enrichment (all caught), production build.
 - Not yet checked in a real browser: sign-in is not configured (`SILPI_ADMIN_TOKEN` missing in `.env.local`), so `/api/business/*` and `/api/admin/*` answer 503 locally.
+
+## Step 5: fixed price from the market rate
+
+- A fixed quotation may name a role, level and country (`Requirement.fixedBasis`). The server (`enrichFixed`) looks up the verified rate with the administrator's fixed-price benchmark (agency by default) and writes the figure and the risk allowance into the requirement; the browser's figures are ignored.
+- `buildQuote` then prices every hour at billed median × (1 + risk allowance) in the quotation's currency. No verified rate, no role/level, or a rate in another currency: the rate card price is used (a currency mismatch at save time is refused with the way to fix it). Rupee quotations without a basis are unchanged.
+- The quotation shows one sentence naming the benchmark, source, date and risk allowance (`fixedBasisNote`); a saved quotation never moves when a newer rate is added.
+- Wizard: "Hourly price based on" (Rate card / Market rate) with role and level, and a preview of the rate.

@@ -18,6 +18,6 @@ export async function GET(request: NextRequest) {
     const ref = listReference();
     const config = getPricingConfig();
     const guess = pickCountry({ location: countryFromHeaders(request.headers) });
-    return { ...ref, benchmark: config.benchmark, location: guess && countryOf(guess.code) ? { code: guess.code, source: guess.source } : null };
+    return { ...ref, benchmark: config.benchmark, riskAllowanceBp: config.riskAllowanceBp, location: guess && countryOf(guess.code) ? { code: guess.code, source: guess.source } : null };
   });
 }
