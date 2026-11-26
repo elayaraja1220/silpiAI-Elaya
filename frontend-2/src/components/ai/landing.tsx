@@ -334,7 +334,7 @@ export function Landing() {
           <BrandLogo size="sm" tagline />
           <nav className="flex flex-wrap gap-x-5 gap-y-2" aria-label="Footer">
             <a href="#features" className="hover:text-slate-900">Features</a><a href="#credits" className="hover:text-slate-900">Credits</a><a href="#pricing" className="hover:text-slate-900">Pricing</a><a href="#faq" className="hover:text-slate-900">FAQ</a>
-            <Link href="/ai/sign-in" className="hover:text-slate-900">Sign in</Link><Link href="/ai/admin" className="hover:text-slate-900">Administrator</Link>
+            <Link href="/ai/sign-in" className="hover:text-slate-900">Sign in</Link>
           </nav>
         </div>
       </footer>

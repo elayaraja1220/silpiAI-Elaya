@@ -1,22 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireAdmin } from "@/lib/admin-auth";
-import { localAccessAllowed, PROXY_ONLY_HEADERS } from "@/lib/api-access";
+import { adminIdentity, requireAdmin } from "@/lib/admin-auth";
+import { safeNext } from "@/lib/safe-next";
 
 /**
- * Every /api/business/* and /api/projects* route is gated here, in one place, so a route added later cannot be forgotten.
- * Rules and their one limitation: src/lib/api-access.ts. The public client routes (/api/client/[token]) are not
- * matched; they have their own secret links. Execution and demo routes already check the admin themselves.
+ * The studio is for administrators only, and this is the one place that says so, on the server, for every request:
+ *
+ *   - /api/business/*, /api/projects*  -> an administrator sign-in (cookie or token header), always. No address, host or setting opens them.
+ *   - the studio pages (Overview, Clients & quotes, My projects, Existing projects, Agent activity, Business & pricing, Plans, Settings,
+ *     Recurring income) -> an administrator session, otherwise a redirect to /admin/sign-in that comes back here afterwards.
+ *
+ * Not matched here, on purpose: /q/[token] and /api/client/[token] (a client's own secret quotation link), /ai/* and /api/workspace/* (customer
+ * accounts, with their own checks), /api/admin/* and /api/execution|demo (they check the administrator themselves), the sign-in pages.
+ * A route added under /api/business later is protected without anyone remembering to.
  */
 export function middleware(request: NextRequest) {
-  const open = localAccessAllowed({
-    host: request.headers.get("host"),
-    forwardedFor: request.headers.get("x-forwarded-for"),
-    proxyHeader: PROXY_ONLY_HEADERS.some((name) => request.headers.has(name)),
-    env: process.env,
-  });
-  if (open) return NextResponse.next();
-  return requireAdmin(request) ?? NextResponse.next();
+  const { pathname, search } = request.nextUrl;
+  if (pathname.startsWith("/api/")) return requireAdmin(request) ?? NextResponse.next();
+  if (adminIdentity(request)) return NextResponse.next();
+  const to = request.nextUrl.clone();
+  to.pathname = "/admin/sign-in";
+  to.search = "";
+  to.searchParams.set("next", safeNext(pathname + search));
+  return NextResponse.redirect(to);
 }
 
-export const config = { matcher: ["/api/business/:path*", "/api/projects", "/api/projects/:path*"], runtime: "nodejs" };
+// The matcher must be a plain literal: Next.js reads it without running this file, and a computed one makes it fall back to the edge runtime.
+export const config = { matcher: ["/", "/clients", "/clients/:path*", "/projects", "/existing", "/activity", "/pricing", "/plans", "/settings", "/recurring-income", "/api/business/:path*", "/api/projects", "/api/projects/:path*"], runtime: "nodejs" };

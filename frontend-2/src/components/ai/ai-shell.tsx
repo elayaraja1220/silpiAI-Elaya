@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Coins, Loader2, LogOut } from "lucide-react";
+import { Coins, Loader2, LogOut } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { BrandLogo } from "./brand-logo";
@@ -24,12 +24,11 @@ const TABS = [
   { href: "/ai/builder", label: "Project builder" },
   { href: "/ai/usage", label: "Usage" },
   { href: "/ai/billing", label: "Billing" },
-  { href: "/ai/admin", label: "Admin" },
 ];
 
 /**
  * The AI Gateway section's own light frame, sign-in included. It lives outside the dark workspace layout on purpose: nothing in the
- * existing screens changes, and "Workspace" returns to them. The Admin tab uses the administrator token, not a member sign-in.
+ * existing screens changes. The administrator console (/ai/admin) is not linked from here: administrators reach it from the studio.
  */
 export function AiShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -78,7 +77,6 @@ export function AiShell({ children }: { children: ReactNode }) {
             {me && !admin && (
               <button onClick={signOut} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800" title={`${me.user.email} · ${me.organization.name}`}><LogOut size={15} /><span className="hidden md:inline">Sign out</span></button>
             )}
-            <Link href="/" className="hidden items-center gap-1 rounded-lg px-2 py-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 md:inline-flex"><ArrowLeft size={14} /> Workspace</Link>
           </div>
         </div>
       </header>

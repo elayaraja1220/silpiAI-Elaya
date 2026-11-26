@@ -60,7 +60,8 @@ export function AiAdmin() {
       {who && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
           Signed in as <b className="text-slate-700">{who.name}</b> <Pill tone={who.role === "admin" ? "indigo" : "slate"}>{who.role === "admin" ? "admin" : "viewer: read-only"}</Pill>
-          <button onClick={signOut} className="ml-auto underline hover:text-slate-800">Sign out</button>
+          <a href="/" className="ml-auto underline hover:text-slate-800">Open the studio</a>
+          <button onClick={signOut} className="underline hover:text-slate-800">Sign out</button>
         </p>
       )}
       <div role="tablist" aria-label="Administrator sections" className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1">
@@ -94,7 +95,7 @@ export function AiAdmin() {
   );
 }
 
-function TokenSignIn({ onDone }: { onDone: () => void }) {
+export function TokenSignIn({ onDone }: { onDone: () => void }) {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [help, setHelp] = useState("");
   useEffect(() => {

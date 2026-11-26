@@ -29,7 +29,6 @@ import {
 import { DeleteLeadDialog } from "@/components/business/delete-lead-dialog";
 import { demoApi } from "@/components/business/demo-panel";
 import { LiveDemosCard } from "@/components/business/live-demos-card";
-import { RecurringIncomeCard } from "@/components/business/recurring-income-card";
 import type { DemoView } from "@/lib/demo/service";
 import { jsonFetch } from "@/components/business/ui";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -258,8 +257,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             </div>
           ))}
         </section>
-
-        <RecurringIncomeCard />
 
         {/* Requirements & quotations */}
         <section className="rounded-2xl border border-white/[.08] bg-[#121622] p-5">
