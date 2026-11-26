@@ -1113,6 +1113,28 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 21,
+    name: "Client accounts: terms acceptance on the user, and password reset tokens",
+    up(db) {
+      db.exec(`
+        -- Which version of the terms a person accepted and when. Null for accounts that existed before sign-up: they accepted nothing here and are not pretended to have.
+        ALTER TABLE users ADD COLUMN terms_version TEXT;
+        ALTER TABLE users ADD COLUMN terms_accepted_at TEXT;
+
+        -- A reset link carries a random token; only its SHA-256 is kept, so a copy of this table cannot reset anyone's password. A token works once and expires.
+        CREATE TABLE password_resets (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          used_at    TEXT
+        );
+        CREATE INDEX password_resets_user ON password_resets(user_id);
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

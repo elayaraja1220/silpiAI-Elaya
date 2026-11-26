@@ -74,3 +74,29 @@ Keep SQLite. E-mail through SMTP settings (the reset link is printed in the serv
 - Recurring income is no longer on the Overview: it has its own studio page `/recurring-income` (sidebar, Monitor) and its API checks the administrator again.
 - The "Admin" tab in the customer header, the "Administrator" link on the public landing page and the "Workspace" link that sent customers to the studio are gone. Administrators reach the console from the studio sidebar ("SaaS administration") and the studio from the console ("Open the studio").
 - Checked against a real production server: studio pages 307 to the sign-in page, business APIs 401 (also with spoofed local headers), 200 with the token, and `/q/...`, `/ai`, `/admin/sign-in` stay public.
+
+## Step 2 built: client accounts with e-mail
+
+- **Migration 21:** `users.terms_version` and `users.terms_accepted_at` (empty for accounts that existed before; they are not pretended to have accepted anything), and `password_resets` (only a SHA-256 of the link token is kept; one use; expires after 60 minutes).
+- **Doors (all public by design, same-site only, rate limited per address and per e-mail):**
+  - `POST /api/auth/signup` `{ name, email, password, acceptTerms: true }`: creates the user, a personal organization (`individual`) they own, records the terms version, and signs them in. Refuses a duplicate e-mail in any letter case.
+  - `POST /api/auth/forgot` `{ email }`: always the same answer; a link is sent only to an active account; sending is not waited for, so the answer does not take longer for a real account; a newer request cancels the older link.
+  - `POST /api/auth/reset` `{ token, password }`: one use; ends every session of the account; does not sign anyone in; two people using one link at once cannot both succeed.
+  - Sign-in is the existing `POST /api/auth/login` (unchanged).
+- **Rules (`lib/client-auth.ts`):** valid e-mail (no consecutive dots, size limits), name 2 to 80, password 10 to 200 characters, not one repeated character, not obvious, not containing the e-mail. Passwords are stored only as salted scrypt hashes (the existing `hashPassword`).
+- **E-mail (`server/mailer.ts`, nodemailer):** SMTP settings from the environment (below). Until set, the message is printed in the server console and clearly marked as NOT sent.
+- **Reset link address:** `SILPI_PUBLIC_URL` when set; otherwise the request's own address on a development server only. On a production server without `SILPI_PUBLIC_URL` no link is sent, because a visitor can write a Host header and must not decide where a reset link points.
+- **Screens:** `/sign-in` (sign in, create account, forgot password, Terms and Privacy acceptance; Google and Facebook buttons are visible but switched off until step 3), `/reset-password`, `/terms` and `/privacy` (placeholders that say the text is still to be written; the version is recorded with each acceptance), `/login` now redirects to `/sign-in`. After signing in a client goes to the `next` destination (only a path on this site) or `CLIENT_HOME` (`/ai` for now; step 4 changes it to `/clients/new`).
+- **Isolation:** a client's session opens no administrator door (business APIs 401, studio pages redirect, administrator session unauthenticated); two clients see only their own workspace.
+- Checked on a real production server: sign-up, `/me`, duplicate, missing terms, cross-site refusal, identical forgot answers, mail printed with the public address, reset, old session ended, link reuse refused, old password refused, new password accepted.
+
+### Environment variables for e-mail
+
+`SILPI_SMTP_HOST`, `SILPI_SMTP_PORT` (587 by default; 465 connects encrypted from the start), `SILPI_SMTP_USER`, `SILPI_SMTP_PASSWORD`, `SILPI_SMTP_FROM` (for example `SILPI AI <no-reply@yourdomain.com>`), and `SILPI_PUBLIC_URL` (for example `https://app.yourdomain.com`). Put them in `frontend-2/.env.local`, never in `.env.example`.
+
+### Known limits after step 2
+
+- ESLint is not installed in this project (`next lint` has nothing to run); it was not run. Say so before relying on a "lint passed" claim anywhere.
+- `npm audit` reports two vulnerabilities in `next`'s own copy of postcss that need a breaking Next.js upgrade; they existed before this work.
+- E-mail verification (proving the address is the person's) is not built; social sign-in in step 3 brings addresses the provider has verified.
+- Terms of Service and Privacy Policy text must be written by the studio.
