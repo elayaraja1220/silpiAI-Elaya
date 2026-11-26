@@ -27,6 +27,8 @@ export type ClientView = {
   payment?: { advanceDue: number; advancePaid: number; advanceRemaining: number; upiId: string; bankDetails: string; payee: string; reference: string };
 };
 
+const PAYING_STAGES: Lead["stage"][] = ["approved", "advance_paid", "in_development", "testing", "demo_ready"];
+
 /** `business`: current business details, so a UPI ID added later still shows. */
 export function clientView(lead: Lead, business: RateCard["business"], running?: PublicRunningServices | null, demo?: ClientView["demo"] | null): ClientView | null {
   const q = lead.quotation;
@@ -40,14 +42,15 @@ export function clientView(lead: Lead, business: RateCard["business"], running?:
     open: lead.stage === "quoted" && !expired,
     expired,
     // Team-only notes (e.g. which hourly rate would fit the budget) stay out of the client view.
-    quotation: { ...q, budgetCheck: undefined, requirement: publicScope as Requirement, proposals: q.proposals?.map(({ budgetNote: _n, ...p }) => p) },
+    // How to pay is shown once the quotation is approved (the `payment` block below). Until then the studio's UPI and bank details stay out of what the link returns.
+    quotation: { ...q, budgetCheck: undefined, business: PAYING_STAGES.includes(lead.stage) ? q.business : { ...q.business, upiId: undefined, bankDetails: undefined }, requirement: publicScope as Requirement, proposals: q.proposals?.map(({ budgetNote: _n, ...p }) => p) },
     requirement: { title: scope.title, summary: scope.summary, pages: scope.pages },
     response: lead.clientResponse,
     ...(estimateStatus(lead.requirement.insights?.tracker ?? []).level === "preliminary" ? { preliminary: true } : {}),
     ...(deferredTexts(lead.requirement.insights?.tracker ?? []).length ? { deferred: deferredTexts(lead.requirement.insights?.tracker ?? []) } : {}),
     ...(running && running.services.length ? { running } : {}),
     ...(demo ? { demo } : {}),
-    payment: ["approved", "advance_paid", "in_development", "testing", "demo_ready"].includes(lead.stage)
+    payment: PAYING_STAGES.includes(lead.stage)
       ? (() => {
           const s = paymentStatus(q, lead.payments);
           return { advanceDue: s.advanceDue, advancePaid: s.advancePaid, advanceRemaining: s.advanceRemaining, upiId: business.upiId ?? "", bankDetails: business.bankDetails ?? "", payee: business.name, reference: q.number };

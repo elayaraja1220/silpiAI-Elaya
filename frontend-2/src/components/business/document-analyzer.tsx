@@ -27,7 +27,7 @@ export type AnalysisOutcome = {
  * "Start from a document": upload the client's requirement files, the AI
  * reads them once and fills the form. The team then checks every field.
  */
-export function DocumentAnalyzer({ onDraft, children }: { onDraft: (outcome: AnalysisOutcome) => void; children?: React.ReactNode }) {
+export function DocumentAnalyzer({ onDraft, children, endpoint = "/api/business/analyze" }: { onDraft: (outcome: AnalysisOutcome) => void; children?: React.ReactNode; endpoint?: string }) {
   const [files, setFiles] = useState<File[]>([]);
   const [notes, setNotes] = useState("");
   const [drag, setDrag] = useState(false);
@@ -69,7 +69,7 @@ export function DocumentAnalyzer({ onDraft, children }: { onDraft: (outcome: Ana
       // Every file's name and size goes too (a few bytes each), so the AI is told how many there really are.
       body.append("manifest", JSON.stringify(files.map((f) => ({ name: f.name, size: f.size }))));
       body.append("notes", notes);
-      const response = await fetch("/api/business/analyze", { method: "POST", body });
+      const response = await fetch(endpoint, { method: "POST", body });
       const result = (await response.json().catch(() => ({}))) as { success?: boolean; error?: string; draft?: RequirementDraft; model?: string; costUsd?: number; cached?: boolean; runs?: number; partial?: boolean };
       if (!result.success || !result.draft) throw new Error(result.error || `Analysis failed (${response.status}).`);
       onDraft({ draft: result.draft, files: [...sample.map((f) => f.name), ...(files.length > sample.length ? [`and ${files.length - sample.length} more files (counted, not read)`] : [])], model: result.model ?? "", costUsd: result.costUsd ?? 0, cached: result.cached, runs: result.runs, partial: result.partial });

@@ -19,6 +19,9 @@ export const RATES = {
   webhook: { name: "webhook", limit: 600, windowMs: 60_000 },
   adminWrite: { name: "admin-write", limit: 240, windowMs: 60_000 },
   adminSignIn: { name: "admin-sign-in", limit: 8, windowMs: 10 * 60_000 },
+  /** A client's document analysis uses the studio's AI: a few an hour is plenty for describing one project. */
+  clientAnalyze: { name: "client-analyze", limit: 6, windowMs: 60 * 60_000 },
+  clientLead: { name: "client-lead", limit: 12, windowMs: 60 * 60_000 },
 } as const satisfies Record<string, RateRule>;
 
 const hits = new Map<string, number[]>();

@@ -287,18 +287,20 @@ function issueHourlyQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requ
 }
 
 /** Saves the requirement and issues its first quotation in one step. */
-export function createLead(client: Client, requirementIn: Requirement, tier?: Tier): Lead {
+export function createLead(client: Client, requirementIn: Requirement, tier?: Tier, orgId?: string): Lead {
   const id = randomUUID();
   // An hourly engagement's market rate is looked up and written here, on the server (see enrichHourly).
   const requirement = enrichFixed(enrichHourly(requirementIn, client, getRateCard()), client, getRateCard());
   transaction((db) => {
     const at = now();
-    db.prepare("INSERT INTO leads (id, stage, client, requirement, created_at, updated_at) VALUES (?, 'requirement', ?, ?, ?, ?)").run(
+    // A lead made by a client belongs to that client's own organization; any other lead belongs to the agency (the database default).
+    db.prepare("INSERT INTO leads (id, stage, client, requirement, created_at, updated_at, org_id) VALUES (?, 'requirement', ?, ?, ?, ?, ?)").run(
       id,
       JSON.stringify(client),
       JSON.stringify(requirement),
       at,
       at,
+      orgId ?? null,
     );
     recordStage(id, null, "requirement");
     issueQuotation({ id, stage: "requirement", client, requirement }, tier, 0, "");

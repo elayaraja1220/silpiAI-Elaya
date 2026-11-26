@@ -68,6 +68,7 @@ import { Card, Choice, Field, Input, Section, Select, Textarea, jsonFetch } from
 import { FixedBasisPicker, type FixedBasisChoice } from "./fixed-market-basis";
 
 const STEPS = ["Requirement", "Pages & features", "Package", "Client & services", "Review"] as const;
+const CLIENT_STEPS = ["Your requirement", "Pages & features", "Package", "Your details & services", "Review"] as const;
 const PACKAGE_STEP = 2;
 
 const SCOPE_OPTIONS: { id: Scope; title: string; detail: string }[] = [
@@ -194,13 +195,23 @@ function stepError(step: number, client: Client, req: Requirement): string {
   return "";
 }
 
-export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: Lead) => void; onCancel: () => void }) {
+export type ClientRequest = { leadId: string; token: string; quotationNumber: string | null };
+
+/**
+ * The fixed-price requirement form. `mode="studio"` (the default) is the studio's own form, exactly as before. `mode="client"` is the same form for a client's own request:
+ * it talks to the client's doors (/api/workspace/fixed-price/*), is prefilled with the client's name and email, and leaves out everything that is the studio's business:
+ * the cost, profit and running-cost panel, the market-rate basis, the technology recommendations (the client chooses technology on their quotation page) and the
+ * cost of reading their document. The server prices the quotation either way.
+ */
+export function RequirementWizard({ onCreated, onCancel, mode = "studio", defaults, onClientCreated }: { onCreated: (lead: Lead) => void; onCancel: () => void; mode?: "studio" | "client"; defaults?: Partial<Client>; onClientCreated?: (r: ClientRequest) => void }) {
+  const isClient = mode === "client";
+  const apiBase = isClient ? "/api/workspace/fixed-price" : "/api/business";
   const [rates, setRates] = useState<RateCard | null>(null);
   const [catalog, setCatalog] = useState<TechEntry[] | null>(null);
   const [costConfig, setCostConfig] = useState<CostConfig | null>(null);
   const [existing, setExisting] = useState<string[]>([]);
   const [step, setStep] = useState(0);
-  const [client, setClient] = useState<Client>(emptyClient);
+  const [client, setClient] = useState<Client>(() => ({ ...emptyClient, ...(defaults ?? {}) }));
   const [req, setReq] = useState<Requirement>(emptyRequirement);
   const [tier, setTier] = useState<Tier | null>(null);
   const [pageDraft, setPageDraft] = useState("");
@@ -213,9 +224,11 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   const [analysis, setAnalysis] = useState<AnalysisOutcome | null>(null);
 
   useEffect(() => {
-    jsonFetch<{ rateCard: RateCard }>("/api/business/rate-card")
+    jsonFetch<{ rateCard: RateCard }>(`${apiBase}/rate-card`)
       .then((r) => setRates(r.rateCard))
       .catch((e: Error) => setError(e.message));
+    // A client's form needs nothing more: no technology catalog, cost settings or existing projects (those are the studio's).
+    if (isClient) return;
     jsonFetch<{ catalog: TechEntry[] }>("/api/business/tech-catalog")
       .then((r) => setCatalog(r.catalog))
       .catch(() => {});
@@ -227,6 +240,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
       .then((r) => r.json())
       .then((r: { projects?: { name: string }[] }) => setExisting((r.projects ?? []).map((p) => p.name)))
       .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // The estimate stays at zero until the document is analysed or the requirement is filled in.
@@ -381,6 +395,14 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
     setSaving(true);
     setError("");
     try {
+      if (isClient) {
+        const { request } = await jsonFetch<{ request: ClientRequest }>(`${apiBase}/leads`, {
+          method: "POST",
+          body: JSON.stringify({ client, requirement: withTitleAndSummary(req, client), tier: shownTier }),
+        });
+        onClientCreated?.(request);
+        return;
+      }
       const { lead } = await jsonFetch<{ lead: Lead }>("/api/business/leads", {
         method: "POST",
         body: JSON.stringify({ client, requirement: withTitleAndSummary(fixedBasis ? { ...req, fixedBasis } : req, client), tier: shownTier }),
@@ -408,6 +430,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   const budgetBlock = (
     <>
       <BudgetInput
+        ratesUrl={`${apiBase}/exchange-rates`}
         value={budget}
         onChange={(inr) => setR("budget", Math.max(0, Math.round(inr)))}
         hint="The most the client can pay for development, including GST. We suggest Basic, Standard or Premium from the rupee amount. Leave empty if not known."
@@ -451,7 +474,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
       <div className="min-w-0 space-y-5">
         {/* Step indicator */}
         <ol className="flex flex-wrap gap-2">
-          {STEPS.map((label, i) => (
+          {(isClient ? CLIENT_STEPS : STEPS).map((label, i) => (
             <li key={label}>
               <button
                 type="button"
@@ -473,8 +496,8 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
 
         <Card className="space-y-5">
           {step === 0 && analysis && budgetBlock}
-          {step === 0 && !analysis && <DocumentAnalyzer onDraft={applyAnalysis}>{budgetBlock}</DocumentAnalyzer>}
-          {analysis && (step === 0 || step === STEPS.length - 1) && <AnalysisNotes analysis={analysis} insights={req.insights} onClear={() => setAnalysis(null)} />}
+          {step === 0 && !analysis && <DocumentAnalyzer endpoint={`${apiBase}/analyze`} onDraft={applyAnalysis}>{budgetBlock}</DocumentAnalyzer>}
+          {analysis && (step === 0 || step === STEPS.length - 1) && <AnalysisNotes clientMode={isClient} analysis={analysis} insights={req.insights} onClear={() => setAnalysis(null)} />}
 
           {/* 1. Requirement: what the client wants and the one budget question */}
           {step === 0 && (
@@ -724,6 +747,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   </div>
                 )}
                 {budgetCheck && <BudgetSummary check={budgetCheck} onMoveToPhase2={toPhase2} onApplyPlan={applyPlan} onChangeDesign={(x) => setR("design", x)} />}
+                {!isClient && (<>
                 <TechnologyRecommendations
                   client={client}
                   requirement={priced}
@@ -748,6 +772,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                     onApply={(tech) => { setReq((r) => applyClientTech(r, tech, rates)); setTechOpen(false); }}
                   />
                 )}
+                </>)}
                 <PackageDetails proposals={proposals} rates={rates} selected={shownTier} suggested={suggested} budget={budget} onSelect={setTier} />
               </>
             ) : (
@@ -770,9 +795,9 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   </span>
                 </div>
               )}
-              <Section title="Client details" hint="Used on the quotation. The state decides CGST + SGST or IGST.">
+              <Section title={isClient ? "Your details" : "Client details"} hint="Used on the quotation. The state decides CGST + SGST or IGST.">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Client name *"><Input value={client.name} onChange={(e) => setC("name", e.target.value)} placeholder="Full name" /></Field>
+                  <Field label={isClient ? "Your name *" : "Client name *"}><Input value={client.name} onChange={(e) => setC("name", e.target.value)} placeholder="Full name" /></Field>
                   <Field label="Company"><Input value={client.company} onChange={(e) => setC("company", e.target.value)} placeholder="Business name (optional)" /></Field>
                   <Field label="Email *"><Input type="email" value={client.email} onChange={(e) => setC("email", e.target.value)} placeholder="client@example.com" /></Field>
                   <Field label="Phone *"><Input value={client.phone} onChange={(e) => setC("phone", e.target.value)} placeholder="+91 98765 43210" /></Field>
@@ -797,7 +822,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                       </Select>
                     </Field>
                   )}
-                  <FixedBasisPicker country={basisCountry} choice={basisChoice} onChoice={setBasisChoice} onPreview={setBasisPreview} />
+                  {!isClient && <FixedBasisPicker country={basisCountry} choice={basisChoice} onChoice={setBasisChoice} onPreview={setBasisPreview} />}
                   <Field label="GSTIN" hint="Optional, for business clients."><Input value={client.gstin} onChange={(e) => setC("gstin", e.target.value.toUpperCase())} placeholder="33ABCDE1234F1Z5" maxLength={15} /></Field>
                   <Field label="Billing address" className="sm:col-span-2"><Textarea value={client.address} onChange={(e) => setC("address", e.target.value)} className="min-h-16" /></Field>
                   <Field label="Client deadline (weeks)" hint={shown ? `This package needs about ${shown.estimatedWeeks} weeks. 0 = no fixed deadline.` : "0 = no fixed deadline."}>
@@ -805,7 +830,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   </Field>
                 </div>
                 {shown && req.deadlineWeeks > 0 && req.deadlineWeeks < shown.estimatedWeeks && (
-                  <p className="mt-2 text-xs text-amber-300">The deadline is shorter than the {shown.estimatedWeeks} weeks this package needs. Agree the date with the client.</p>
+                  <p className="mt-2 text-xs text-amber-300">The deadline is shorter than the {shown.estimatedWeeks} weeks this package needs. {isClient ? "We will confirm a realistic date with you." : "Agree the date with the client."}</p>
                 )}
               </Section>
             </>
@@ -814,7 +839,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
           {/* 5. Review: everything, including every page name */}
           {step === 4 && shown && (
             <div className="space-y-5 text-sm">
-              <details className="rounded-xl border border-amber-400/20 bg-amber-500/[.03] p-4" open>
+              {!isClient && <details className="rounded-xl border border-amber-400/20 bg-amber-500/[.03] p-4" open>
                 <summary className="cursor-pointer text-xs font-semibold text-amber-100">Costs, profitability and running costs <span className="font-normal text-amber-200/70">(internal view, never shown to the client)</span></summary>
                 <div className="mt-3">
                   <WizardCostPanel
@@ -826,7 +851,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                     onConfigure={() => window.open("/pricing", "_blank")}
                   />
                 </div>
-              </details>
+              </details>}
               <div className="grid gap-4 sm:grid-cols-2">
                 <ReviewBlock title="Client">
                   <p className="text-slate-200">{client.name}{client.company ? ` · ${client.company}` : ""}</p>
@@ -882,7 +907,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                 {shown.quote.seo.keywords.length > 0 && <p className="mt-1">Keywords: {shown.quote.seo.keywords.join(", ")}</p>}
               </ReviewBlock>
 
-              <p className="text-xs text-slate-500">Saving creates the quotation with the {shown.title} package selected and all three packages for the client to compare. You can still change the package, add a discount or share it afterwards.</p>
+              <p className="text-xs text-slate-500">{isClient ? `Saving creates your quotation with the ${shown.title} package selected, and all three packages to compare. You will approve it on the next page: nothing is charged until you approve it and pay the advance.` : `Saving creates the quotation with the ${shown.title} package selected and all three packages for the client to compare. You can still change the package, add a discount or share it afterwards.`}</p>
             </div>
           )}
 
@@ -929,7 +954,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
               </button>
             ) : (
               <button type="button" onClick={submit} disabled={saving} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition hover:brightness-110 disabled:opacity-60">
-                {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Save & create quotation
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} {isClient ? "Get my quotation" : "Save & create quotation"}
               </button>
             )}
           </div>
@@ -1031,7 +1056,7 @@ function ReviewBlock({ title, children }: { title: string; children: React.React
 }
 
 /** What the AI could not tell from the document: ask the client before sending the quotation. */
-function AnalysisNotes({ analysis, insights, onClear }: { analysis: AnalysisOutcome; insights?: RequirementInsights; onClear: () => void }) {
+function AnalysisNotes({ analysis, insights, onClear, clientMode = false }: { analysis: AnalysisOutcome; insights?: RequirementInsights; onClear: () => void; clientMode?: boolean }) {
   return (
     <div className="rounded-xl border border-amber-400/20 bg-amber-500/[.06] p-4 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1048,7 +1073,7 @@ function AnalysisNotes({ analysis, insights, onClear }: { analysis: AnalysisOutc
       )}
       {analysis.cached ? (
         <p className="mt-2 text-[11px] text-emerald-300" data-testid="analysis-cached">This document was analysed before. The saved result is used, so the estimate is the same as last time (no cost).</p>
-      ) : (
+      ) : clientMode ? null : (
         <p className="mt-2 text-[11px] text-slate-500">Analysis cost: ${analysis.costUsd.toFixed(4)} USD ({analysis.model}){analysis.runs && analysis.runs > 1 ? ` · agreement of ${analysis.runs} readings` : ""}{analysis.partial ? " · only some readings finished, so this result was not saved" : ""}</p>
       )}
     </div>

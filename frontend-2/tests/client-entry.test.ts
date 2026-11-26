@@ -117,9 +117,9 @@ describe("5. getting there from the front page", () => {
     assert.match(l, /href="\/sign-in\?next=%2Fai"/);
     assert.ok(!/href="\/ai\/sign-in"/.test(l), "no link to the old separate sign-in");
   });
-  it("the fixed-price page records the choice and says plainly that the form is not open yet", () => {
+  it("the fixed-price page records the choice and opens the client form", () => {
     const p = read("src/app/(client)/clients/new/fixed-price/page.tsx");
     assert.match(p, /recordModelChoice\(session, "fixed_price"\)/);
-    assert.match(p, /is not open for your account yet/);
+    assert.match(p, /ClientFixedPrice/);
   });
 });

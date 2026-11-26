@@ -11,13 +11,16 @@ type Rates = { source: "live" | "approximate"; asOf: string; inrPerUnit: Record<
 const APPROXIMATE: Rates = { source: "approximate", asOf: "", inrPerUnit: FALLBACK_INR_PER_UNIT };
 
 // One lookup per page load, shared by every budget box on the page.
-let loading: Promise<Rates> | null = null;
-function loadRates(): Promise<Rates> {
-  loading ??= fetch("/api/business/exchange-rates")
+const loading = new Map<string, Promise<Rates>>();
+function loadRates(url: string): Promise<Rates> {
+  const known = loading.get(url);
+  if (known) return known;
+  const started = fetch(url)
     .then((r) => r.json())
     .then((r: { success?: boolean } & Partial<Rates>) => (r.success && r.inrPerUnit ? ({ source: r.source ?? "approximate", asOf: r.asOf ?? "", inrPerUnit: { ...FALLBACK_INR_PER_UNIT, ...r.inrPerUnit } } as Rates) : APPROXIMATE))
     .catch(() => APPROXIMATE);
-  return loading;
+  loading.set(url, started);
+  return started;
 }
 
 const rupees = (n: number) => `₹${n.toLocaleString("en-IN")}`;
@@ -27,7 +30,7 @@ const rateText = (n: number) => (n >= 1 ? n.toFixed(2) : n.toPrecision(2));
  * The client's budget: pick the client's currency (search by country, currency or symbol), type the amount, and the next box shows
  * it in Indian rupees. Only the rupee figure is kept (`value`); every price and comparison in SILPI stays in rupees.
  */
-export function BudgetInput({ value, onChange, label = "Client budget", hint }: { value: number; onChange: (inr: number) => void; label?: string; hint?: string }) {
+export function BudgetInput({ value, onChange, label = "Client budget", hint, ratesUrl = "/api/business/exchange-rates" }: { value: number; onChange: (inr: number) => void; label?: string; hint?: string; ratesUrl?: string }) {
   const [code, setCode] = useState("INR");
   const [amount, setAmount] = useState(value ? String(value) : "");
   const [rates, setRates] = useState<Rates>(APPROXIMATE);
@@ -38,7 +41,7 @@ export function BudgetInput({ value, onChange, label = "Client budget", hint }: 
 
   useEffect(() => {
     let alive = true;
-    void loadRates().then((r) => { if (alive) setRates(r); });
+    void loadRates(ratesUrl).then((r) => { if (alive) setRates(r); });
     return () => { alive = false; };
   }, []);
 
