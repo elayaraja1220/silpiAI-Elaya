@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { getDb, transaction } from "./db";
 import { buildQuote } from "./pricing";
+import { listApprovals, listVersions, recordApproval, recordVersion, termChanges, termsOf, verifyApproval, type ApprovalRow, type VersionRow } from "./approvals";
 import { getLiveInrPerUnit, type LiveRates } from "./live-rates";
 import { enrichFixed, enrichHourly } from "@/server/pricing-data";
 import { formatMoney, moneyOf } from "./money";
@@ -193,6 +194,13 @@ function nextQuoteNumber(): string {
   return `${prefix}${String(Number(row.n) + 1).padStart(4, "0")}`;
 }
 
+/** Freezes the lead's current quotation as the one that was approved, with who approved it and how. */
+function approveLatest(db: ReturnType<typeof getDb>, leadId: string, by: string, channel: "client-link" | "team", note: string): void {
+  const row = db.prepare("SELECT data FROM quotations WHERE lead_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(leadId) as { data: string } | undefined;
+  if (!row) throw new StageError("There is no quotation to approve.");
+  recordApproval(db, JSON.parse(row.data) as Quotation, row.data, by, channel, note);
+}
+
 function recordStage(leadId: string, from: Stage | null, to: Stage, note = ""): void {
   getDb()
     .prepare("INSERT INTO stage_history (lead_id, from_stage, to_stage, note, at) VALUES (?, ?, ?, ?, ?)")
@@ -234,13 +242,9 @@ function issueQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requiremen
     budgetCheck: checkBudget(chosen.requirement, quote, lead.client, rates, proposals),
   };
   const db = getDb();
-  db.prepare("INSERT INTO quotations (id, lead_id, number, data, created_at) VALUES (?, ?, ?, ?, ?)").run(
-    quotation.id,
-    lead.id,
-    quotation.number,
-    JSON.stringify(quotation),
-    quotation.createdAt,
-  );
+  const data = JSON.stringify(quotation);
+  db.prepare("INSERT INTO quotations (id, lead_id, number, data, created_at) VALUES (?, ?, ?, ?, ?)").run(quotation.id, lead.id, quotation.number, data, quotation.createdAt);
+  recordVersion(db, quotation, data, note);
   const label = `${quotation.number} · ${chosen.title}${note ? ` (${note})` : ""}`;
   if (lead.stage !== "quoted") {
     db.prepare("UPDATE leads SET stage = 'quoted', updated_at = ? WHERE id = ?").run(now(), lead.id);
@@ -268,7 +272,9 @@ function issueHourlyQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requ
     requirement: lead.requirement,
   };
   const db = getDb();
-  db.prepare("INSERT INTO quotations (id, lead_id, number, data, created_at) VALUES (?, ?, ?, ?, ?)").run(quotation.id, lead.id, quotation.number, JSON.stringify(quotation), quotation.createdAt);
+  const data = JSON.stringify(quotation);
+  db.prepare("INSERT INTO quotations (id, lead_id, number, data, created_at) VALUES (?, ?, ?, ?, ?)").run(quotation.id, lead.id, quotation.number, data, quotation.createdAt);
+  recordVersion(db, quotation, data, note);
   const label = `${quotation.number} · hourly engagement${note ? ` (${note})` : ""}`;
   if (lead.stage !== "quoted") {
     db.prepare("UPDATE leads SET stage = 'quoted', updated_at = ? WHERE id = ?").run(now(), lead.id);
@@ -325,7 +331,7 @@ export function assertFinalAllowed(lead: Pick<Lead, "requirement">): void {
   }
 }
 
-export function setStage(id: string, to: Stage, note = ""): Lead {
+export function setStage(id: string, to: Stage, note = "", by = "team"): Lead {
   transaction((db) => {
     const lead = getLead(id);
     if (!lead) throw new StageError("Project not found.");
@@ -333,6 +339,7 @@ export function setStage(id: string, to: Stage, note = ""): Lead {
     if (!MANUAL_TRANSITIONS[lead.stage]?.includes(to)) {
       throw new StageError(`Cannot move from "${lead.stage}" to "${to}".`);
     }
+    if (to === "approved") approveLatest(db, id, by, "team", note);
     db.prepare("UPDATE leads SET stage = ?, updated_at = ? WHERE id = ?").run(to, now(), id);
     recordStage(id, lead.stage, to, note);
   });
@@ -521,6 +528,7 @@ export function respondAsClient(token: string, response: Omit<ClientResponse, "a
         issueQuotation(lead, response.tier, 0, "chosen by client");
       }
       db.prepare("UPDATE leads SET stage = 'approved', updated_at = ? WHERE id = ?").run(now(), lead.id);
+      approveLatest(db, lead.id, `client: ${response.name}`, "client-link", response.message ?? "");
       const q = latestQuotation(lead.id)!;
       recordStage(lead.id, "quoted", "approved", `Approved online by ${response.name}: ${q.number}${response.message ? ` · "${response.message}"` : ""}`);
     } else {
@@ -595,7 +603,37 @@ export function addWorkEntry(id: string, e: { item: string; hours: number; note:
 }
 
 /** Permanently removes a lead and everything under it (quotations, payments, hours, jobs). Generated project folders are untouched. */
+export type ApprovalRecord = {
+  versions: VersionRow[];
+  approvals: (ApprovalRow & { intact: boolean; problem?: string })[];
+  /** The newest version is not the one that was approved: what it changes against the approved terms, and that it needs approving again. */
+  pending: { number: string; versionNo: number; changes: string[]; needsApproval: boolean } | null;
+};
+
+/** The versions of the lead's quotation and every approval, each checked against what is stored now. */
+export function approvalRecord(leadId: string): ApprovalRecord {
+  const db = getDb();
+  const versions = listVersions(db, leadId);
+  const approvals = listApprovals(db, leadId).map((a) => {
+    const v = verifyApproval(db, a);
+    return { ...a, intact: v.ok, ...(v.ok ? {} : { problem: v.reason }) };
+  });
+  const latest = latestQuotation(leadId);
+  const lastApproval = approvals[approvals.length - 1];
+  let pending: ApprovalRecord["pending"] = null;
+  if (latest && lastApproval && lastApproval.quotationId !== latest.id) {
+    pending = { number: latest.number, versionNo: versions[versions.length - 1]?.versionNo ?? 0, changes: termChanges(lastApproval.terms, termsOf(latest)), needsApproval: true };
+  }
+  return { versions, approvals, pending };
+}
+
+/** A project that has an approved quotation is kept for the record: it can be marked lost, never deleted. */
+export function assertDeletable(id: string): void {
+  if (listApprovals(getDb(), id).length > 0) throw new StageError("This project has an approved quotation, so it is kept for the record. Mark it lost instead.");
+}
+
 export function deleteLead(id: string): void {
+  assertDeletable(id);
   getDb().prepare("DELETE FROM leads WHERE id = ?").run(id);
 }
 

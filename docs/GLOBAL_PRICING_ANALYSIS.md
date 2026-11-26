@@ -83,3 +83,12 @@ Written before any change, as the brief asked. No code was changed for this docu
 - `buildQuote` then prices every hour at billed median × (1 + risk allowance) in the quotation's currency. No verified rate, no role/level, or a rate in another currency: the rate card price is used (a currency mismatch at save time is refused with the way to fix it). Rupee quotations without a basis are unchanged.
 - The quotation shows one sentence naming the benchmark, source, date and risk allowance (`fixedBasisNote`); a saved quotation never moves when a newer rate is added.
 - Wizard: "Hourly price based on" (Rate card / Market rate) with role and level, and a preview of the rate.
+
+## Step 6: approval records and quotation versions
+
+- Migration 19: `quotation_versions` (every quotation issued is version 1, 2, 3..., with the reason and a SHA-256 fingerprint of the stored JSON) and `quotation_approvals` (who approved, by which channel, when, the frozen terms and the fingerprint). Both are append-only (triggers). Old quotations are backfilled; an approval that happened before records existed is recorded as "unknown (approved before approval records)", never with an invented approver.
+- The terms frozen: mode, currency and exchange rate, price, discount, tax mode/rate/amount, hours, the hourly price, the hourly range and spending cap, the scope (pages, modules, left out), the market source and date, the validity.
+- Immutability: the database refuses to update or delete a quotation that has an approval. The team cannot re-price an approved quotation (it was already locked); reopening and re-pricing makes a NEW version, shown as "not approved yet" with the agreed terms it changes (`termChanges`), and approving it adds a second record while the first stays.
+- `verifyApproval` recomputes the fingerprint, so tampering that bypassed the database would show as "not intact".
+- A project with an approved quotation can no longer be deleted (mark it lost instead).
+- Screen: "Versions and approvals" card on the project summary; read-only API `GET /api/business/leads/:id/approvals`.

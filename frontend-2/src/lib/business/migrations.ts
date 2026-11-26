@@ -2,6 +2,8 @@ import { CURRENCIES } from "./currency";
 import { COUNTRIES, minorDigits } from "./countries";
 import { DEFAULT_PRICING_CONFIG, hourlyFromAnnual } from "./market-rates";
 import type { DatabaseSync } from "node:sqlite";
+import { recordApproval, recordVersion } from "./approvals";
+import type { Quotation } from "./types";
 
 /**
  * Numbered, one-way database migrations.
@@ -1002,6 +1004,80 @@ export const MIGRATIONS: Migration[] = [
         rate.run(levelId, hourly, hourly, hourly, "Illustrative assumption from the SILPI AI pricing brief (yearly salary / 2,080 hours). Not a market rate.", at.slice(0, 10), at, `Yearly salary assumed: Rs ${annualRupees.toLocaleString("en-IN")}`);
       }
       db.prepare("INSERT INTO pricing_configurations (key, value, updated_at, updated_by) VALUES ('global', ?, ?, 'system')").run(JSON.stringify(DEFAULT_PRICING_CONFIG), at);
+    },
+  },
+  {
+    id: 19,
+    name: "Quotation versions and approval records: what was agreed, frozen, and an approved quotation that cannot be changed",
+    up(db) {
+      db.exec(`
+        -- One row per quotation ever issued for a lead, in order, with a fingerprint of exactly what was written. Never edited or deleted.
+        CREATE TABLE quotation_versions (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          lead_id      TEXT NOT NULL,
+          quotation_id TEXT NOT NULL UNIQUE,
+          number       TEXT NOT NULL,
+          version_no   INTEGER NOT NULL CHECK (version_no >= 1),
+          reason       TEXT NOT NULL DEFAULT '',
+          digest       TEXT NOT NULL CHECK (length(digest) = 64),
+          mode         TEXT NOT NULL CHECK (mode IN ('fixed', 'hourly')),
+          currency     TEXT NOT NULL DEFAULT 'INR',
+          grand_total  REAL NOT NULL,
+          created_at   TEXT NOT NULL,
+          UNIQUE (lead_id, version_no)
+        );
+        CREATE INDEX quotation_versions_lead ON quotation_versions(lead_id, version_no);
+        CREATE TRIGGER quotation_versions_no_update BEFORE UPDATE ON quotation_versions BEGIN SELECT RAISE(ABORT, 'quotation versions are append-only'); END;
+        CREATE TRIGGER quotation_versions_no_delete BEFORE DELETE ON quotation_versions BEGIN SELECT RAISE(ABORT, 'quotation versions are append-only'); END;
+
+        -- What was agreed, when and by whom, frozen with the fingerprint of the quotation. Not tied to the lead by a foreign key on purpose: the record outlives the working file.
+        CREATE TABLE quotation_approvals (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          lead_id      TEXT NOT NULL,
+          quotation_id TEXT NOT NULL,
+          number       TEXT NOT NULL,
+          version_no   INTEGER NOT NULL DEFAULT 0,
+          approved_by  TEXT NOT NULL,
+          channel      TEXT NOT NULL CHECK (channel IN ('client-link', 'team', 'before-records')),
+          note         TEXT NOT NULL DEFAULT '',
+          terms        TEXT NOT NULL,
+          digest       TEXT NOT NULL CHECK (length(digest) = 64),
+          approved_at  TEXT NOT NULL
+        );
+        CREATE INDEX quotation_approvals_lead ON quotation_approvals(lead_id, id);
+        CREATE INDEX quotation_approvals_quotation ON quotation_approvals(quotation_id);
+        CREATE TRIGGER quotation_approvals_no_update BEFORE UPDATE ON quotation_approvals BEGIN SELECT RAISE(ABORT, 'approval records are append-only'); END;
+        CREATE TRIGGER quotation_approvals_no_delete BEFORE DELETE ON quotation_approvals BEGIN SELECT RAISE(ABORT, 'approval records are append-only'); END;
+      `);
+
+      // Quotations made before this change: give each its version number and fingerprint, and record the approvals that already happened as such. Their approver and the
+      // channel were not recorded then, and the record says so rather than inventing them.
+      const hasQuotations = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'quotations'").get();
+      const hasHistory = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stage_history'").get();
+      const leads = hasQuotations ? (db.prepare("SELECT DISTINCT lead_id FROM quotations").all() as { lead_id: string }[]) : [];
+      for (const { lead_id } of leads) {
+        const rows = db.prepare("SELECT id, data FROM quotations WHERE lead_id = ? ORDER BY created_at ASC, rowid ASC").all(lead_id) as { id: string; data: string }[];
+        for (const r of rows) {
+          let q: Quotation;
+          try { q = JSON.parse(r.data) as Quotation; } catch { continue; }
+          recordVersion(db, q, r.data, "before version tracking");
+        }
+        const lead = db.prepare("SELECT stage, updated_at FROM leads WHERE id = ?").get(lead_id) as { stage: string; updated_at: string } | undefined;
+        const last = rows[rows.length - 1];
+        if (lead && last && !["requirement", "quoted", "lost"].includes(lead.stage)) {
+          const when = hasHistory ? (db.prepare("SELECT at FROM stage_history WHERE lead_id = ? AND to_stage = 'approved' ORDER BY id DESC LIMIT 1").get(lead_id) as { at: string } | undefined) : undefined;
+          try { recordApproval(db, JSON.parse(last.data) as Quotation, last.data, "unknown (approved before approval records)", "before-records", "Recorded when approval records were introduced.", when?.at ?? lead.updated_at); } catch { /* an unreadable old quotation is left without a record */ }
+        }
+      }
+
+      // The triggers are created after the backfill.
+      if (hasQuotations) db.exec(`
+        -- An approved quotation is what was agreed: the database refuses to change or remove it. A change is a new version that must be approved again.
+        CREATE TRIGGER quotations_approved_no_update BEFORE UPDATE ON quotations WHEN EXISTS (SELECT 1 FROM quotation_approvals WHERE quotation_id = OLD.id)
+          BEGIN SELECT RAISE(ABORT, 'an approved quotation cannot be changed: issue a new version and have it approved'); END;
+        CREATE TRIGGER quotations_approved_no_delete BEFORE DELETE ON quotations WHEN EXISTS (SELECT 1 FROM quotation_approvals WHERE quotation_id = OLD.id)
+          BEGIN SELECT RAISE(ABORT, 'an approved quotation cannot be deleted'); END;
+      `);
     },
   },
 ];

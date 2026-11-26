@@ -186,13 +186,13 @@ describe("collecting the originals", () => {
     const traversal = await m.fileRoute.GET(get(`/api/business/leads/${a.id}/assets/files/..%2F..%2Fsilpi.db`), { params: Promise.resolve({ id: a.id, fileId: "../../silpi.db" }) });
     assert.equal(traversal.status, 400);
 
-    // Deleting a lead removes its files from disk.
+    // A project with an approved quotation is kept for the record: it cannot be deleted, so its files stay too (it can be marked lost instead).
     const dir = path.join(process.env.SILPI_ASSETS_DIR!, a.id);
     assert.ok(existsSync(dir));
     const route = await import("@/app/api/business/leads/[id]/route");
-    await route.DELETE(del(`/api/business/leads/${a.id}`), { params: Promise.resolve({ id: a.id }) });
-    assert.ok(!existsSync(dir), "files removed with the lead");
-    assert.ok(existsSync(path.join(process.env.SILPI_ASSETS_DIR!, b.id)) || !existsSync(dir), "the other lead is untouched");
+    const refused = await route.DELETE(del(`/api/business/leads/${a.id}`), { params: Promise.resolve({ id: a.id }) });
+    assert.equal(refused.status, 400);
+    assert.ok(existsSync(dir), "nothing is removed when the deletion is refused");
   });
 });
 

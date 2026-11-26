@@ -25,6 +25,7 @@ import { BillingModePicker, HourlyEngagementForm } from "@/components/business/h
 import { RequirementWizard } from "@/components/business/requirement-wizard";
 import { Card, Input, StageBadge, jsonFetch } from "@/components/business/ui";
 import { formatMoney, moneyOf } from "@/lib/business/money";
+import { ApprovalRecordCard } from "@/components/business/approval-record";
 import { MoneyProvider } from "@/components/business/money-context";
 import { STAGE_LABELS, type BillingMode, type Lead, type Quote, type RequirementInsights, type Stage } from "@/lib/business/types";
 import { formatRelativeTime } from "@/lib/utils";
@@ -276,6 +277,7 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
               ))}
             </ol>
           </Card>
+          <div className="lg:col-span-2"><ApprovalRecordCard leadId={lead.id} refreshKey={`${lead.stage}:${lead.quotation?.id ?? ""}`} /></div>
           {lead.requirement.insights && (
             <div className="lg:col-span-2">
               <InsightsCard
