@@ -27,7 +27,7 @@ export const AnalyzeInputSchema = z.object({
         data: z.string().min(1),
       }),
     )
-    .max(5)
+    .max(12)
     .default([]),
   /** Extra notes typed by the team (phone call notes, WhatsApp message). */
   notes: z.string().max(10_000).default(""),

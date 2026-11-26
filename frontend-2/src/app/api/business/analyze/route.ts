@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { analysisKey, getSavedAnalysis, saveAnalysis } from "@/lib/business/analysis-cache";
 import { needed, stableDraft } from "@/lib/business/analysis-stable";
+import { composeNotes, manifestNote, parseManifest } from "@/lib/business/analyze-sample";
 import { readUploads, runAnalysis } from "@/lib/business/analyze";
 import { defaultSections } from "@/lib/business/pricing";
 import { getRateCard } from "@/lib/business/store";
@@ -10,7 +11,7 @@ import { AgentUnavailableError } from "@/lib/silpi-runner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 200;
+export const maxDuration = 300;
 
 /** The AI reads a document differently each time, so it reads it this many times and only what most runs agree on is kept. */
 const RUNS = Math.min(5, Math.max(1, Number(process.env.SILPI_ANALYZE_RUNS) || 3));
@@ -27,8 +28,12 @@ export async function POST(request: NextRequest) {
   try {
     const form = await request.formData();
     const files = form.getAll("files").filter((f): f is File => f instanceof File);
-    const notes = String(form.get("notes") ?? "").slice(0, 10_000);
     const docs = await readUploads(files);
+    // The AI read only a sample when many files were supplied. Tell it how many there really are and what they are called.
+    let manifest = null;
+    try { manifest = parseManifest(form.get("manifest")); } catch (e) { throw new ValidationError((e as Error).message); }
+    const extra = manifest ? manifestNote(manifest, docs.map((d) => d.name)) : "";
+    const notes = composeNotes(String(form.get("notes") ?? ""), extra);
     if (docs.length === 0 && !notes.trim()) {
       return NextResponse.json({ success: false, error: "Upload a document or type the requirement notes." }, { status: 400 });
     }

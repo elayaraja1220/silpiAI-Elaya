@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 
 import { assertAgentReady } from "@/lib/silpi-runner";
 
+import { analysisTimeoutMs, MAX_FILE_BYTES as SINGLE_FILE_BYTES, READ_FILES } from "./analyze-sample";
 import { ValidationError } from "./validate";
 
 /**
@@ -10,10 +11,10 @@ import { ValidationError } from "./validate";
  * web server never sees it.
  */
 
-export const MAX_FILES = 5;
-export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+/** How many files the AI is SHOWN in one analysis (not how many a client may supply: see analyze-sample.ts). */
+export const MAX_FILES = READ_FILES;
+export const MAX_FILE_BYTES = SINGLE_FILE_BYTES;
 export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
-const TIMEOUT_MS = 3 * 60 * 1000;
 
 const TYPES: Record<string, string> = {
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -61,7 +62,7 @@ function contentMatches(mediaType: string, bytes: Buffer): boolean {
 export type UploadedDoc = { name: string; mediaType: string; data: string };
 
 export async function readUploads(files: File[]): Promise<UploadedDoc[]> {
-  if (files.length > MAX_FILES) throw new ValidationError(`Upload at most ${MAX_FILES} files.`);
+  if (files.length > MAX_FILES) throw new ValidationError(`At most ${MAX_FILES} files can be read at once. The page chooses a sample for you; if you are sending files yourself, send fewer and list the rest.`);
   const total = files.reduce((sum, f) => sum + f.size, 0);
   if (total > MAX_TOTAL_BYTES) throw new ValidationError("Files together must be 20 MB or less.");
 
@@ -93,8 +94,8 @@ export async function runAnalysis(attachments: UploadedDoc[], notes: string): Pr
     let stderr = "";
     const timer = setTimeout(() => {
       child.kill();
-      resolve({ success: false, error: "Analysis took too long. Try a smaller document." });
-    }, TIMEOUT_MS);
+      resolve({ success: false, error: "Analysis took too long. Try again, or add fewer or smaller files and describe the rest in the notes." });
+    }, analysisTimeoutMs(attachments.length));
     child.stdout.on("data", (chunk: Buffer) => { if (stdout.length < 1_000_000) stdout += chunk.toString("utf8"); });
     child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-2000); });
     child.on("error", (error) => {
