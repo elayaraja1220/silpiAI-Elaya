@@ -5,7 +5,7 @@ import { ValidationError } from "./business/validate";
 export const TERMS_VERSION = "2026-11";
 
 /** Where a client goes after signing in when no other destination was asked for. */
-export const CLIENT_HOME = "/ai";
+export const CLIENT_HOME = "/clients/new";
 
 export const MIN_PASSWORD = 10;
 export const MAX_PASSWORD = 200;

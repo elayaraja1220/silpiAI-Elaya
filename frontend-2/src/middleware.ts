@@ -10,6 +10,7 @@ import { safeNext } from "@/lib/safe-next";
  *   - the studio pages (Overview, Clients & quotes, My projects, Existing projects, Agent activity, Business & pricing, Plans, Settings,
  *     Recurring income) -> an administrator session, otherwise a redirect to /admin/sign-in that comes back here afterwards.
  *
+ * /clients/new and below it belong to the client interface (a client signs in with an account, not as an administrator); the studio's own quotation form is /clients/quote.
  * Not matched here, on purpose: /q/[token] and /api/client/[token] (a client's own secret quotation link), /ai/* and /api/workspace/* (customer
  * accounts, with their own checks), /api/admin/* and /api/execution|demo (they check the administrator themselves), the sign-in pages.
  * A route added under /api/business later is protected without anyone remembering to.
@@ -17,6 +18,8 @@ import { safeNext } from "@/lib/safe-next";
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   if (pathname.startsWith("/api/")) return requireAdmin(request) ?? NextResponse.next();
+  // The client's own pages (choose a development model). They check the client sign-in themselves and show nothing of the studio.
+  if (pathname === "/clients/new" || pathname.startsWith("/clients/new/")) return NextResponse.next();
   if (adminIdentity(request)) return NextResponse.next();
   const to = request.nextUrl.clone();
   to.pathname = "/admin/sign-in";

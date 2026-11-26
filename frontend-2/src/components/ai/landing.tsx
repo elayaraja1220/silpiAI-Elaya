@@ -96,8 +96,9 @@ export function Landing() {
             {[["#features", "Features"], ["#how", "How it works"], ["#credits", "Credits"], ["#pricing", "Pricing"], ["#faq", "FAQ"]].map(([h, l]) => <a key={h} href={h} className="rounded-lg px-3 py-1.5 hover:bg-slate-100 hover:text-slate-900">{l}</a>)}
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <Link href="/ai/sign-in" className="rounded-lg px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100">Sign in</Link>
-            <Link href="/ai/sign-in" className="rounded-full bg-slate-900 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700">Get started</Link>
+            <Link href="/sign-in?next=%2Fai" className="rounded-lg px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100">Sign in</Link>
+            <Link href="/clients/new" className="hidden rounded-lg px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 sm:inline-block">Get your quotation</Link>
+            <Link href="/sign-in?mode=signup" className="rounded-full bg-slate-900 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700">Get started</Link>
           </div>
         </div>
       </header>
@@ -324,7 +325,7 @@ export function Landing() {
         <div className="mx-auto max-w-3xl px-4 sm:px-6">
           <h2 className="text-4xl font-semibold tracking-tight sm:text-5xl">Ready to turn your first idea into code?</h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-white/70">Start with the free Demo mode. No AI, no cost, the whole flow.</p>
-          <Link href="/ai/sign-in" className="mt-8 inline-flex items-center gap-2 rounded-full bg-white px-7 py-3 text-base font-medium text-slate-900 shadow-lg transition hover:bg-indigo-50">Get started <ArrowRight size={16} /></Link>
+          <Link href="/sign-in?mode=signup" className="mt-8 inline-flex items-center gap-2 rounded-full bg-white px-7 py-3 text-base font-medium text-slate-900 shadow-lg transition hover:bg-indigo-50">Get started <ArrowRight size={16} /></Link>
         </div>
       </section>
 
@@ -334,7 +335,7 @@ export function Landing() {
           <BrandLogo size="sm" tagline />
           <nav className="flex flex-wrap gap-x-5 gap-y-2" aria-label="Footer">
             <a href="#features" className="hover:text-slate-900">Features</a><a href="#credits" className="hover:text-slate-900">Credits</a><a href="#pricing" className="hover:text-slate-900">Pricing</a><a href="#faq" className="hover:text-slate-900">FAQ</a>
-            <Link href="/ai/sign-in" className="hover:text-slate-900">Sign in</Link>
+            <Link href="/sign-in?next=%2Fai" className="hover:text-slate-900">Sign in</Link><Link href="/clients/new" className="hover:text-slate-900">Get your quotation</Link>
           </nav>
         </div>
       </footer>

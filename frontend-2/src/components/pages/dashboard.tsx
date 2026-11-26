@@ -430,7 +430,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 text-violet-100"><FilePlus2 size={20} /></span>
             <h3 className="mt-3 text-base font-semibold">Get your quotation</h3>
             <p className="mt-1 text-xs leading-5 text-slate-300">Tell us what the client needs and get a priced quotation with GST in minutes.</p>
-            <button onClick={() => router.push("/clients/new")} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-violet-700 shadow-lg shadow-black/20 transition hover:bg-violet-50">
+            <button onClick={() => router.push("/clients/quote")} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-violet-700 shadow-lg shadow-black/20 transition hover:bg-violet-50">
               <Plus size={17} /> Get your quotation
             </button>
             <ol className="mt-4 space-y-2 text-[11px] text-slate-300">

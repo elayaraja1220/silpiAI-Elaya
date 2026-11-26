@@ -213,7 +213,7 @@ describe("3. signing in", () => {
     people.set("code-fay", { provider: "facebook", profile: facebook("f-1", "fay@example.com") });
     const x = await roundTrip("facebook", "code-fay");
     assert.ok(x.session);
-    assert.equal(x.to.pathname, "/ai", "with no destination given they go to the client home");
+    assert.equal(x.to.pathname, "/clients/new", "with no destination given they go to the client home");
     assert.deepEqual({ ...(db.getDb().prepare("SELECT provider, email_verified AS v FROM auth_identities WHERE subject = 'f-1'").get() as object) }, { provider: "facebook", v: 0 });
   });
   it("sends the secret and the PKCE verifier to the provider's token door, and the token in a header rather than an address", async () => {
@@ -338,7 +338,7 @@ describe("4. refusing what must be refused", () => {
     for (const evil of ["https://evil.example/", "//evil.example", "/\\evil.example", "javascript:alert(1)"]) {
       const x = await roundTrip("google", "c1", { next: evil });
       assert.equal(x.to.origin, BASE, evil);
-      assert.equal(x.to.pathname, "/ai", evil + " falls back to the client home");
+      assert.equal(x.to.pathname, "/clients/new", evil + " falls back to the client home");
     }
   });
 });

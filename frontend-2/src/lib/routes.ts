@@ -27,7 +27,7 @@ export const TITLES: Record<ViewId, string> = {
 
 /** Which screen a URL belongs to, and a more specific title for sub-pages. */
 export function viewForPath(pathname: string): { view: ViewId; title: string } {
-  if (pathname === "/clients/new") return { view: "clients", title: "Get your quotation" };
+  if (pathname === "/clients/quote") return { view: "clients", title: "Get your quotation" };
   if (pathname.startsWith("/clients/")) return { view: "clients", title: "Quotation" };
   const match = (Object.keys(ROUTES) as ViewId[]).find((v) => v !== "dashboard" && (pathname === ROUTES[v] || pathname.startsWith(`${ROUTES[v]}/`)));
   const view = match ?? "dashboard";

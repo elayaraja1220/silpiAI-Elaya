@@ -39,7 +39,7 @@ describe("1. where a sign-in returns to", () => {
 describe("2. the studio pages", () => {
   it("send anyone who is not signed in as an administrator to the sign-in page, remembering where they were going, on localhost too", async () => {
     const { mw } = await mods();
-    for (const p of ["/", "/clients", "/clients/new", "/clients/abc123", "/projects", "/existing", "/activity", "/pricing", "/plans", "/settings", "/recurring-income"]) {
+    for (const p of ["/", "/clients", "/clients/quote", "/clients/abc123", "/projects", "/existing", "/activity", "/pricing", "/plans", "/settings", "/recurring-income"]) {
       const res = mw.middleware(req(p));
       assert.equal(res.status, 307, p);
       const to = new URL(res.headers.get("location")!);

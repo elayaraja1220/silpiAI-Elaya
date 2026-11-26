@@ -56,7 +56,7 @@ export function ClientsPage() {
           <h2 className="text-sm font-semibold text-slate-100">Client requirements & quotations</h2>
           <p className="mt-1 text-xs text-slate-500">Collect a requirement, get the price with GST, and send the quotation.</p>
         </div>
-        <button onClick={() => router.push("/clients/new")} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400">
+        <button onClick={() => router.push("/clients/quote")} className="flex items-center gap-2 rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400">
           <Plus size={16} /> Get your quotation
         </button>
       </div>
@@ -116,7 +116,7 @@ export function ClientsPage() {
   );
 }
 
-/** Page: /clients/new */
+/** Page: /clients/quote (the studio's own quotation form; clients choose their model at /clients/new) */
 export function NewRequirementPage() {
   const router = useRouter();
   const [billing, setBilling] = useState<BillingMode>("fixed");

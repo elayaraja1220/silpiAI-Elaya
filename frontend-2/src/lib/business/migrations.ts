@@ -1170,6 +1170,24 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 23,
+    name: "Development model chosen by a client (fixed price or SaaS)",
+    up(db) {
+      db.exec(`
+        -- Each time a client chooses how they want to build, one row: who, for which organization, which model and when. Append-only: it is a record, not a setting.
+        CREATE TABLE model_selections (
+          id        INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          org_id    TEXT NOT NULL REFERENCES organizations(id),
+          model     TEXT NOT NULL CHECK (model IN ('fixed_price', 'saas')),
+          chosen_at TEXT NOT NULL
+        );
+        CREATE INDEX model_selections_user ON model_selections(user_id, id);
+        CREATE TRIGGER model_selections_no_update BEFORE UPDATE ON model_selections BEGIN SELECT RAISE(ABORT, 'model selections are append-only'); END;
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {

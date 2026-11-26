@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { safeNext } from "@/lib/safe-next";
 import { Loader2 } from "lucide-react";
 
 import { CURRENCY_CODES, CURRENCY_INFO, formatAmount, isCurrency, type CurrencyCode } from "@/lib/currencies";
@@ -216,6 +217,9 @@ function ChangePlan({ billing, plans, fixedCurrency, guess, onDone, onError }: {
     try {
       const r = await api<{ result: { kind: string; invoice: Invoice | null; effectiveAt?: string | null } }>("/api/workspace/billing/plan", { method: "POST", body: { planId: p.id, period, currency: cur, ...(coupon.trim() ? { couponCode: coupon.trim() } : {}) } });
       const inv = r.result.invoice;
+      // Arrived here from "Start with SILPI AI": once a plan is active at once (the free plan), carry on to where they were going. A paid plan starts when its payment is confirmed.
+      const then = safeNext(new URLSearchParams(window.location.search).get("then"), "");
+      if (then && !inv && r.result.kind !== "scheduled") { window.location.assign(then); return; }
       onDone(inv ? `Invoice ${inv.number} for ${fmt(inv.totalPaise, inv.currency)} created. Your ${p.name} plan starts when the payment is confirmed.` : r.result.kind === "scheduled" ? `You will move to ${p.name} at the end of this period.` : `You are on ${p.name}.`);
     } catch (e) { onError(e); } finally { setBusy(null); }
   };
