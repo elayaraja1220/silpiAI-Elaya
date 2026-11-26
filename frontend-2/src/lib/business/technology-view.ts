@@ -1,4 +1,4 @@
-import { formatINR } from "./pricing";
+import { formatMoney, INR_MONEY, type Money } from "./money";
 import { checkStack, type TechEntry } from "./tech-catalog";
 import { frontendLabel, listLabels, selectedStackIds, stylingFor } from "./tech-preference";
 import type { Recommendation, RecommendedOption } from "./tech-recommend";
@@ -81,7 +81,8 @@ export type TechnologyView = {
 const cap = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
 
-function optionView(option: RecommendedOption, requirement: Requirement, confirmedAlternative: boolean, requiresConfirmation: boolean, inUseIds: string[], rates?: RateCard): TechOptionView {
+function optionView(option: RecommendedOption, requirement: Requirement, confirmedAlternative: boolean, requiresConfirmation: boolean, inUseIds: string[], rates?: RateCard, money: Money = INR_MONEY): TechOptionView {
+  const formatINR = (n: number) => formatMoney(n, money);
   const hostIds = option.stack.hosting.map((h) => h.id);
   const appIds = option.ids.filter((id) => !hostIds.includes(id));
   const front = option.stack.frontend.map((t) => t.id);
@@ -122,11 +123,11 @@ function optionView(option: RecommendedOption, requirement: Requirement, confirm
   };
 }
 
-export function buildTechnologyView(requirement: Requirement, result: Recommendation, catalog: readonly TechEntry[], rates?: RateCard): TechnologyView {
+export function buildTechnologyView(requirement: Requirement, result: Recommendation, catalog: readonly TechEntry[], rates?: RateCard, money: Money = INR_MONEY): TechnologyView {
   const pref = result.clientPreference;
   const confirmed = pref.confirmedAlternative;
   const inUseIds = selectedStackIds(requirement);
-  const options = result.options.map((o) => optionView(o, requirement, confirmed, result.requiresConfirmation, inUseIds, rates));
+  const options = result.options.map((o) => optionView(o, requirement, confirmed, result.requiresConfirmation, inUseIds, rates, money));
 
   const asked = requirement.clientTech?.stated.join(", ") ?? "";
   const client: TechnologyView["client"] = pref.status === "none" ? null : { stated: asked, status: pref.status, problems: pref.problems, ...(pref.confirmation ? { confirmation: pref.confirmation } : {}) };

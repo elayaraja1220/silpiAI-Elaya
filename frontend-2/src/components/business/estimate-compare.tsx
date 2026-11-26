@@ -4,9 +4,9 @@ import { useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 
 import { diffDigests, type VersionDigest } from "@/lib/business/estimate-ledger";
-import { formatINR } from "@/lib/business/pricing";
+import { useMoney } from "./money-context";
 
-const fmt = (n: number, money: boolean) => (money ? formatINR(n) : String(n));
+const show = (n: number, isMoney: boolean, fmt: (n: number) => string) => (isMoney ? fmt(n) : String(n));
 const sign = (n: number) => (n > 0 ? "+" : n < 0 ? "-" : "");
 
 /**
@@ -15,6 +15,7 @@ const sign = (n: number) => (n > 0 ? "+" : n < 0 ? "-" : "");
  * and the exact reasons. Every difference comes from the two saved versions: nothing is estimated here.
  */
 export function EstimateCompare({ digests }: { digests: VersionDigest[] }) {
+  const { fmt } = useMoney();
   const last = digests.length - 1;
   const [fromIndex, setFromIndex] = useState(Math.max(0, last - 1));
   const [toIndex, setToIndex] = useState(last);
@@ -60,11 +61,11 @@ export function EstimateCompare({ digests }: { digests: VersionDigest[] }) {
       </div>
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <div className="rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2"><p className="text-[11px] text-slate-500">Previous</p><p className="text-base font-semibold tabular-nums text-slate-200" data-testid="compare-previous">{formatINR(total.from)}</p><p className="text-[10px] text-slate-500">{diff.from.number}</p></div>
-        <div className="rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2"><p className="text-[11px] text-slate-500">Current</p><p className="text-base font-semibold tabular-nums text-slate-100" data-testid="compare-current">{formatINR(total.to)}</p><p className="text-[10px] text-slate-500">{diff.to.number}</p></div>
+        <div className="rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2"><p className="text-[11px] text-slate-500">Previous</p><p className="text-base font-semibold tabular-nums text-slate-200" data-testid="compare-previous">{fmt(total.from)}</p><p className="text-[10px] text-slate-500">{diff.from.number}</p></div>
+        <div className="rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2"><p className="text-[11px] text-slate-500">Current</p><p className="text-base font-semibold tabular-nums text-slate-100" data-testid="compare-current">{fmt(total.to)}</p><p className="text-[10px] text-slate-500">{diff.to.number}</p></div>
         <div className="rounded-lg border border-white/[.08] bg-white/[.03] px-3 py-2">
           <p className="text-[11px] text-slate-500">{total.delta > 0 ? "Increased by" : total.delta < 0 ? "Decreased by" : "No change"}</p>
-          <p className={`flex items-center gap-1 text-base font-semibold tabular-nums ${tone}`} data-testid="compare-delta"><Trend size={15} />{sign(total.delta)}{formatINR(Math.abs(total.delta))}</p>
+          <p className={`flex items-center gap-1 text-base font-semibold tabular-nums ${tone}`} data-testid="compare-delta"><Trend size={15} />{sign(total.delta)}{fmt(Math.abs(total.delta))}</p>
           <p className="text-[10px] text-slate-500">{total.percent === null ? "" : `${sign(total.percent)}${Math.abs(total.percent)}%`}</p>
         </div>
       </div>
@@ -75,9 +76,9 @@ export function EstimateCompare({ digests }: { digests: VersionDigest[] }) {
           {diff.totals.map((t) => (
             <tr key={t.what} className="border-t border-white/5">
               <td className="py-1">{t.what}</td>
-              <td className="py-1 text-right tabular-nums">{fmt(t.from, t.money)}</td>
-              <td className="py-1 text-right tabular-nums">{fmt(t.to, t.money)}</td>
-              <td className={`py-1 text-right tabular-nums ${t.delta === 0 ? "text-slate-500" : ""}`}>{t.delta === 0 ? "-" : `${sign(t.delta)}${fmt(Math.abs(t.delta), t.money)}`}</td>
+              <td className="py-1 text-right tabular-nums">{show(t.from, t.money, fmt)}</td>
+              <td className="py-1 text-right tabular-nums">{show(t.to, t.money, fmt)}</td>
+              <td className={`py-1 text-right tabular-nums ${t.delta === 0 ? "text-slate-500" : ""}`}>{t.delta === 0 ? "-" : `${sign(t.delta)}${show(Math.abs(t.delta), t.money, fmt)}`}</td>
             </tr>
           ))}
         </tbody>

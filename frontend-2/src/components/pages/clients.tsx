@@ -24,7 +24,8 @@ import { QuotationDocument } from "@/components/business/quotation-document";
 import { BillingModePicker, HourlyEngagementForm } from "@/components/business/hourly-engagement-form";
 import { RequirementWizard } from "@/components/business/requirement-wizard";
 import { Card, Input, StageBadge, jsonFetch } from "@/components/business/ui";
-import { formatINR } from "@/lib/business/pricing";
+import { formatMoney, moneyOf } from "@/lib/business/money";
+import { MoneyProvider } from "@/components/business/money-context";
 import { STAGE_LABELS, type BillingMode, type Lead, type Quote, type RequirementInsights, type Stage } from "@/lib/business/types";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -94,7 +95,7 @@ export function ClientsPage() {
                   </td>
                   <td className="px-5 py-3 text-slate-300">{lead.client.company || lead.client.name}</td>
                   <td className="px-5 py-3 text-slate-400">{lead.quotation?.number ?? "—"}</td>
-                  <td className="px-5 py-3 text-right tabular-nums text-slate-200">{lead.quotation ? <>{formatINR(lead.quotation.grandTotal)}{lead.quotation.hourly && <span className="ml-1 text-[10px] text-slate-500">est.</span>}</> : "—"}</td>
+                  <td className="px-5 py-3 text-right tabular-nums text-slate-200">{lead.quotation ? <>{formatMoney(lead.quotation.grandTotal, moneyOf(lead.quotation))}{lead.quotation.hourly && <span className="ml-1 text-[10px] text-slate-500">est.</span>}</> : "—"}</td>
                   <td className="px-5 py-3"><StageBadge stage={lead.stage} /></td>
                   <td className="px-5 py-3 text-xs text-slate-500">{formatRelativeTime(lead.updatedAt)}</td>
                   <td className="px-3 py-3 text-right">
@@ -208,6 +209,7 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const active: TabId = tabs.some((t) => t.id === tab) ? tab : "summary";
 
   return (
+    <MoneyProvider quote={lead.quotation}>
     <div className="space-y-5">
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
         <button onClick={onBack} className="flex items-center gap-2 text-sm text-slate-400 hover:text-white"><ArrowLeft size={15} /> All requirements</button>
@@ -242,7 +244,7 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
           </div>
           {lead.quotation && (
             <div className="text-right">
-              <p className="text-2xl font-semibold tabular-nums text-white">{formatINR(lead.quotation.grandTotal)}</p>
+              <p className="text-2xl font-semibold tabular-nums text-white">{formatMoney(lead.quotation.grandTotal, moneyOf(lead.quotation))}</p>
               <p className="text-[11px] text-slate-500">{lead.quotation.hourly ? "estimate, incl. GST" : "incl. GST"}</p>
             </div>
           )}
@@ -368,6 +370,7 @@ function LeadDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </TabPanel>
       )}
     </div>
+    </MoneyProvider>
   );
 }
 

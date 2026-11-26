@@ -1,4 +1,5 @@
-import { gstFor, suggestStack } from "./pricing";
+import { formatMoney, type Money } from "./money";
+import { gstFor, quoteMoney, suggestStack } from "./pricing";
 import type { Client, RateCard, Requirement, SeparateServices, ServiceChoice, ServiceEstimate } from "./types";
 
 /**
@@ -7,6 +8,8 @@ import type { Client, RateCard, Requirement, SeparateServices, ServiceChoice, Se
  */
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+/** A fixed price in a sentence: rupees as always ("₹899"), another currency in its own symbol. */
+const plain = (amount: number, money: Money) => (money.code === "INR" ? `₹${amount}` : formatMoney(amount, money));
 
 /** Older records only have `needed`: treat that as "SILPI arranges it". */
 export const domainChoice = (req: Requirement): ServiceChoice => req.domain.choice ?? (req.domain.needed ? "arrange" : "self");
@@ -23,7 +26,8 @@ function finish(kind: ServiceEstimate["kind"], title: string, details: ServiceEs
   return { kind, title, details, items, subtotal, gst, total: Math.round(subtotal + gst), renewal };
 }
 
-export function separateServices(req: Requirement, client: Pick<Client, "state">, rates: RateCard): SeparateServices {
+export function separateServices(req: Requirement, client: Pick<Client, "state" | "currency">, rates: RateCard): SeparateServices {
+  const money = quoteMoney(client, rates);
   const domain = domainChoice(req);
   const hosting = hostingChoice(req);
   const name = `${req.domain.name || "yourdomain"}${req.domain.tld}`;
@@ -42,7 +46,7 @@ export function separateServices(req: Requirement, client: Pick<Client, "state">
         { label: "Domain name", value: name },
         { label: "Extension", value: req.domain.tld },
         { label: "Registration period", value: `${years} year${years === 1 ? "" : "s"}` },
-        { label: "Renewal", value: `₹${price.renew} per year after that` },
+        { label: "Renewal", value: `${plain(price.renew, money)} per year after that` },
       ],
       items,
       price.renew,
@@ -69,7 +73,7 @@ export function separateServices(req: Requirement, client: Pick<Client, "state">
         { label: "Storage", value: plan.storage },
         { label: "Bandwidth", value: plan.bandwidth },
         { label: "Duration", value: `${years} year${years === 1 ? "" : "s"}` },
-        { label: "Renewal", value: `₹${plan.renew} per year after that` },
+        { label: "Renewal", value: `${plain(plan.renew, money)} per year after that` },
       ],
       items,
       plan.renew,

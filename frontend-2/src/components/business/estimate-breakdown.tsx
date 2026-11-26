@@ -1,7 +1,7 @@
 "use client";
 
 import { moduleEffort, type EstimateBasis, type TeamEffort } from "@/lib/business/estimate-ledger";
-import { formatINR } from "@/lib/business/pricing";
+import { useMoney } from "./money-context";
 import type { Quote } from "@/lib/business/types";
 
 /**
@@ -10,6 +10,7 @@ import type { Quote } from "@/lib/business/types";
  * It only explains the quote it is given. It never works out a price itself, and shows nothing the quote does not contain.
  */
 export function EstimateBreakdown({ quote, basis, team, compact = false }: { quote: Quote; basis?: EstimateBasis | null; team?: TeamEffort | null; compact?: boolean }) {
+  const { fmt } = useMoney();
   if (quote.hourly) return null;
   const effort = moduleEffort(quote);
   const subtotalFromLines = effort.groups.reduce((s, g) => s + g.amount, 0);
@@ -25,7 +26,7 @@ export function EstimateBreakdown({ quote, basis, team, compact = false }: { quo
         {basis && (
           <p className="mt-1 text-[11px] text-slate-500" data-testid="breakdown-basis">
             Each development line is the base hours × complexity <b className="text-slate-300">{basis.complexityLabel}</b> (×{basis.complexityMultiplier})
-            {basis.technologyFactor !== 1 ? <> × technology (×{Math.round(basis.technologyFactor * 100) / 100})</> : null} at {formatINR(basis.hourlyRate)} per hour. About {basis.hoursPerWeek} hours make one week.
+            {basis.technologyFactor !== 1 ? <> × technology (×{Math.round(basis.technologyFactor * 100) / 100})</> : null} at {fmt(basis.hourlyRate)} per hour. About {basis.hoursPerWeek} hours make one week.
           </p>
         )}
         <div className="mt-2 overflow-x-auto">
@@ -43,7 +44,7 @@ export function EstimateBreakdown({ quote, basis, team, compact = false }: { quo
                         <details>
                           <summary className="cursor-pointer">{g.group} <span className="text-slate-500">· {g.lines.length} items</span></summary>
                           <ul className="mt-1 space-y-0.5 pl-2 text-[11px] text-slate-400">
-                            {g.lines.map((l) => <li key={l.description} className="flex justify-between gap-3"><span className="min-w-0 truncate">{l.description.replace(/^Page: /, "")}</span><span className="shrink-0 tabular-nums">{l.hours} h · {formatINR(l.amount)}</span></li>)}
+                            {g.lines.map((l) => <li key={l.description} className="flex justify-between gap-3"><span className="min-w-0 truncate">{l.description.replace(/^Page: /, "")}</span><span className="shrink-0 tabular-nums">{l.hours} h · {fmt(l.amount)}</span></li>)}
                           </ul>
                         </details>
                       ) : g.group}
@@ -52,7 +53,7 @@ export function EstimateBreakdown({ quote, basis, team, compact = false }: { quo
                     <td className="hidden py-1.5 pl-3 sm:table-cell">
                       <span className="flex items-center gap-2"><span className="h-1.5 w-24 overflow-hidden rounded-full bg-white/10"><span className="block h-full rounded-full bg-violet-400/70" style={{ width: `${Math.max(2, Math.round(share))}%` }} /></span><span className="tabular-nums text-slate-500">{Math.round(share)}%</span></span>
                     </td>
-                    <td className="py-1.5 text-right tabular-nums">{formatINR(g.amount)}</td>
+                    <td className="py-1.5 text-right tabular-nums">{fmt(g.amount)}</td>
                   </tr>
                 );
               })}
@@ -60,7 +61,7 @@ export function EstimateBreakdown({ quote, basis, team, compact = false }: { quo
                 <td className="py-1.5">Development total</td>
                 <td className="py-1.5 text-right tabular-nums" data-testid="breakdown-hours">{effort.totalHours}</td>
                 <td className="hidden sm:table-cell" />
-                <td className="py-1.5 text-right tabular-nums">{formatINR(subtotalFromLines)}</td>
+                <td className="py-1.5 text-right tabular-nums">{fmt(subtotalFromLines)}</td>
               </tr>
             </tbody>
           </table>
@@ -91,14 +92,14 @@ export function EstimateBreakdown({ quote, basis, team, compact = false }: { quo
       <section data-testid="breakdown-money">
         <p className="font-semibold text-slate-300">From hours to the final quotation</p>
         <dl className="mt-1 space-y-1">
-          <Row label={`Development (${quote.totalHours} h)`} value={formatINR(subtotalFromLines)} />
-          {quote.discount > 0 && <Row label="Discount" value={`- ${formatINR(quote.discount)}`} />}
-          <Row label="Taxable value (before GST)" value={formatINR(quote.taxable)} strong />
-          {gst.mode === "intra" && <><Row label={`CGST (${gst.rate / 2}%)`} value={formatINR(gst.cgst)} /><Row label={`SGST (${gst.rate / 2}%)`} value={formatINR(gst.sgst)} /></>}
-          {gst.mode === "inter" && <Row label={`IGST (${gst.rate}%)`} value={formatINR(gst.igst)} />}
-          {gst.mode === "export" && <Row label="GST (zero-rated export of services)" value={formatINR(0)} />}
-          {quote.roundOff !== 0 && <Row label="Round off" value={formatINR(quote.roundOff)} />}
-          <Row label="Final quotation (incl. GST)" value={formatINR(quote.grandTotal)} strong testid="breakdown-total" />
+          <Row label={`Development (${quote.totalHours} h)`} value={fmt(subtotalFromLines)} />
+          {quote.discount > 0 && <Row label="Discount" value={`- ${fmt(quote.discount)}`} />}
+          <Row label="Taxable value (before GST)" value={fmt(quote.taxable)} strong />
+          {gst.mode === "intra" && <><Row label={`CGST (${gst.rate / 2}%)`} value={fmt(gst.cgst)} /><Row label={`SGST (${gst.rate / 2}%)`} value={fmt(gst.sgst)} /></>}
+          {gst.mode === "inter" && <Row label={`IGST (${gst.rate}%)`} value={fmt(gst.igst)} />}
+          {gst.mode === "export" && <Row label="GST (zero-rated export of services)" value={fmt(0)} />}
+          {quote.roundOff !== 0 && <Row label="Round off" value={fmt(quote.roundOff)} />}
+          <Row label="Final quotation (incl. GST)" value={fmt(quote.grandTotal)} strong testid="breakdown-total" />
           <Row label="Estimated duration" value={`about ${quote.estimatedWeeks} week${quote.estimatedWeeks === 1 ? "" : "s"}`} />
         </dl>
       </section>

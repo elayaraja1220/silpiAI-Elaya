@@ -2,7 +2,8 @@
 
 import { Check, Clock, Code2, FileText, LifeBuoy, Minus, Search, Sparkles } from "lucide-react";
 
-import { formatINR, sectionsOf } from "@/lib/business/pricing";
+import { sectionsOf } from "@/lib/business/pricing";
+import { useMoney } from "./money-context";
 import { compareProposals, describePriority, type Proposal } from "@/lib/business/proposals";
 import type { RateCard, Tier } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,7 @@ export function PackageDetails({
   budget: number;
   onSelect: (tier: Tier) => void;
 }) {
+  const { fmt } = useMoney();
   const p = proposals.find((x) => x.tier === selected) ?? proposals[0];
   const req = p.requirement;
   const q = p.quote;
@@ -60,11 +62,11 @@ export function PackageDetails({
               )}
               <p className="text-sm font-semibold text-white">{x.title}</p>
               <p className="mt-0.5 text-[11px] text-slate-400">{x.tagline}</p>
-              <p className="mt-4 text-2xl font-semibold tracking-tight tabular-nums text-white">{formatINR(x.grandTotal)}</p>
+              <p className="mt-4 text-2xl font-semibold tracking-tight tabular-nums text-white">{fmt(x.grandTotal)}</p>
               <p className="text-[11px] text-slate-500">incl. GST · {x.quote.totalHours} h · about {x.estimatedWeeks} wk</p>
               {fits !== undefined && (
                 <p className={cn("mt-2 text-[11px] font-medium", fits ? "text-emerald-300" : "text-rose-300")}>
-                  {fits ? "Within the client's budget" : `Over budget by ${formatINR(x.grandTotal - budget)}`}
+                  {fits ? "Within the client's budget" : `Over budget by ${fmt(x.grandTotal - budget)}`}
                 </p>
               )}
               <p className="mt-2 text-[11px] text-slate-400">
@@ -84,10 +86,10 @@ export function PackageDetails({
             <p className="text-xs text-slate-400">{p.tagline}</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-semibold tabular-nums text-white">{formatINR(p.grandTotal)}</p>
+            <p className="text-2xl font-semibold tabular-nums text-white">{fmt(p.grandTotal)}</p>
             <p className="text-[11px] text-slate-400">
-              {formatINR(q.subtotal - q.discount)} + GST {formatINR(q.gst.total)}
-              {q.discount > 0 ? ` · discount ${formatINR(q.discount)}` : ""}
+              {fmt(q.subtotal - q.discount)} + GST {fmt(q.gst.total)}
+              {q.discount > 0 ? ` · discount ${fmt(q.discount)}` : ""}
             </p>
           </div>
         </div>
@@ -168,7 +170,7 @@ export function PackageDetails({
             <p>{q.totalHours} development hours · about {p.estimatedWeeks} week{p.estimatedWeeks === 1 ? "" : "s"}</p>
             <ul className="mt-1 space-y-0.5">
               {q.schedule.map((s) => (
-                <li key={s.label} className="flex justify-between gap-3"><span className="text-slate-400">{s.percent}% {s.label}</span><span className="tabular-nums">{formatINR(s.amount)}</span></li>
+                <li key={s.label} className="flex justify-between gap-3"><span className="text-slate-400">{s.percent}% {s.label}</span><span className="tabular-nums">{fmt(s.amount)}</span></li>
               ))}
             </ul>
           </Block>

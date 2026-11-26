@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { AlertTriangle, Hammer, Loader2 } from "lucide-react";
 
-import { formatINR } from "@/lib/business/pricing";
+import { useMoney } from "./money-context";
 
 /**
  * "Are you sure?" before a project is generated. Generating starts a long run, so this says exactly what will be used and what
@@ -35,6 +35,7 @@ export function GenerateConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const { fmt } = useMoney();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onCancel(); };
     window.addEventListener("keydown", onKey);
@@ -76,7 +77,7 @@ export function GenerateConfirmDialog({
           {advanceMissing !== null && advanceMissing > 0 && (
             <li className="flex gap-2 rounded-lg border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-amber-100">
               <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-              <span>The advance of {formatINR(advanceMissing)} has not been received. {demo ? "This is a demo-only start." : "Confirming starts the work before it is paid; this is recorded in the project history."}</span>
+              <span>The advance of {fmt(advanceMissing)} has not been received. {demo ? "This is a demo-only start." : "Confirming starts the work before it is paid; this is recorded in the project history."}</span>
             </li>
           )}
           <li className="rounded-lg bg-white/[.04] px-3 py-2">By confirming, you confirm the approved scope of the quotation: exactly the pages, features and technology the client approved, and nothing from Phase 2.</li>

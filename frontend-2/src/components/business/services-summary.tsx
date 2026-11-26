@@ -1,6 +1,6 @@
 import { Globe, Server } from "lucide-react";
 
-import { formatINR } from "@/lib/business/pricing";
+import { useMoney } from "./money-context";
 import { CHOICE_LABELS } from "@/lib/business/services";
 import type { SeparateServices, ServiceEstimate } from "@/lib/business/types";
 
@@ -11,6 +11,7 @@ export const SEPARATE_NOTICE = "Domain and hosting charges are not included in w
  * from the development cost. Light for client documents, dark for team screens.
  */
 export function ServicesSummary({ services, tone, compact = false }: { services: SeparateServices; tone: "light" | "dark"; compact?: boolean }) {
+  const { fmt } = useMoney();
   const dark = tone === "dark";
   const box = (estimate: ServiceEstimate | undefined, kind: "domain" | "hosting", choice: string, letter: string) => {
     const Icon = kind === "domain" ? Globe : Server;
@@ -36,11 +37,11 @@ export function ServicesSummary({ services, tone, compact = false }: { services:
             )}
             <div className={`mt-2 space-y-0.5 border-t pt-2 text-[11px] ${dark ? "border-white/[.06] text-slate-300" : "border-slate-200 text-slate-700"}`}>
               {!compact && estimate.items.map((i) => (
-                <div key={i.description} className="flex justify-between gap-3"><span>{i.description}</span><span className="tabular-nums">{formatINR(i.amount)}</span></div>
+                <div key={i.description} className="flex justify-between gap-3"><span>{i.description}</span><span className="tabular-nums">{fmt(i.amount)}</span></div>
               ))}
-              {estimate.gst > 0 && <div className="flex justify-between gap-3"><span>GST</span><span className="tabular-nums">{formatINR(estimate.gst)}</span></div>}
-              <div className="flex justify-between gap-3 font-semibold"><span>Total now (separate bill)</span><span className="tabular-nums">{formatINR(estimate.total)}</span></div>
-              <div className={`flex justify-between gap-3 ${dark ? "text-slate-500" : "text-slate-500"}`}><span>Renewal</span><span className="tabular-nums">{formatINR(estimate.renewal)} / year + GST</span></div>
+              {estimate.gst > 0 && <div className="flex justify-between gap-3"><span>GST</span><span className="tabular-nums">{fmt(estimate.gst)}</span></div>}
+              <div className="flex justify-between gap-3 font-semibold"><span>Total now (separate bill)</span><span className="tabular-nums">{fmt(estimate.total)}</span></div>
+              <div className={`flex justify-between gap-3 ${dark ? "text-slate-500" : "text-slate-500"}`}><span>Renewal</span><span className="tabular-nums">{fmt(estimate.renewal)} / year + GST</span></div>
             </div>
           </>
         )}
@@ -68,7 +69,7 @@ export function ServicesSummary({ services, tone, compact = false }: { services:
       )}
       {services.total > 0 && (
         <p className={`text-right text-xs font-semibold ${dark ? "text-slate-200" : "text-slate-800"}`}>
-          Separate services total: {formatINR(services.total)} <span className="font-normal opacity-70">(not part of the development total)</span>
+          Separate services total: {fmt(services.total)} <span className="font-normal opacity-70">(not part of the development total)</span>
         </p>
       )}
     </div>

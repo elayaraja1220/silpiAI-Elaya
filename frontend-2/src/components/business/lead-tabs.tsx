@@ -2,7 +2,7 @@
 
 import { ArrowRight, Check, CheckCircle2, Circle, Lock } from "lucide-react";
 
-import { formatINR } from "@/lib/business/pricing";
+import { formatMoney, moneyOf } from "@/lib/business/money";
 import { paymentStatus } from "@/lib/business/payment-status";
 import { BILLING_CYCLE_LABELS } from "@/lib/business/types";
 import type { Lead, Stage } from "@/lib/business/types";
@@ -97,6 +97,8 @@ type Row = { label: string; hint: string; done: boolean; cta?: string; tab?: Tab
 
 function rowsFor(lead: Lead, files: FilesProgress | null): Row[] {
   const pay = paymentStatus(lead.quotation, lead.payments);
+  // Amounts are held in rupees; a client abroad's are written in their own currency.
+  const fmt = (n: number) => formatMoney(n, moneyOf(lead.quotation));
   switch (lead.stage) {
     case "requirement":
       return [{ label: "Check the quotation", hint: "Review the pages, features and price, then send it to the client.", done: false, cta: "Open quotation", tab: "quotation" }];
@@ -116,7 +118,7 @@ function rowsFor(lead: Lead, files: FilesProgress | null): Row[] {
       const worked = lead.workLog.reduce((t, e) => t + e.hours, 0);
       const opt = hourly ? " (optional)" : "";
       const rows: Row[] = [
-        { label: "Advance payment", hint: pay.advanceRemaining <= 0 ? `Received ${formatINR(pay.advancePaid)}.` : `${formatINR(pay.advanceRemaining)} still to receive.`, done: pay.advanceRemaining <= 0, cta: "Record payment", tab: "payments" },
+        { label: "Advance payment", hint: pay.advanceRemaining <= 0 ? `Received ${fmt(pay.advancePaid)}.` : `${fmt(pay.advanceRemaining)} still to receive.`, done: pay.advanceRemaining <= 0, cta: "Record payment", tab: "payments" },
         ...(hourly ? [{ label: "Do the work and log your hours", hint: `${Math.round(worked * 10) / 10} of ${hourly.capHours} cap hours used (${hourly.expectedHours} estimated). Bill the client ${BILLING_CYCLE_LABELS[hourly.cycle]} for the hours worked.`, done: false, cta: "Log hours", tab: "payments" as TabId }] : []),
         {
           label: `Collect the client's files and content${opt}`,
@@ -135,7 +137,7 @@ function rowsFor(lead: Lead, files: FilesProgress | null): Row[] {
         },
       ];
       if (lead.projectName) rows.push({ label: "Show the client a demo", hint: "A private link that ends by itself. Nothing is sent to them until you share it.", done: false, cta: "Demo preview", tab: "demo" });
-      if (lead.stage === "demo_ready") rows.push({ label: "Final payment", hint: pay.balanceRemaining > 0 ? `${formatINR(pay.balanceRemaining)} balance due.` : "Balance received.", done: pay.balanceRemaining <= 0, cta: "Record payment", tab: "payments" });
+      if (lead.stage === "demo_ready") rows.push({ label: "Final payment", hint: pay.balanceRemaining > 0 ? `${fmt(pay.balanceRemaining)} balance due.` : "Balance received.", done: pay.balanceRemaining <= 0, cta: "Record payment", tab: "payments" });
       return rows;
     }
     case "final_paid":

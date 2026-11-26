@@ -1,4 +1,4 @@
-import { formatINR } from "@/lib/business/pricing";
+import { useMoney } from "./money-context";
 import { seoAdvice } from "@/lib/business/seo";
 
 import type { PublicRunningServices } from "@/lib/business/running-services";
@@ -12,10 +12,11 @@ const date = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "
 
 /** Totals block shared by the live estimate and the printed quotation. */
 export function QuoteTotals({ quote }: { quote: Quote }) {
+  const { fmt } = useMoney();
   const row = (label: string, value: number, strong = false) => (
     <div className={`flex justify-between gap-4 py-1 ${strong ? "mt-1 border-t border-slate-400/30 pt-2 text-base font-semibold" : ""}`}>
       <span>{label}</span>
-      <span className="tabular-nums">{formatINR(value)}</span>
+      <span className="tabular-nums">{fmt(value)}</span>
     </div>
   );
   return (
@@ -33,12 +34,12 @@ export function QuoteTotals({ quote }: { quote: Quote }) {
       {quote.gst.mode === "export" && (
         <div className="flex justify-between py-1 text-xs opacity-70">
           <span>GST: export of services (zero-rated, under LUT)</span>
-          <span>{formatINR(0)}</span>
+          <span>{fmt(0)}</span>
         </div>
       )}
       {quote.roundOff !== 0 && row("Round off", quote.roundOff)}
       {row(quote.hourly ? "Estimated total" : "Grand total", quote.grandTotal, true)}
-      {quote.hourly && <div className="flex justify-between gap-4 py-1 text-xs opacity-80"><span>Not to exceed ({quote.hourly.capHours} h)</span><span className="tabular-nums">{formatINR(quote.hourly.capTotal)}</span></div>}
+      {quote.hourly && <div className="flex justify-between gap-4 py-1 text-xs opacity-80"><span>Not to exceed ({quote.hourly.capHours} h)</span><span className="tabular-nums">{fmt(quote.hourly.capTotal)}</span></div>}
       {!quote.hourly && <div className="mt-2 space-y-0.5 border-t border-current/10 pt-2 text-xs opacity-75">
         <div className="flex justify-between gap-3"><span>Domain name</span><span>Not included</span></div>
         <div className="flex justify-between gap-3"><span>Hosting</span><span>Not included</span></div>
@@ -56,6 +57,7 @@ export function QuoteTotals({ quote }: { quote: Quote }) {
 export type TechAction = { onChoose: () => void; chosen?: { frontend: string; backend: string; database: string; styling: string } | null };
 
 export function QuotationDocument({ quotation, requirement: requested, running, techAction, deferred }: { quotation: Quotation; requirement: Requirement; running?: PublicRunningServices | null; techAction?: TechAction; deferred?: string[] }) {
+  const { fmt } = useMoney();
   const { business, client } = quotation;
   // The priced scope is the chosen proposal; older quotations only have the request.
   const requirement = quotation.requirement ?? requested;
@@ -116,10 +118,10 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
           <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">Hourly engagement terms</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-4">
             {[
-              ["Rate", `${formatINR(quotation.hourly.rate)} / hour`, "before GST"],
+              ["Rate", `${fmt(quotation.hourly.rate)} / hour`, "before GST"],
               ["Estimated hours", `${quotation.hourly.expectedHours} h`, `${quotation.hourly.minHours} to ${quotation.hourly.capHours} h`],
-              ["Estimated total", formatINR(quotation.hourly.expectedTotal), "incl. GST"],
-              ["Not to exceed", formatINR(quotation.hourly.capTotal), `${quotation.hourly.capHours} h, incl. GST`],
+              ["Estimated total", fmt(quotation.hourly.expectedTotal), "incl. GST"],
+              ["Not to exceed", fmt(quotation.hourly.capTotal), `${quotation.hourly.capHours} h, incl. GST`],
             ].map(([label, value, note]) => (
               <div key={label} className="rounded-xl border border-slate-200 p-3">
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">{label}</p>
@@ -144,7 +146,7 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
               <div key={p.tier} className={`rounded-xl border p-3 text-sm ${p.tier === quotation.tier ? "border-violet-400 bg-violet-50" : "border-slate-200"}`}>
                 <p className="font-semibold text-slate-900">{p.title}{p.tier === quotation.tier && <span className="ml-1 text-xs font-normal text-violet-600">(detailed below)</span>}</p>
                 <p className="text-xs text-slate-500">{p.tagline}</p>
-                <p className="mt-2 text-base font-semibold tabular-nums text-slate-900">{formatINR(p.grandTotal)}</p>
+                <p className="mt-2 text-base font-semibold tabular-nums text-slate-900">{fmt(p.grandTotal)}</p>
                 <p className="text-[11px] text-slate-500">incl. GST · about {p.estimatedWeeks} week{p.estimatedWeeks === 1 ? "" : "s"}</p>
                 <p className="mt-2 text-xs text-slate-600">{p.pages.length} page{p.pages.length === 1 ? "" : "s"} · {p.features.slice(0, 4).join(", ")}{p.features.length > 4 ? "..." : ""}</p>
                 {p.leftOut.length > 0 && <p className="mt-1 text-[11px] text-slate-400">Not included: {p.leftOut.join("; ")}</p>}
@@ -179,8 +181,8 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
                   {item.detail && <span className="mt-0.5 block text-xs text-slate-500">{item.detail}</span>}
                 </td>
                 <td className="py-2.5 pr-3 text-right tabular-nums">{item.qty} {item.unit}{item.qty > 1 ? "s" : ""}</td>
-                <td className="py-2.5 pr-3 text-right tabular-nums">{formatINR(item.rate)}</td>
-                <td className="py-2.5 text-right tabular-nums">{formatINR(item.amount)}</td>
+                <td className="py-2.5 pr-3 text-right tabular-nums">{fmt(item.rate)}</td>
+                <td className="py-2.5 text-right tabular-nums">{fmt(item.amount)}</td>
               </tr>
             ))}
           </tbody>
@@ -242,7 +244,7 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
         <section className="mt-8 rounded-xl border border-dashed border-slate-300 p-4 text-sm">
           <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">Phase 2 (not in this quotation)</p>
           <p className="mt-2 text-slate-700">{quotation.deferred.modules.join(", ")}</p>
-          <p className="mt-1 text-xs text-slate-500">Estimated about {formatINR(quotation.deferred.amount)} + GST, quoted separately when you are ready.</p>
+          <p className="mt-1 text-xs text-slate-500">Estimated about {fmt(quotation.deferred.amount)} + GST, quoted separately when you are ready.</p>
         </section>
       )}
 
@@ -253,7 +255,7 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
         {quotation.schedule.map((step) => (
           <div key={step.label} className="mt-2 flex justify-between gap-4">
             <span>{step.percent}% · {step.label}</span>
-            <span className="font-semibold tabular-nums">{formatINR(step.amount)}</span>
+            <span className="font-semibold tabular-nums">{fmt(step.amount)}</span>
           </div>
         ))}
         {quotation.hourly ? (

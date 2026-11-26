@@ -4,10 +4,11 @@ import { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, ShieldCheck, Undo2 } from "lucide-react";
 
 import type { TechEntry } from "@/lib/business/tech-catalog";
-import { suggestStack } from "@/lib/business/pricing";
+import { INR_MONEY } from "@/lib/business/money";
+import { quoteMoney, suggestStack } from "@/lib/business/pricing";
 import { recommendTechnology } from "@/lib/business/tech-recommend";
 import { buildTechnologyView, type StackSource, type TechOptionView } from "@/lib/business/technology-view";
-import type { RateCard, Requirement } from "@/lib/business/types";
+import type { Client, RateCard, Requirement } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
 
 import { Card } from "./ui";
@@ -34,7 +35,10 @@ export function TechnologyRecommendations({
   onClearSelection,
   onChooseTech,
   techChosen = false,
+  client,
 }: {
+  /** The client being quoted: decides the currency the estimates are written in (and GST). */
+  client?: Pick<Client, "state"> & { currency?: string };
   requirement: Requirement;
   budget: number;
   rates: RateCard;
@@ -53,11 +57,11 @@ export function TechnologyRecommendations({
   const view = useMemo(() => {
     if (!catalog) return null;
     try {
-      return buildTechnologyView(requirement, recommendTechnology(requirement, budget, catalog, rates), catalog, rates);
+      return buildTechnologyView(requirement, recommendTechnology(requirement, budget, catalog, rates, client ? { client } : {}), catalog, rates, client ? quoteMoney(client, rates) : INR_MONEY);
     } catch {
       return null;
     }
-  }, [requirement, budget, rates, catalog]);
+  }, [requirement, budget, rates, catalog, client]);
 
   // What was picked with "Change technology": shown on its own so it is always clear what is in use.
   const chosen = useMemo(() => {

@@ -9,7 +9,8 @@ import { QuotationDocument } from "@/components/business/quotation-document";
 import type { TechPreview, TechSelection } from "@/lib/business/client-tech";
 import type { ClientView } from "@/lib/business/client-view";
 import { upiLink } from "@/lib/business/payment-status";
-import { formatINR } from "@/lib/business/pricing";
+import { MoneyProvider } from "@/components/business/money-context";
+import { formatMoney, moneyOf } from "@/lib/business/money";
 import type { Tier } from "@/lib/business/types";
 
 import { TechnologyChooser } from "@/components/business/technology-chooser";
@@ -78,6 +79,8 @@ export function ClientQuotation({ token }: { token: string }) {
   }
 
   const q = view.quotation;
+  // Amounts are held in rupees; this client is shown them in the currency they were quoted in.
+  const fmt = (n: number) => formatMoney(n, moneyOf(q));
   const proposals = q.proposals ?? [];
   const chosen = proposals.find((p) => p.tier === tier);
   // With a technology choice, every package has a new price from the server; without one, the quoted prices.
@@ -88,6 +91,7 @@ export function ClientQuotation({ token }: { token: string }) {
   const approved = view.stage !== "quoted" && view.stage !== "lost" && response?.action === "approved";
 
   return (
+    <MoneyProvider quote={q}>
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-800 sm:py-12">
       <div className="mx-auto max-w-4xl space-y-6">
         <header className="flex flex-wrap items-center justify-between gap-3">
@@ -108,16 +112,16 @@ export function ClientQuotation({ token }: { token: string }) {
             {view.payment && view.payment.advanceRemaining <= 0 ? (
               <p className="mt-1 text-sm text-emerald-900">Advance received. Thank you! {view.stage === "advance_paid" ? "Work starts shortly" : "Work is in progress"}; you will see a demo of every page before the balance is due.</p>
             ) : view.stage === "in_development" ? (
-              <p className="mt-1 text-sm text-emerald-900">Work has started. Please pay the advance of {formatINR(view.payment?.advanceRemaining ?? 0)} below.</p>
+              <p className="mt-1 text-sm text-emerald-900">Work has started. Please pay the advance of {fmt(view.payment?.advanceRemaining ?? 0)} below.</p>
             ) : (
-              <p className="mt-1 text-sm text-emerald-900">Next step: the advance of {formatINR(view.payment?.advanceRemaining ?? q.schedule[0]?.amount ?? 0)} starts the work.{q.hourly ? " You can ask for the log of hours worked at any time." : " You will see a demo of every page before the balance is due."}</p>
+              <p className="mt-1 text-sm text-emerald-900">Next step: the advance of {fmt(view.payment?.advanceRemaining ?? q.schedule[0]?.amount ?? 0)} starts the work.{q.hourly ? " You can ask for the log of hours worked at any time." : " You will see a demo of every page before the balance is due."}</p>
             )}
           </section>
         )}
 
         {approved && view.payment && view.payment.advanceRemaining > 0 && (
           <section className="rounded-2xl bg-white p-5 shadow-sm">
-            <h2 className="font-semibold text-slate-900">Pay the advance: {formatINR(view.payment.advanceRemaining)}</h2>
+            <h2 className="font-semibold text-slate-900">Pay the advance: {fmt(view.payment.advanceRemaining)}</h2>
             <p className="mt-1 text-sm text-slate-500">Please write <b>{view.payment.reference}</b> in the payment note so we can match it. We confirm by message once it reaches our account.</p>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               {view.payment.upiId && (
@@ -190,7 +194,7 @@ export function ClientQuotation({ token }: { token: string }) {
                 >
                   <p className="font-semibold text-slate-900">{p.title}{p.tier === "standard" && <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700">Recommended</span>}</p>
                   <p className="text-xs text-slate-500">{p.tagline}</p>
-                  <p className="mt-2 text-lg font-semibold tabular-nums">{formatINR(priceOf(p.tier, p.grandTotal))}</p>
+                  <p className="mt-2 text-lg font-semibold tabular-nums">{fmt(priceOf(p.tier, p.grandTotal))}</p>
                   <p className="text-[11px] text-slate-500">incl. GST · about {p.estimatedWeeks} week{p.estimatedWeeks === 1 ? "" : "s"}</p>
                   <ul className="mt-2 space-y-0.5 text-xs text-slate-600">
                     <li>{p.pages.length} page{p.pages.length === 1 ? "" : "s"}</li>
@@ -205,7 +209,7 @@ export function ClientQuotation({ token }: { token: string }) {
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900" data-testid="tech-banner">
                 <p>
                   <b>Your technology:</b> {techChoice.preview.stack.frontend} · {techChoice.preview.stack.backend} · {techChoice.preview.stack.database}.
-                  {" "}Price {techChoice.preview.delta === 0 ? "is unchanged" : techChoice.preview.delta > 0 ? `goes up by ${formatINR(techChoice.preview.delta)}` : `goes down by ${formatINR(-techChoice.preview.delta)}`} (final total {formatINR(total)} incl. GST).
+                  {" "}Price {techChoice.preview.delta === 0 ? "is unchanged" : techChoice.preview.delta > 0 ? `goes up by ${fmt(techChoice.preview.delta)}` : `goes down by ${fmt(-techChoice.preview.delta)}`} (final total {fmt(total)} incl. GST).
                 </p>
                 <span className="flex gap-2">
                   <button type="button" onClick={() => setTechOpen(true)} className="rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-violet-100">Change</button>
@@ -240,9 +244,9 @@ export function ClientQuotation({ token }: { token: string }) {
                   <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-1 accent-violet-600" />
                   <span>
                     {q.hourly ? (
-                      <>I approve this hourly engagement at {formatINR(q.hourly.rate)} per hour (estimate {formatINR(q.hourly.expectedTotal)} incl. GST). I understand I will be billed for the hours actually worked, that hours beyond {q.hourly.capHours} ({formatINR(q.hourly.capTotal)}) need my written approval, and I agree to pay the {q.schedule[0]?.percent ?? 50}% advance of {formatINR(advance)} to start the work.</>
+                      <>I approve this hourly engagement at {fmt(q.hourly.rate)} per hour (estimate {fmt(q.hourly.expectedTotal)} incl. GST). I understand I will be billed for the hours actually worked, that hours beyond {q.hourly.capHours} ({fmt(q.hourly.capTotal)}) need my written approval, and I agree to pay the {q.schedule[0]?.percent ?? 50}% advance of {fmt(advance)} to start the work.</>
                     ) : (
-                      <>I approve the <b className="capitalize">{tier}</b> proposal for {formatINR(total)} (incl. GST) and agree to pay the {q.schedule[0]?.percent ?? 50}% advance of {formatINR(advance)} to start the work.</>
+                      <>I approve the <b className="capitalize">{tier}</b> proposal for {fmt(total)} (incl. GST) and agree to pay the {q.schedule[0]?.percent ?? 50}% advance of {fmt(advance)} to start the work.</>
                     )}
                   </span>
                 </label>
@@ -278,5 +282,6 @@ export function ClientQuotation({ token }: { token: string }) {
         <ClientChatWidget token={token} businessName={q.business.name} />
       </div>
     </main>
+    </MoneyProvider>
   );
 }

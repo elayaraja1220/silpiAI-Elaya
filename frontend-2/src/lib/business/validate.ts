@@ -17,6 +17,7 @@ import {
   type Requirement,
 } from "./types";
 import { parseItems } from "./clarifications";
+import { CURRENCIES } from "./currency";
 import { HANDOVER_LABEL, INDIAN_STATES } from "./rate-card";
 import { autoComplexity, billablePages, splitPages } from "./scope";
 import { parseClientTechInput, parseSelectedStack } from "./tech-preference";
@@ -53,6 +54,12 @@ export function parseClient(input: unknown): Client {
     state: str(c.state, 60),
     address: str(c.address, 400),
   };
+  // The currency a client abroad is quoted in. Meaningless for a client in India (always rupees), so it is dropped there.
+  const currency = str(c.currency, 3).toUpperCase();
+  if (currency && currency !== "INR") {
+    if (!CURRENCIES.some((x) => x.code === currency)) throw new ValidationError(`${currency} is not a currency we can quote in.`);
+    if (client.state === "Outside India") client.currency = currency;
+  }
   if (!client.name) throw new ValidationError("Client name is required.");
   if (!EMAIL_RE.test(client.email)) throw new ValidationError("A valid client email is required.");
   if (!/^[+0-9 ()-]{7,20}$/.test(client.phone)) throw new ValidationError("A valid client phone number is required.");
@@ -181,6 +188,23 @@ export function parseRequirement(input: unknown, rates: RateCard): Requirement {
 }
 
 /** Checks an edited rate card: numbers must be non-negative; business details must be valid. */
+/** Prices for clients abroad. Each entry needs an hourly price and how many rupees one unit is worth; anything else is refused rather than guessed. */
+export function parseCountryPricing(input: unknown): NonNullable<RateCard["countryPricing"]> {
+  const out: NonNullable<RateCard["countryPricing"]> = {};
+  for (const [code, v] of Object.entries(obj(input))) {
+    if (code === "INR") continue; // rupees are the main hourly rate
+    if (!CURRENCIES.some((c) => c.code === code)) throw new ValidationError(`${code} is not a currency we can quote in.`);
+    const p = obj(v);
+    const hourly = Number(p.hourlyRate);
+    const unit = Number(p.inrPerUnit);
+    if (!Number.isFinite(hourly) || hourly <= 0 || hourly > 1_000_000) throw new ValidationError(`The hourly price for ${code} must be more than 0.`);
+    if (!Number.isFinite(unit) || unit < 0.0001 || unit > 2000) throw new ValidationError(`Say how many rupees one ${code} is worth (between 0.0001 and 2,000).`);
+    const asOf = typeof p.rateAsOf === "string" && !Number.isNaN(Date.parse(p.rateAsOf)) ? new Date(p.rateAsOf).toISOString() : undefined;
+    out[code] = { hourlyRate: Math.round(hourly * 100) / 100, inrPerUnit: Math.round(unit * 1e6) / 1e6, auto: p.auto !== false, ...(asOf && p.auto !== false ? { rateAsOf: asOf } : {}) };
+  }
+  return out;
+}
+
 export function parseRateCard(input: unknown, fallback: RateCard): RateCard {
   const card = obj(input);
   const bad = (n: unknown) => typeof n !== "number" || !Number.isFinite(n) || n < 0;
@@ -208,6 +232,7 @@ export function parseRateCard(input: unknown, fallback: RateCard): RateCard {
     quoteValidityDays: scalar(card.quoteValidityDays, fallback.quoteValidityDays),
     maxDiscountPercent: scalar(card.maxDiscountPercent, fallback.maxDiscountPercent),
     hourlyRate: scalar(card.hourlyRate, fallback.hourlyRate),
+    ...(card.countryPricing === undefined ? (fallback.countryPricing ? { countryPricing: fallback.countryPricing } : {}) : { countryPricing: parseCountryPricing(card.countryPricing) }),
     hoursPerWeek: scalar(card.hoursPerWeek, fallback.hoursPerWeek),
     projectTypes: mergeRecord(fallback.projectTypes, card.projectTypes) as RateCard["projectTypes"],
     page: { ...fallback.page, ...(obj(card.page) as Partial<RateCard["page"]>) },

@@ -15,7 +15,7 @@ import {
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 
 import { deferredTexts } from "./clarifications";
-import { formatINR } from "./pricing";
+import { formatMoney, moneyOf } from "./money";
 import { seoAdvice } from "./seo";
 import { CHOICE_LABELS } from "./services";
 import { BILLING_CYCLE_LABELS, type Quotation, type Requirement } from "./types";
@@ -38,7 +38,9 @@ const date = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "
 /** Common outline of the quotation document. */
 function outline(q: Quotation, fallback: Requirement, running?: PublicRunningServices | null, deferred: string[] = fallback.insights?.tracker ? deferredTexts(fallback.insights.tracker) : []): { title: string; meta: string[]; from: string[]; to: string[]; blocks: Block[] } {
   const req = q.requirement ?? fallback;
-  const money = formatINR;
+  // Amounts are held in rupees; a client abroad's quotation is written in their own currency.
+  const quoteCurrency = moneyOf(q);
+  const money = (n: number) => formatMoney(n, quoteCurrency);
   const blocks: Block[] = [];
   // Items left out of the price on purpose: stated first, so the client cannot assume they are included.
   if (deferred.length > 0) {

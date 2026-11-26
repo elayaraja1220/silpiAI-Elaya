@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, HelpCircle, Loader2, Plus, ShieldCheck, Sparkles, Star, X } from "lucide-react";
 
-import { buildQuote, formatINR, needsBackend, sectionsOf, stylingFits } from "@/lib/business/pricing";
+import { currencyOf } from "@/lib/business/currency";
+import { formatMoney, INR_MONEY, isForeign, symbolOf } from "@/lib/business/money";
+import { buildQuote, needsBackend, quoteMoney, sectionsOf, stylingFits } from "@/lib/business/pricing";
 import { checkBudget } from "@/lib/business/budget";
 import { buildProposals, defaultTier } from "@/lib/business/proposals";
 import type { CostConfig } from "@/lib/business/cost-types";
@@ -56,6 +58,7 @@ import { PackageDetails } from "./package-details";
 import { ScopeSummary } from "./scope-summary";
 import { WizardCostPanel } from "./cost-panel";
 import { BudgetInput } from "./budget-input";
+import { MoneyProvider } from "./money-context";
 import { TechnologyRecommendations } from "./technology-recommendations";
 import { TechnologyChooser } from "./technology-chooser";
 import { applyClientTech } from "@/lib/business/client-tech";
@@ -250,6 +253,14 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   const shown = proposals?.find((p) => p.tier === shownTier) ?? null;
   const estimate = shown?.quote ?? quote;
   const preliminary = estimateStatus(req.insights?.tracker ?? []).level === "preliminary";
+  // The quotation's currency: the client's own when they are abroad and a price is set for it, otherwise rupees. Amounts are held in rupees and written in it.
+  const money = rates ? quoteMoney(client, rates) : INR_MONEY;
+  const fmt = (inr: number) => formatMoney(inr, money);
+  const hourlyInr = rates ? (isForeign(money) ? rates.countryPricing![money.code]!.hourlyRate * money.unit : rates.hourlyRate) : 0;
+  // Features the client selected that the package being shown does not contain (Basic keeps only the essentials and must-haves, Standard adds the recommended ones),
+  // so ticking one does not change that package's price. Said on the screen, with the way to include them.
+  const leftOutHere = shown ? req.modules.filter((m) => (shown.requirement.excludedModules ?? []).includes(m)) : [];
+  const includedIn = (m: ModuleId) => (proposals ?? []).filter((p) => p.requirement.modules.includes(m)).map((p) => p.title);
   // Budget is compared with the shown package; the price itself is never changed to fit.
   const budgetCheck = useMemo(
     () => (rates && estimate && budget > 0 ? checkBudget(shown?.requirement ?? priced, estimate, client, rates, proposals ?? undefined) : null),
@@ -258,7 +269,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   const techRecommendation = useMemo(() => {
     if (!catalog || !rates || !shown) return undefined;
     try {
-      return recommendTechnology(shown.requirement, budget, catalog, rates).options[0];
+      return recommendTechnology(shown.requirement, budget, catalog, rates, { client }).options[0];
     } catch {
       return undefined;
     }
@@ -395,9 +406,9 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
       />
       {docBudget > 0 && docBudget !== budget && (
         <p className="-mt-3 flex flex-wrap items-center gap-2 text-[11px] text-amber-200">
-          The document says {formatINR(docBudget)}; your {formatINR(budget)} is used.
+          The document says {fmt(docBudget)}; your {fmt(budget)} is used.
           <button type="button" onClick={() => { setR("budget", docBudget); setDocBudget(0); }} className="rounded-md border border-amber-400/40 px-1.5 py-0.5 hover:bg-amber-500/15">
-            Use {formatINR(docBudget)}
+            Use {fmt(docBudget)}
           </button>
         </p>
       )}
@@ -407,7 +418,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
             <p className="text-sm font-medium text-slate-100">Stay within budget</p>
             <p className="mt-0.5 text-[11px] text-slate-400">
               {req.budgetStrict
-                ? `On: we show what ${formatINR(budget)} can build. The client's pages and features stay as requested until you click "Use this scope".`
+                ? `On: we show what ${fmt(budget)} can build. The client's pages and features stay as requested until you click "Use this scope".`
                 : "Off: the full scope is priced and compared with the budget. Nothing is moved."}
             </p>
           </div>
@@ -427,6 +438,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
   );
 
   return (
+    <MoneyProvider money={money}>
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
       <div className="min-w-0 space-y-5">
         {/* Step indicator */}
@@ -476,7 +488,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
             <>
               <Section
                 title="Pages"
-                hint={`Each page: ${rates.page.baseHours} h + ${rates.page.sectionHours} h per section at ${formatINR(rates.hourlyRate)}/hour, adjusted for complexity. Supporting pages (404, thank-you) and the shared header, footer and navigation are included in the set-up.`}
+                hint={`Each page: ${rates.page.baseHours} h + ${rates.page.sectionHours} h per section at ${fmt(hourlyInr)}/hour, adjusted for complexity. Supporting pages (404, thank-you) and the shared header, footer and navigation are included in the set-up.`}
                 aside={
                   <span className="rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1 text-xs font-medium text-violet-200">
                     {billableCount} billed{req.pages.length > billableCount ? ` + ${req.pages.length - billableCount} supporting` : ""}
@@ -565,6 +577,20 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                 hint="Only selected features are priced. Optional features can be moved to Phase 2."
                 aside={req.modules.length > 0 ? <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">{req.modules.length} selected</span> : undefined}
               >
+                {leftOutHere.length > 0 && shown && (
+                  <div role="status" className="space-y-2 rounded-xl border border-amber-400/30 bg-amber-500/[.07] px-4 py-3 text-xs text-amber-100">
+                    <p>
+                      <b>{leftOutHere.map((m) => rates.modules[m].label).join(", ")}</b> {leftOutHere.length === 1 ? "is" : "are"} selected, but {leftOutHere.length === 1 ? "it is" : "they are"} <b>not part of the {shown.title} package</b>, so the {shown.title} price does not change.
+                      {shown.tier !== "premium" ? " Premium includes everything selected." : ""} To price {leftOutHere.length === 1 ? "it" : "them"} in {shown.title} as well, mark {leftOutHere.length === 1 ? "it" : "them"} as a must-have (a must-have is in every package).
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => setR("mustHave", [...new Set([...(req.mustHave ?? []), ...leftOutHere])])} className="rounded-full border border-amber-300/50 px-3 py-1 text-[11px] font-medium text-amber-50 hover:bg-amber-400/10">
+                        Make {leftOutHere.length === 1 ? "it" : "them"} must-have: include in {shown.title}
+                      </button>
+                      {shown.tier !== "premium" && <button type="button" onClick={() => setTier("premium")} className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-slate-200 hover:bg-white/5">Show the Premium price</button>}
+                    </div>
+                  </div>
+                )}
                 <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
                   {MODULES.map((m) => (
                     <Choice
@@ -586,7 +612,10 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                         const must = req.mustHave?.includes(m) ?? false;
                         return (
                           <li key={m} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs">
-                            <span className="text-slate-200">{rates.modules[m].label} <span className="text-slate-500">· {rates.modules[m].hours} h</span></span>
+                            <span className="text-slate-200">
+                              {rates.modules[m].label} <span className="text-slate-500">· {rates.modules[m].hours} h</span>
+                              {shown && (shown.requirement.excludedModules ?? []).includes(m) && <span className="ml-2 rounded-full border border-amber-400/40 px-2 py-0.5 text-[10px] text-amber-200">not in {shown.title}{includedIn(m).length ? ` · in ${includedIn(m).join(", ")}` : ""}</span>}
+                            </span>
                             <span className="flex items-center gap-2">
                               <button
                                 type="button"
@@ -688,6 +717,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                 )}
                 {budgetCheck && <BudgetSummary check={budgetCheck} onMoveToPhase2={toPhase2} onApplyPlan={applyPlan} onChangeDesign={(x) => setR("design", x)} />}
                 <TechnologyRecommendations
+                  client={client}
                   requirement={priced}
                   budget={budget}
                   rates={rates}
@@ -727,7 +757,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                     <span className="block text-xs text-slate-400">{shown.pages.length} pages · {shown.requirement.modules.length} features · {shown.quote.totalHours} h · about {shown.estimatedWeeks} weeks</span>
                   </span>
                   <span className="flex items-center gap-3">
-                    <span className="text-lg font-semibold tabular-nums text-white">{formatINR(shown.grandTotal)}</span>
+                    <span className="text-lg font-semibold tabular-nums text-white">{fmt(shown.grandTotal)}</span>
                     <button type="button" onClick={() => setStep(PACKAGE_STEP)} className="text-xs text-violet-300 hover:text-white">Change</button>
                   </span>
                 </div>
@@ -739,10 +769,18 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   <Field label="Email *"><Input type="email" value={client.email} onChange={(e) => setC("email", e.target.value)} placeholder="client@example.com" /></Field>
                   <Field label="Phone *"><Input value={client.phone} onChange={(e) => setC("phone", e.target.value)} placeholder="+91 98765 43210" /></Field>
                   <Field label="State *" hint="Decides CGST + SGST (same state) or IGST (other state).">
-                    <Select value={client.state} onChange={(e) => setC("state", e.target.value)}>
+                    <Select value={client.state} onChange={(e) => setClient((c) => ({ ...c, state: e.target.value, ...(e.target.value === "Outside India" ? {} : { currency: undefined }) }))}>
                       {INDIAN_STATES.map((s) => <option key={s}>{s}</option>)}
                     </Select>
                   </Field>
+                  {client.state === "Outside India" && (
+                    <Field label="Quote in" hint={Object.keys(rates?.countryPricing ?? {}).length ? "The price is hours x your hourly price for that currency. No Indian GST on a client abroad." : "No prices are set for other currencies yet: add them in Business & pricing."}>
+                      <Select value={client.currency ?? "INR"} onChange={(e) => setC("currency", e.target.value === "INR" ? undefined : e.target.value)}>
+                        <option value="INR">Indian rupees (₹)</option>
+                        {Object.keys(rates?.countryPricing ?? {}).map((c) => <option key={c} value={c}>{currencyOf(c).name} ({symbolOf(c)})</option>)}
+                      </Select>
+                    </Field>
+                  )}
                   <Field label="GSTIN" hint="Optional, for business clients."><Input value={client.gstin} onChange={(e) => setC("gstin", e.target.value.toUpperCase())} placeholder="33ABCDE1234F1Z5" maxLength={15} /></Field>
                   <Field label="Billing address" className="sm:col-span-2"><Textarea value={client.address} onChange={(e) => setC("address", e.target.value)} className="min-h-16" /></Field>
                   <Field label="Client deadline (weeks)" hint={shown ? `This package needs about ${shown.estimatedWeeks} weeks. 0 = no fixed deadline.` : "0 = no fixed deadline."}>
@@ -783,7 +821,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   <p className="text-slate-200">{req.title}</p>
                   <p>{rates.projectTypes[req.projectType].label} · {SCOPE_OPTIONS.find((s) => s.id === req.scope)?.title}</p>
                   <p>Deadline: {req.deadlineWeeks > 0 ? `${req.deadlineWeeks} weeks` : "none fixed"} · needs about {shown.estimatedWeeks} weeks</p>
-                  {budget > 0 && <p>Client budget: {formatINR(budget)}</p>}
+                  {budget > 0 && <p>Client budget: {fmt(budget)}</p>}
                 </ReviewBlock>
               </div>
 
@@ -792,7 +830,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   <span className="font-semibold text-white">{shown.title} package</span>
                   <span className="block text-xs text-slate-400">{shown.quote.totalHours} h · about {shown.estimatedWeeks} weeks{shown.terms ? ` · ${shown.terms.revisions} revisions · ${shown.terms.supportDays} days support` : ""}</span>
                 </span>
-                <span className="text-lg font-semibold tabular-nums text-white">{formatINR(shown.grandTotal)}</span>
+                <span className="text-lg font-semibold tabular-nums text-white">{fmt(shown.grandTotal)}</span>
               </div>
 
               <ReviewBlock title={`All pages: ${shown.pages.length} billed${shown.supportingPages?.length ? ` + ${shown.supportingPages.length} supporting` : ""}`}>
@@ -852,7 +890,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                         <span className="text-sm font-semibold text-slate-100">{p.title}</span>
                         {p.tier === suggested && <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/20 px-1.5 text-[9px] font-semibold text-emerald-300"><Sparkles size={9} /> suggested</span>}
                       </span>
-                      <span className={cn("mt-1 text-xl font-semibold tracking-tight tabular-nums", budget > 0 ? (p.grandTotal <= budget ? "text-emerald-300" : "text-rose-300") : "text-white")}>{formatINR(p.grandTotal)}</span>
+                      <span className={cn("mt-1 text-xl font-semibold tracking-tight tabular-nums", budget > 0 ? (p.grandTotal <= budget ? "text-emerald-300" : "text-rose-300") : "text-white")}>{fmt(p.grandTotal)}</span>
                       <span className="text-[11px] text-slate-500">{p.pages.length} page{p.pages.length === 1 ? "" : "s"} · {p.requirement.modules.length} features · {p.estimatedWeeks} wk</span>
                       <span className="mt-1 flex items-center gap-1 text-[11px] text-violet-300">See details <ArrowRight size={11} /></span>
                     </button>
@@ -889,7 +927,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
               <span>Estimate</span>
               {shown && <span className="rounded-full bg-violet-500/20 px-2.5 py-0.5 normal-case tracking-normal text-violet-200">{shown.title}</span>}
             </p>
-            <p className="mt-3 text-[34px] font-semibold leading-none tracking-tight tabular-nums text-white">{formatINR(estimate ? estimate.grandTotal : 0)}</p>
+            <p className="mt-3 text-[34px] font-semibold leading-none tracking-tight tabular-nums text-white">{fmt(estimate ? estimate.grandTotal : 0)}</p>
             <p className="mt-1.5 text-xs text-slate-400">Grand total incl. GST</p>
             {preliminary && <p data-testid="wizard-preliminary" className="mt-2 inline-block rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] text-amber-100">Preliminary estimate: open questions or approvals remain</p>}
           </div>
@@ -897,24 +935,24 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
           {estimate ? (
             <div className="space-y-4 text-slate-300">
               <dl className="space-y-1.5 text-[13px]">
-                <div className="flex justify-between gap-4"><dt className="text-slate-400">Development subtotal</dt><dd className="tabular-nums text-slate-100">{formatINR(estimate.subtotal)}</dd></div>
-                {estimate.discount > 0 && <div className="flex justify-between gap-4"><dt className="text-slate-400">Discount</dt><dd className="tabular-nums text-emerald-300">-{formatINR(estimate.discount)}</dd></div>}
-                <div className="flex justify-between gap-4"><dt className="text-slate-400">Taxable value</dt><dd className="tabular-nums text-slate-100">{formatINR(estimate.taxable)}</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-slate-400">Development subtotal</dt><dd className="tabular-nums text-slate-100">{fmt(estimate.subtotal)}</dd></div>
+                {estimate.discount > 0 && <div className="flex justify-between gap-4"><dt className="text-slate-400">Discount</dt><dd className="tabular-nums text-emerald-300">-{fmt(estimate.discount)}</dd></div>}
+                <div className="flex justify-between gap-4"><dt className="text-slate-400">Taxable value</dt><dd className="tabular-nums text-slate-100">{fmt(estimate.taxable)}</dd></div>
                 {estimate.gst.mode === "intra" && (
                   <>
-                    <div className="flex justify-between gap-4"><dt className="text-slate-400">CGST @ {estimate.gst.rate / 2}%</dt><dd className="tabular-nums">{formatINR(estimate.gst.cgst)}</dd></div>
-                    <div className="flex justify-between gap-4"><dt className="text-slate-400">SGST @ {estimate.gst.rate / 2}%</dt><dd className="tabular-nums">{formatINR(estimate.gst.sgst)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="text-slate-400">CGST @ {estimate.gst.rate / 2}%</dt><dd className="tabular-nums">{fmt(estimate.gst.cgst)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="text-slate-400">SGST @ {estimate.gst.rate / 2}%</dt><dd className="tabular-nums">{fmt(estimate.gst.sgst)}</dd></div>
                   </>
                 )}
-                {estimate.gst.mode === "inter" && <div className="flex justify-between gap-4"><dt className="text-slate-400">IGST @ {estimate.gst.rate}%</dt><dd className="tabular-nums">{formatINR(estimate.gst.igst)}</dd></div>}
+                {estimate.gst.mode === "inter" && <div className="flex justify-between gap-4"><dt className="text-slate-400">IGST @ {estimate.gst.rate}%</dt><dd className="tabular-nums">{fmt(estimate.gst.igst)}</dd></div>}
                 {estimate.gst.mode === "export" && <p className="text-xs text-slate-500">GST: export of services (zero-rated, under LUT)</p>}
-                {estimate.roundOff !== 0 && <div className="flex justify-between gap-4"><dt className="text-slate-400">Round off</dt><dd className="tabular-nums">{formatINR(estimate.roundOff)}</dd></div>}
+                {estimate.roundOff !== 0 && <div className="flex justify-between gap-4"><dt className="text-slate-400">Round off</dt><dd className="tabular-nums">{fmt(estimate.roundOff)}</dd></div>}
               </dl>
               <div className="grid grid-cols-2 gap-2">
                 {estimate.schedule.map((s) => (
                   <div key={s.label} className="rounded-xl border border-white/[.06] bg-white/[.03] px-3 py-2">
                     <p className="text-[10px] uppercase tracking-wider text-slate-500">{s.percent}% {s.label.split(" - ")[0].toLowerCase()}</p>
-                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-100">{formatINR(s.amount)}</p>
+                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-100">{fmt(s.amount)}</p>
                   </div>
                 ))}
               </div>
@@ -932,8 +970,8 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
             </div>
           ) : (
             <div className="space-y-1 text-sm text-slate-500">
-              <div className="flex justify-between"><span>Subtotal</span><span className="tabular-nums">{formatINR(0)}</span></div>
-              <div className="flex justify-between"><span>GST</span><span className="tabular-nums">{formatINR(0)}</span></div>
+              <div className="flex justify-between"><span>Subtotal</span><span className="tabular-nums">{fmt(0)}</span></div>
+              <div className="flex justify-between"><span>GST</span><span className="tabular-nums">{fmt(0)}</span></div>
               <div className="space-y-0.5 pt-2 text-xs">
                 <div className="flex justify-between gap-3"><span>Domain name</span><span>Not included</span></div>
                 <div className="flex justify-between gap-3"><span>Hosting</span><span>Not included</span></div>
@@ -962,6 +1000,7 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
         )}
       </aside>
     </div>
+    </MoneyProvider>
   );
 }
 

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Cpu, Database, Loader2, Monitor, Palette, Server, Sparkles, X } from "lucide-react";
 
 import { previewTech, techChoices, type TechChoiceLayer, type TechPreview, type TechSelection } from "@/lib/business/client-tech";
-import { formatINR } from "@/lib/business/pricing";
+import { useMoney } from "./money-context";
 import type { Client, RateCard, Requirement, Tier } from "@/lib/business/types";
 
 const LAYER_ICON = { frontend: Monitor, backend: Server, database: Database, styling: Palette } as const;
@@ -20,7 +20,7 @@ type TabId = (typeof TABS)[number]["id"];
 
 type Choices = { tier: Tier; total: number; layers: TechChoiceLayer[] };
 
-const money = (delta: number) => (delta === 0 ? "Same price" : delta > 0 ? `+ ${formatINR(delta)}` : `− ${formatINR(-delta)}`);
+const money = (delta: number, fmt: (n: number) => string) => (delta === 0 ? "Same price" : delta > 0 ? `+ ${fmt(delta)}` : `− ${fmt(-delta)}`);
 const tone = (delta: number) => (delta === 0 ? "text-slate-500" : delta > 0 ? "text-amber-700" : "text-emerald-700");
 
 /**
@@ -40,6 +40,7 @@ export function TechnologyChooser({ endpoint, local, tier, value, onApply, onClo
   applyLabel?: string;
   applying?: boolean;
 }) {
+  const { fmt } = useMoney();
   const base = endpoint ?? "";
   const [choices, setChoices] = useState<Choices | null>(null);
   const [tech, setTech] = useState<TechSelection>(value ?? {});
@@ -127,7 +128,7 @@ export function TechnologyChooser({ endpoint, local, tier, value, onApply, onClo
         <span className="block pr-7 text-sm font-semibold leading-snug text-slate-900">{o.id === "" ? "Our standard" : o.label}</span>
         {o.id === "" && <span className="mt-1 inline-flex w-fit items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"><Sparkles size={10} /> Recommended</span>}
         <span className="mt-1 block flex-1 text-xs leading-relaxed text-slate-500">{o.detail}</span>
-        <span className={`mt-2 inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${o.delta === 0 ? "bg-slate-100 text-slate-500" : o.delta > 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{money(o.delta)}</span>
+        <span className={`mt-2 inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${o.delta === 0 ? "bg-slate-100 text-slate-500" : o.delta > 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{money(o.delta, fmt)}</span>
       </button>
     );
   };
@@ -224,10 +225,10 @@ export function TechnologyChooser({ endpoint, local, tier, value, onApply, onClo
               <div className="flex items-center gap-3" data-testid="tech-preview">
                 <div>
                   <p className="text-[11px] text-slate-500">New total <span className="text-slate-400">(incl. GST)</span></p>
-                  <p className="text-xl font-bold tabular-nums text-slate-900">{formatINR(preview.total)}{busy && <Loader2 size={13} className="ml-2 inline animate-spin text-slate-400" />}</p>
+                  <p className="text-xl font-bold tabular-nums text-slate-900">{fmt(preview.total)}{busy && <Loader2 size={13} className="ml-2 inline animate-spin text-slate-400" />}</p>
                 </div>
                 <span className={`rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ${preview.delta === 0 ? "bg-slate-100 text-slate-600" : preview.delta > 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
-                  {preview.delta === 0 ? "Same as the quotation" : `${money(preview.delta)} vs the quotation`}
+                  {preview.delta === 0 ? "Same as the quotation" : `${money(preview.delta, fmt)} vs the quotation`}
                 </span>
               </div>
             ) : <span />}

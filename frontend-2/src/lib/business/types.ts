@@ -101,6 +101,11 @@ export type Client = {
   /** Place of supply; decides CGST+SGST (same state) or IGST (other state). */
   state: string;
   address: string;
+  /**
+   * The currency this client is quoted in, for a client Outside India whose country has a price set in the rate card (see RateCard.countryPricing).
+   * Absent or "INR": rupees, with GST as before. Nothing else about the client changes.
+   */
+  currency?: string;
 };
 
 /**
@@ -241,6 +246,22 @@ export type RateCard = {
   maxDiscountPercent: number;
   /** Price of one development hour (₹). Every development line is hours × this rate. */
   hourlyRate: number;
+  /**
+   * Prices for clients abroad, by currency code. `hourlyRate` is the price of one hour IN THAT CURRENCY (for example 25 for 25 pounds). `inrPerUnit` is how many
+   * rupees one unit is worth: used only to keep the books in rupees and to turn the few fixed rupee prices (domains, hosting) into that currency. It is copied
+   * into each quotation, so changing it later never changes a quotation already made. A currency with no entry here cannot be quoted in: such a client is quoted in rupees.
+   */
+  countryPricing?: Record<
+    string,
+    {
+      hourlyRate: number;
+      inrPerUnit: number;
+      /** true (the default): `inrPerUnit` follows the market exchange rate by itself. false: it is the figure typed in and never changes by itself. */
+      auto?: boolean;
+      /** When the market rate in `inrPerUnit` was taken (only while it follows the market). */
+      rateAsOf?: string;
+    }
+  >;
   /** Productive hours per week, for the delivery estimate. */
   hoursPerWeek: number;
   /** Hours for set-up, testing and deployment, per project type. */
@@ -351,6 +372,12 @@ export type HourlyTerms = {
 };
 
 export type Quote = {
+  /**
+   * Present only when the quotation is for a client abroad, priced in their currency. Every amount in a quote is held in RUPEES; these two say how to show
+   * them: divide by `inrPerUnit` and write the currency `currency` (see money.ts). Absent means rupees.
+   */
+  currency?: string;
+  inrPerUnit?: number;
   /** Present only for an hourly engagement: grandTotal is then the estimate, not a fixed price. */
   hourly?: HourlyTerms;
   items: LineItem[];

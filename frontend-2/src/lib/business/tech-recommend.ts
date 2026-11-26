@@ -1,5 +1,6 @@
 import { pagePlan, NEAR_BUDGET_SHARE } from "./budget";
-import { buildQuote, formatINR, needsBackend } from "./pricing";
+import { formatMoney } from "./money";
+import { buildQuote, needsBackend, quoteMoney } from "./pricing";
 import {
   CATALOG_LAYERS,
   DEFAULT_TECH_CATALOG,
@@ -53,7 +54,7 @@ export type RecommendationNeeds = {
 export type RecommendationOptions = {
   needs?: RecommendationNeeds;
   /** Used for GST in the estimate; defaults to the business's own state. */
-  client?: Pick<Client, "state">;
+  client?: Pick<Client, "state" | "currency">;
   /** How many ranked options to return (default 3). */
   maxOptions?: number;
   /** Technology the client asked for; defaults to the requirement's own clientTech. */
@@ -400,7 +401,7 @@ function evaluate(req: Requirement, needs: ResolvedNeeds, f: string[], b: string
  * Development cost with the existing pricing: the stack's combined cost impact is
  * given to `buildQuote` through a copy of the rate card (the real card is untouched).
  */
-function estimateFor(req: Requirement, client: Pick<Client, "state">, rates: RateCard, devFactor: number): RecommendedOption["estimate"] | undefined {
+function estimateFor(req: Requirement, client: Pick<Client, "state" | "currency">, rates: RateCard, devFactor: number): RecommendedOption["estimate"] | undefined {
   try {
     const trial: RateCard = { ...rates, stacks: { ...rates.stacks, custom: { ...rates.stacks.custom, devFactor } } };
     const quote = buildQuote({ ...req, stack: "custom", tech: undefined }, client, trial);
@@ -491,6 +492,8 @@ export function recommendTechnology(
   const type = requirement.projectType;
   const wanted = budget === undefined ? requirement.budget ?? 0 : budget;
   const client = options.client ?? { state: rates.business.state };
+  // Amounts are held in rupees; the reasons are written in the quotation's currency.
+  const formatINR = (n: number) => formatMoney(n, quoteMoney(client, rates));
   const byId = new Map(entries.map((e) => [e.id, e]));
   const hostings = entries.filter((e) => e.enabled && e.layer === "hosting").map((e) => e.id);
 

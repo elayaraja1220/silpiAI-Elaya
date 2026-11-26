@@ -361,3 +361,28 @@ describe("hours tracker", () => {
     assert.ok(a.ratio > 0);
   });
 });
+
+describe("which package contains a feature the client selected", () => {
+  const find = (ps: ReturnType<typeof buildProposals>, tier: string) => ps.find((p) => p.tier === tier)!;
+  it("Booking and Live chat are not essentials: they are in Premium only, so the Basic and Standard prices do not move when they are ticked", () => {
+    const plain = buildProposals(req(SIX, ["contact-form"]), TN, rates);
+    const withExtras = buildProposals(req(SIX, ["contact-form", "booking", "chat"]), TN, rates);
+    for (const tier of ["basic", "standard"]) {
+      assert.equal(find(withExtras, tier).grandTotal, find(plain, tier).grandTotal, `${tier} price is the same`);
+      assert.deepEqual([...(find(withExtras, tier).requirement.excludedModules ?? [])].sort(), ["booking", "chat"], `${tier} leaves them out, and says so`);
+      assert.ok(find(withExtras, tier).leftOut.some((l) => /Booking \/ appointments .*higher package/.test(l)), `${tier} lists booking as not included`);
+    }
+    assert.ok(find(withExtras, "premium").grandTotal > find(plain, "premium").grandTotal, "Premium prices them");
+    assert.ok(find(withExtras, "premium").requirement.modules.includes("booking") && find(withExtras, "premium").requirement.modules.includes("chat"));
+  });
+  it("marking them must-have puts them in every package and raises every price", () => {
+    const plain = buildProposals(req(SIX, ["contact-form", "booking", "chat"]), TN, rates);
+    const must = buildProposals(req(SIX, ["contact-form", "booking", "chat"], { mustHave: ["booking", "chat"] }), TN, rates);
+    for (const tier of ["basic", "standard", "premium"]) {
+      assert.ok(find(must, tier).requirement.modules.includes("booking") && find(must, tier).requirement.modules.includes("chat"), `${tier} includes them`);
+      assert.ok(find(must, tier).grandTotal >= find(plain, tier).grandTotal, `${tier} costs at least as much`);
+    }
+    assert.ok(find(must, "basic").grandTotal > find(plain, "basic").grandTotal, "Basic now prices them");
+    assert.deepEqual(find(must, "basic").requirement.excludedModules ?? [], []);
+  });
+});

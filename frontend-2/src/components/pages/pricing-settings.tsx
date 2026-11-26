@@ -5,13 +5,15 @@ import { Building2, Check, Globe, Layers, Loader2, Package, Percent, Plus, Save,
 
 import { CostSettings } from "@/components/business/cost-settings";
 import { Card, Field, Input, Select, jsonFetch } from "@/components/business/ui";
+import { CURRENCIES, currencyOf, FALLBACK_INR_PER_UNIT } from "@/lib/business/currency";
+import { formatMoney, symbolOf } from "@/lib/business/money";
 import { formatINR } from "@/lib/business/pricing";
 import { INDIAN_STATES } from "@/lib/business/rate-card";
 import type { RateCard } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
 
 /** Number box that lets the field be cleared while typing; commits only valid numbers. */
-function NumInput({ value, onChange, step = 1, suffix, className }: { value: number; onChange: (n: number) => void; step?: number; suffix?: string; className?: string }) {
+function NumInput({ value, onChange, step = 1, suffix, className, disabled }: { value: number; onChange: (n: number) => void; step?: number; suffix?: string; className?: string; disabled?: boolean }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText((t) => (Number(t) === value && t !== "" ? t : String(value))), [value]);
   return (
@@ -27,9 +29,76 @@ function NumInput({ value, onChange, step = 1, suffix, className }: { value: num
           if (e.target.value !== "" && Number.isFinite(n) && n >= 0) onChange(n);
         }}
         onBlur={() => setText(String(value))}
-        className={cn("tabular-nums", suffix && "pr-10")}
+        disabled={disabled}
+        className={cn("tabular-nums", suffix && "pr-10", disabled && "opacity-70")}
       />
       {suffix && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">{suffix}</span>}
+    </div>
+  );
+}
+
+/** Hourly price per currency for clients abroad. The hourly price is in THAT currency; the rupee rate is only for the books and for the few fixed rupee prices. */
+function CountryPrices({ card, update }: { card: RateCard; update: (fn: (c: RateCard) => RateCard) => void }) {
+  const prices = card.countryPricing ?? {};
+  const codes = Object.keys(prices);
+  const [adding, setAdding] = useState("");
+  const set = (code: string, patch: Partial<NonNullable<RateCard["countryPricing"]>[string]>) => update((c) => ({ ...c, countryPricing: { ...(c.countryPricing ?? {}), [code]: { ...(c.countryPricing ?? {})[code]!, ...patch } } }));
+  const remove = (code: string) => update((c) => { const next = { ...(c.countryPricing ?? {}) }; delete next[code]; return { ...c, countryPricing: next }; });
+  const [note, setNote] = useState("");
+  type Live = { source: "live" | "approximate"; asOf: string; inrPerUnit: Record<string, number> };
+  const live = async (): Promise<Live | null> => { try { return (await (await fetch("/api/business/exchange-rates", { cache: "no-store" })).json()) as Live; } catch { return null; } };
+  const add = async (code: string) => {
+    if (!code) return;
+    setAdding("");
+    // Starts from today's market rate and follows it. The hourly price has to be chosen by you.
+    const m = await live();
+    const isLive = m?.source === "live" && Number.isFinite(m.inrPerUnit[code]);
+    update((c) => ({ ...c, countryPricing: { ...(c.countryPricing ?? {}), [code]: { hourlyRate: 0, inrPerUnit: Math.round((isLive ? m!.inrPerUnit[code]! : (FALLBACK_INR_PER_UNIT[code] ?? 1)) * 1e4) / 1e4, auto: true, ...(isLive ? { rateAsOf: m!.asOf } : {}) } } }));
+    setNote(isLive ? "" : "The market rate service could not be reached, so a rough starting figure was used. Press Update now later, or turn off automatic and type your own.");
+  };
+  const refresh = async () => {
+    const m = await live();
+    if (!m || m.source !== "live") { setNote("The market rate service could not be reached. Nothing was changed."); return; }
+    update((c) => ({ ...c, countryPricing: Object.fromEntries(Object.entries(c.countryPricing ?? {}).map(([code, p]) => [code, p.auto !== false && Number.isFinite(m.inrPerUnit[code]) ? { ...p, inrPerUnit: Math.round(m.inrPerUnit[code]! * 1e4) / 1e4, rateAsOf: m.asOf } : p])) }));
+    setNote("Updated to today's market rate. Press Save to keep it.");
+  };
+  const pageHours = card.page.baseHours + 3 * card.page.sectionHours;
+  return (
+    <div className="space-y-3">
+      {codes.length === 0 && <p className="text-xs text-slate-400">No other currency yet. Add one below, set the hourly price you want to charge in it, and clients in that country can be quoted in it.</p>}
+      {codes.map((code) => {
+        const p = prices[code]!;
+        const c = currencyOf(code);
+        const unit = { code, unit: p.inrPerUnit };
+        const auto = p.auto !== false;
+        return (
+          <div key={code} className="rounded-xl border border-white/[.07] bg-white/[.02] p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-slate-100">{c.name} <span className="text-slate-500">({code}, {symbolOf(code)}) · {c.countries.slice(0, 3).join(", ")}</span></p>
+              <button type="button" onClick={() => remove(code)} className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-rose-300"><Trash2 size={13} /> Remove</button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={`Hourly price (${symbolOf(code)}, in ${code})`} hint="What the client pays for one development hour."><NumInput value={p.hourlyRate} step={1} onChange={(n) => set(code, { hourlyRate: n })} /></Field>
+              <Field label={`Rupees for one ${code} (₹)`} hint={auto ? (p.rateAsOf ? `Market rate, taken ${new Date(p.rateAsOf).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}. Follows the market by itself.` : "Follows the market by itself; not refreshed yet.") : "Typed by you. Does not change by itself."}>
+                <NumInput value={p.inrPerUnit} step={0.1} disabled={auto} onChange={(n) => set(code, { inrPerUnit: n })} />
+                <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-[11px] text-slate-300"><input type="checkbox" checked={auto} onChange={(e) => set(code, e.target.checked ? { auto: true } : { auto: false, rateAsOf: undefined })} className="h-3.5 w-3.5 accent-violet-500" /> Follow the market rate automatically</label>
+              </Field>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">
+              {p.hourlyRate > 0 ? <>Example: a 3-section page = {pageHours} h = {formatMoney(pageHours * p.hourlyRate * p.inrPerUnit, unit)} before complexity. In your books: about {formatINR(pageHours * p.hourlyRate * p.inrPerUnit)}.</> : <span className="text-amber-300">Set an hourly price above 0 before saving: without one, clients in this currency are quoted in rupees.</span>}
+            </p>
+          </div>
+        );
+      })}
+      {note && <p className="rounded-md border border-amber-400/20 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">{note}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        {codes.some((c) => prices[c]!.auto !== false) && <button type="button" onClick={() => void refresh()} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-200 hover:bg-white/5">Update now to the market rate</button>}
+        <Select value={adding} onChange={(e) => void add(e.target.value)} aria-label="Add a currency">
+          <option value="">Add a currency...</option>
+          {CURRENCIES.filter((x) => x.code !== "INR" && !prices[x.code]).map((x) => <option key={x.code} value={x.code}>{x.name} ({x.code}) · {x.countries[0]}</option>)}
+        </Select>
+      </div>
+      <p className="text-[11px] text-slate-500">The hourly price you type is what the client pays and it does not change. The market rate only decides the rupee value in your books, and a quotation already made keeps the rate it was made at. GST is not charged to a client abroad (export of services); local taxes in their country are not added.</p>
     </div>
   );
 }
@@ -126,6 +195,10 @@ export function PricingSettingsPage() {
           Add your GSTIN before sending quotations with GST to clients. Without it the quotation shows no GSTIN.
         </p>
       )}
+
+      <Section icon={<Globe size={16} className="text-emerald-300" />} title="Prices for clients abroad" hint="A client Outside India can be quoted in their own currency, from an hourly price you set for it. Without a price here, they are quoted in rupees.">
+        <CountryPrices card={card} update={update} />
+      </Section>
 
       <div className="grid gap-5 xl:grid-cols-2">
         <Section icon={<Building2 size={16} className="text-violet-300" />} title="Your business" hint="Printed at the top of every quotation.">

@@ -2,6 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { getDb, transaction } from "./db";
 import { buildQuote } from "./pricing";
+import { getLiveInrPerUnit, type LiveRates } from "./live-rates";
+import { formatMoney, moneyOf } from "./money";
 import { applyClientTech, describeTech, parseTechSelection, type TechSelection } from "./client-tech";
 import { buildHourlyQuote, isHourly } from "./hourly";
 import { buildProposals, compareProposals, defaultTier, toSummary } from "./proposals";
@@ -46,6 +48,33 @@ export function getRateCard(): RateCard {
   } catch {
     return DEFAULT_RATE_CARD;
   }
+}
+
+/**
+ * Brings the rupee value of each country price that follows the market up to today's market rate. A price typed in by hand is never touched, and a rate the
+ * service could only ESTIMATE (it could not be reached) is never written: the figure stays as it was. Only the books and the fixed rupee prices move;
+ * the hourly price in the client's currency does not, and no quotation already made changes (each keeps the rate it was made at).
+ * Returns the codes that changed. `fetchRates` can be replaced in tests.
+ */
+export async function refreshAutoRates(fetchRates: () => Promise<LiveRates> = getLiveInrPerUnit): Promise<{ updated: string[]; source: LiveRates["source"] | "none" }> {
+  const card = getRateCard();
+  const entries = Object.entries(card.countryPricing ?? {}).filter(([, p]) => p.auto !== false);
+  if (entries.length === 0) return { updated: [], source: "none" };
+  const live = await fetchRates();
+  if (live.source !== "live") return { updated: [], source: live.source };
+  const next = { ...(card.countryPricing ?? {}) };
+  const updated: string[] = [];
+  for (const [code, p] of entries) {
+    const market = live.inrPerUnit[code];
+    if (!Number.isFinite(market) || market <= 0) continue;
+    const rate = Math.round(market * 1e6) / 1e6;
+    if (rate !== p.inrPerUnit || p.rateAsOf !== live.asOf) {
+      next[code] = { ...p, inrPerUnit: rate, auto: true, rateAsOf: live.asOf };
+      if (rate !== p.inrPerUnit) updated.push(code);
+    }
+  }
+  if (JSON.stringify(next) !== JSON.stringify(card.countryPricing)) saveRateCard({ ...card, countryPricing: next });
+  return { updated, source: "live" };
 }
 
 export function saveRateCard(card: RateCard): void {
@@ -183,7 +212,7 @@ function issueQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requiremen
   // A discount the team already gave is kept when the price moves (never above the limit); a new one that is too big is refused.
   if (clampDiscount) discount = Math.min(discount, maxDiscount);
   if (discount > maxDiscount) {
-    throw new ValidationError(`The discount can be at most ${rates.maxDiscountPercent}% (₹${maxDiscount}). Change the limit in Business & pricing.`);
+    throw new ValidationError(`The discount can be at most ${rates.maxDiscountPercent}% (${formatMoney(maxDiscount, moneyOf(chosen.quote))}). Change the limit in Business & pricing.`);
   }
   const created = new Date();
   const validUntil = new Date(created.getTime() + rates.quoteValidityDays * 86_400_000);
@@ -530,12 +559,13 @@ export function recordPayment(id: string, p: { kind: PaymentKind; amount: number
     }
     const status = paymentStatus(lead.quotation, lead.payments);
     const remaining = p.kind === "advance" ? status.advanceRemaining : status.balanceRemaining;
-    if (p.amount > remaining + 1) throw new StageError(`Only ${remaining} is due for the ${p.kind}.`);
+    const shown = moneyOf(lead.quotation);
+    if (p.amount > remaining + 1) throw new StageError(`Only ${formatMoney(remaining, shown)} is due for the ${p.kind}.`);
     db.prepare("INSERT INTO payments (id, lead_id, kind, amount, mode, reference, received_on, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
       randomUUID(), id, p.kind, p.amount, p.mode, p.reference, p.receivedOn, now(),
     );
     const done = p.amount >= remaining - 1;
-    const note = `${p.kind === "advance" ? "Advance" : "Balance"} received: ₹${p.amount} by ${p.mode.toUpperCase()}${p.reference ? ` (ref ${p.reference})` : ""}${done ? (p.kind === "advance" ? " - advance complete" : "") : " - part payment"}`;
+    const note = `${p.kind === "advance" ? "Advance" : "Balance"} received: ${formatMoney(p.amount, shown)} by ${p.mode.toUpperCase()}${p.reference ? ` (ref ${p.reference})` : ""}${done ? (p.kind === "advance" ? " - advance complete" : "") : " - part payment"}`;
     // Only move forward: work that already started keeps its stage.
     const moves = done && (p.kind === "balance" || lead.stage === "approved");
     if (moves) {

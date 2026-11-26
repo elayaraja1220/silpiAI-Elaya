@@ -8,7 +8,8 @@ import { DEV_START_HEADER } from "@/lib/dev-flags"; // TEMP DEV
 import { JOBS_CHANGED } from "@/components/business/execution-panel";
 import { GenerateConfirmDialog } from "@/components/business/generate-confirm-dialog";
 import { Card, jsonFetch } from "@/components/business/ui";
-import { formatINR } from "@/lib/business/pricing";
+import { fromRupees, isForeign, moneyOf, toRupees } from "@/lib/business/money";
+import { useMoney } from "./money-context";
 import type { Proposal } from "@/lib/business/proposals";
 import { paymentStatus } from "@/lib/business/payment-status";
 import { PAYMENT_MODES, type ComparisonRow, type Lead, type PaymentMode, type Stage } from "@/lib/business/types";
@@ -24,6 +25,7 @@ const TIER_STYLE = {
 
 /** Basic / Standard / Premium side by side; the selected one is the quotation. */
 export function ProposalsPanel({ lead, editable, onChanged }: { lead: Lead; editable: boolean; onChanged: (r: { lead: Lead; history: History }) => void }) {
+  const { fmt } = useMoney();
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [comparison, setComparison] = useState<ComparisonRow[]>([]);
   const [busy, setBusy] = useState("");
@@ -58,7 +60,7 @@ export function ProposalsPanel({ lead, editable, onChanged }: { lead: Lead; edit
       <div>
         <p className="text-sm font-semibold text-slate-100">Three proposals</p>
         <p className="mt-1 text-xs text-slate-400">
-          The client sees all three and picks one when approving.{budget > 0 && <> Client budget: <span className="text-slate-200">{formatINR(budget)}</span> incl. GST.</>}
+          The client sees all three and picks one when approving.{budget > 0 && <> Client budget: <span className="text-slate-200">{fmt(budget)}</span> incl. GST.</>}
         </p>
       </div>
       {error && <p className="rounded-md border border-rose-400/20 bg-rose-500/10 px-2.5 py-1.5 text-xs text-rose-200">{error}</p>}
@@ -74,13 +76,13 @@ export function ProposalsPanel({ lead, editable, onChanged }: { lead: Lead; edit
                   {p.tier === "standard" && <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-[10px] text-violet-200">Recommended</span>}
                 </div>
                 <p className="mt-0.5 text-[11px] text-slate-500">{p.tagline}</p>
-                <p className="mt-3 text-xl font-semibold tabular-nums text-white">{formatINR(p.grandTotal)}</p>
+                <p className="mt-3 text-xl font-semibold tabular-nums text-white">{fmt(p.grandTotal)}</p>
                 <p className="text-[11px] text-slate-500">
-                  incl. GST · {p.quote.totalHours} h · ~{p.estimatedWeeks} wk{p.discount > 0 && ` · ${formatINR(p.discount)} discount`}
+                  incl. GST · {p.quote.totalHours} h · ~{p.estimatedWeeks} wk{p.discount > 0 && ` · ${fmt(p.discount)} discount`}
                 </p>
                 {budget > 0 && (
                   <p className={cn("mt-1 text-[11px] font-medium", p.grandTotal <= budget ? "text-emerald-300" : "text-rose-300")}>
-                    {p.grandTotal <= budget ? "Within budget" : `${formatINR(p.grandTotal - budget)} over budget`}
+                    {p.grandTotal <= budget ? "Within budget" : `${fmt(p.grandTotal - budget)} over budget`}
                   </p>
                 )}
                 <p className="mt-3 text-[11px] text-slate-400">
@@ -127,6 +129,7 @@ function whatsappNumber(phone: string): string {
 }
 
 export function SharePanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; history: History }) => void }) {
+  const { fmt } = useMoney();
   const [link, setLink] = useState(lead.shareToken ? `/q/${lead.shareToken}` : "");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -156,7 +159,7 @@ export function SharePanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { l
   const text = q
     ? [
         `Hello ${lead.client.name},`,
-        `Thank you for your enquiry. Your quotation ${q.number} for "${(q.requirement ?? lead.requirement).title}" from ${q.business.name} is ready${q.proposals?.length ? `, with three options starting from ${formatINR(cheapest)} (incl. GST)` : ""}.`,
+        `Thank you for your enquiry. Your quotation ${q.number} for "${(q.requirement ?? lead.requirement).title}" from ${q.business.name} is ready${q.proposals?.length ? `, with three options starting from ${fmt(cheapest)} (incl. GST)` : ""}.`,
         `View, choose and approve it here: ${full}`,
         `This link is valid until ${new Date(q.validUntil).toLocaleDateString("en-IN")}.`,
       ].join("\n\n")
@@ -225,10 +228,13 @@ export function SharePanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { l
 
 /** Waiting for the advance: what is due, and recording money received outside the site. */
 export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; history: History }) => void }) {
+  const { fmt } = useMoney();
   const status = paymentStatus(lead.quotation, lead.payments);
   const kind = lead.stage === "demo_ready" ? "balance" : "advance";
   const remaining = kind === "advance" ? status.advanceRemaining : status.balanceRemaining;
-  const [amount, setAmount] = useState(String(remaining));
+  // Amounts are held in rupees. For a client abroad the team types what was received in THEIR currency; it is kept at the quotation's own rate.
+  const payMoney = moneyOf(lead.quotation);
+  const [amount, setAmount] = useState(String(fromRupees(remaining, payMoney)));
   const [mode, setMode] = useState<PaymentMode>("upi");
   const [reference, setReference] = useState("");
   const [receivedOn, setReceivedOn] = useState(() => new Date().toISOString().slice(0, 10));
@@ -241,7 +247,7 @@ export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: {
     try {
       const r = await jsonFetch<{ lead: Lead; history: History }>(`/api/business/leads/${lead.id}/payments`, {
         method: "POST",
-        body: JSON.stringify({ kind, amount: Number(amount), mode, reference, receivedOn }),
+        body: JSON.stringify({ kind, amount: toRupees(Number(amount), payMoney), mode, reference, receivedOn }),
       });
       setReference("");
       onChanged(r);
@@ -289,14 +295,14 @@ export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: {
     <Card className={cn("no-print space-y-3", waiting && "border-amber-400/30")}>
       <p className="text-xs font-semibold text-slate-300">{waiting ? `Waiting for ${kind} payment` : "Payments"}</p>
       <div className="space-y-1 text-xs">
-        <div className="flex justify-between"><span className="text-slate-500">Advance due</span><span className="tabular-nums text-slate-200">{formatINR(status.advanceDue)}</span></div>
-        <div className="flex justify-between"><span className="text-slate-500">Advance received</span><span className="tabular-nums text-emerald-300">{formatINR(status.advancePaid)}</span></div>
-        {status.balancePaid > 0 && <div className="flex justify-between"><span className="text-slate-500">Balance received</span><span className="tabular-nums text-emerald-300">{formatINR(status.balancePaid)}</span></div>}
+        <div className="flex justify-between"><span className="text-slate-500">Advance due</span><span className="tabular-nums text-slate-200">{fmt(status.advanceDue)}</span></div>
+        <div className="flex justify-between"><span className="text-slate-500">Advance received</span><span className="tabular-nums text-emerald-300">{fmt(status.advancePaid)}</span></div>
+        {status.balancePaid > 0 && <div className="flex justify-between"><span className="text-slate-500">Balance received</span><span className="tabular-nums text-emerald-300">{fmt(status.balancePaid)}</span></div>}
       </div>
       {lead.payments.length > 0 && (
         <ul className="space-y-1 border-t border-white/[.06] pt-2 text-[11px] text-slate-400">
           {lead.payments.map((p) => (
-            <li key={p.id}>{p.receivedOn} · {p.kind} · {formatINR(p.amount)} · {p.mode.toUpperCase()}{p.reference && ` · ${p.reference}`}</li>
+            <li key={p.id}>{p.receivedOn} · {p.kind} · {fmt(p.amount)} · {p.mode.toUpperCase()}{p.reference && ` · ${p.reference}`}</li>
           ))}
         </ul>
       )}
@@ -304,7 +310,7 @@ export function PaymentPanel({ lead, onChanged }: { lead: Lead; onChanged: (r: {
         <div className="space-y-2 border-t border-white/[.06] pt-3">
           <p className="text-[11px] text-slate-500">Received the money by UPI, bank transfer or cash? Record it here. (The online payment page comes later.)</p>
           <div className="grid grid-cols-2 gap-2">
-            <input type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} className={field} aria-label="Amount received" />
+            <input type="number" min={isForeign(payMoney) ? 0.01 : 1} step={isForeign(payMoney) ? 0.01 : 1} value={amount} onChange={(e) => setAmount(e.target.value)} className={field} aria-label={`Amount received in ${payMoney.code}`} placeholder={payMoney.code} />
             <select value={mode} onChange={(e) => setMode(e.target.value as PaymentMode)} className={cn(field, "[&>option]:bg-[#121620]")} aria-label="Payment mode">
               {PAYMENT_MODES.map((m) => <option key={m} value={m}>{m.toUpperCase()}</option>)}
             </select>

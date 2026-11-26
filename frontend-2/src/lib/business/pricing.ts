@@ -2,6 +2,7 @@ import { billablePages, supportingPages } from "./scope";
 import { seoAdvice } from "./seo";
 import { clientLayerIds, frontendLabel, listLabels, stylingFor, unmatchedNames } from "./tech-preference";
 import { separateServices } from "./services";
+import { INR_MONEY, isForeign, type Money } from "./money";
 import type { Client, LineItem, Quote, RateCard, Requirement, StackChoice, StackSuggestion } from "./types";
 
 /**
@@ -17,6 +18,17 @@ import type { Client, LineItem, Quote, RateCard, Requirement, StackChoice, Stack
 const round2 = (n: number) => Math.round(n * 100) / 100;
 /** Hours are shown in half-hour steps. */
 const halfHours = (n: number) => Math.round(n * 2) / 2;
+
+/**
+ * The currency a quotation is in: the client's own when they are Outside India and the rate card has a price for it, otherwise rupees.
+ * Pure, so the screen, the server and the documents always agree.
+ */
+export function quoteMoney(client: Pick<Client, "state" | "currency">, rates: RateCard): Money {
+  const code = client.currency;
+  if (client.state !== "Outside India" || !code || code === "INR") return INR_MONEY;
+  const p = rates.countryPricing?.[code];
+  return p && p.hourlyRate > 0 && p.inrPerUnit > 0 ? { code, unit: p.inrPerUnit } : INR_MONEY;
+}
 
 export function needsBackend(req: Requirement, rates: RateCard): boolean {
   return (
@@ -149,9 +161,15 @@ export function gstFor(client: Pick<Client, "state">, rates: RateCard, taxable: 
   return { mode: "inter", rate, cgst: 0, sgst: 0, igst, total: igst };
 }
 
-export function buildQuote(req: Requirement, client: Pick<Client, "state">, rates: RateCard, discount = 0): Quote {
+export function buildQuote(req: Requirement, client: Pick<Client, "state" | "currency">, rates: RateCard, discount = 0): Quote {
   const items: LineItem[] = [];
-  const rate = rates.hourlyRate;
+  // A client abroad is priced from the hourly rate written in THEIR currency. Amounts are still held in rupees, but every one is snapped to a whole cent
+  // of that currency first, so what the client sees adds up exactly and never moves with the exchange rate.
+  const money = quoteMoney(client, rates);
+  const foreign = isForeign(money);
+  const rate = foreign ? rates.countryPricing![money.code]!.hourlyRate * money.unit : rates.hourlyRate;
+  const snap = (inr: number) => (foreign ? (Math.round((inr / money.unit) * 100) / 100) * money.unit : round2(inr));
+  const whole = (inr: number) => (foreign ? Math.round(inr / money.unit) * money.unit : Math.round(inr));
   const stack = effectiveStack(req, rates);
   const factor = (rates.complexity[req.complexity]?.multiplier ?? 1) * techFactor(req, rates);
   let devHours = 0;
@@ -159,7 +177,7 @@ export function buildQuote(req: Requirement, client: Pick<Client, "state">, rate
     const hours = halfHours(rawHours * (category === "development" ? factor : 1));
     if (hours <= 0 || rate <= 0) return;
     devHours += hours;
-    items.push({ category, description, detail, qty: hours, unit: "hour", rate, amount: round2(hours * rate) });
+    items.push({ category, description, detail, qty: hours, unit: "hour", rate, amount: snap(hours * rate) });
   };
 
   const type = rates.projectTypes[req.projectType];
@@ -202,15 +220,15 @@ export function buildQuote(req: Requirement, client: Pick<Client, "state">, rate
 
   // Domain and hosting are never part of the development quotation: see separateServices().
 
-  const subtotal = round2(items.reduce((sum, item) => sum + item.amount, 0));
-  const safeDiscount = Math.min(Math.max(0, round2(discount)), subtotal);
-  const taxable = round2(subtotal - safeDiscount);
+  const subtotal = snap(items.reduce((sum, item) => sum + item.amount, 0));
+  const safeDiscount = Math.min(Math.max(0, snap(discount)), subtotal);
+  const taxable = snap(subtotal - safeDiscount);
   const gst = gstFor(client, rates, taxable);
-  const exact = round2(taxable + gst.total);
-  const grandTotal = Math.round(exact);
-  const roundOff = round2(grandTotal - exact);
+  const exact = snap(taxable + gst.total);
+  const grandTotal = whole(exact);
+  const roundOff = snap(grandTotal - exact);
 
-  const advance = Math.round((grandTotal * rates.advancePercent) / 100);
+  const advance = whole((grandTotal * rates.advancePercent) / 100);
   const schedule = [
     { label: "Advance - before work starts", percent: rates.advancePercent, amount: advance },
     { label: "Balance - after demo approval, before delivery", percent: 100 - rates.advancePercent, amount: grandTotal - advance },
@@ -223,7 +241,7 @@ export function buildQuote(req: Requirement, client: Pick<Client, "state">, rate
     deferredIds.length || deferredPages.length
       ? {
           modules: [...deferredIds.map((m) => rates.modules[m].label), ...deferredPages.map((p) => `${p} page`)],
-          amount: round2(
+          amount: snap(
             deferredIds.reduce((sum, m) => sum + halfHours(rates.modules[m].hours * factor) * rate, 0) +
               deferredPages.reduce((sum, p) => sum + halfHours((rates.page.baseHours + sectionsOf(req, p, rates) * rates.page.sectionHours) * factor) * rate, 0),
           ),
@@ -231,6 +249,7 @@ export function buildQuote(req: Requirement, client: Pick<Client, "state">, rate
       : undefined;
 
   return {
+    ...(foreign ? { currency: money.code, inrPerUnit: money.unit } : {}),
     items,
     totalHours: devHours,
     subtotal,

@@ -197,3 +197,14 @@ describe("chat between the client and the team", () => {
     assert.match(dock, /aria-expanded/);
   });
 });
+
+describe("the team's live chat bar can be hidden without removing anything", () => {
+  it("is switched off in one place, only drawn when that switch is on, and the widget and its routes are all still there", async () => {
+    const { readFileSync, existsSync } = await import("node:fs");
+    const flags = readFileSync("src/lib/feature-flags.ts", "utf8");
+    assert.match(flags, /export const SHOW_TEAM_LIVE_CHAT = false;/, "hidden for now");
+    assert.match(readFileSync("src/app/(app)/layout.tsx", "utf8"), /SHOW_TEAM_LIVE_CHAT && <TeamChatWidget \/>/, "drawn only when the switch is on");
+    assert.ok(existsSync("src/components/business/team-chat-widget.tsx") && existsSync("src/components/business/chat-dock.tsx"), "the widget is kept");
+    assert.ok(readFileSync("src/app/q/[token]/client-quotation.tsx", "utf8").includes("ClientChatWidget token={token}"), "the client's own chat is untouched");
+  });
+});
