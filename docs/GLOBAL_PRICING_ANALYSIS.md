@@ -101,3 +101,12 @@ Written before any change, as the brief asked. No code was changed for this docu
 - New: rates download as CSV (`GET /api/admin/pricing/rates/export`, optionally for one country) in the layout the import reads; a cell that starts like a spreadsheet formula is prefixed so it opens as text.
 - Permissions: a viewer can look, read the history and download the CSV; every change is refused (403) on the server, and the screen greys the forms and says so.
 - Not built on purpose: adding a country that is not in the fixed list of 38 (quotation parsing validates against that list), editing an existing rate (history is kept), a second audit table (the existing append-only one is used with a `pricing.` prefix).
+
+## Step 8: AI hour split suggestion (kept apart from the price)
+
+- Decision kept: the rate card sets the hours; the AI never does. `quotation_hour_estimates` (migration 20) stores a suggestion of how the quotation's own total hours might be shared between roles (frontend, backend, UI/UX, QA, project management, ...), with the source (AI or rule), the model, the reason, who asked and who accepted or dismissed it. The split itself cannot be edited afterwards.
+- Whatever the AI says is adjusted (`normaliseSplit`): only known roles, positive hours, merged duplicates, scaled to add up to exactly the quotation's hours in half hours. It cannot add or remove an hour. The AI is given the facts and the total, not prices.
+- No AI configured, an AI failure, or an unusable answer: a default rule of thumb is used (frontend 40, backend 25 when there is one, UI/UX 12, QA 13, project management 10 percent). These shares are SILPI's assumption, not a measurement, and the screen says "Default rule of thumb (not AI)" and why the AI was not used.
+- It reads a quotation and writes only its own table and the audit log. Tests prove the quotation's fingerprint, versions, price and stage are identical after suggesting and accepting, that it works on an approved quotation, and that no pricing or quotation source mentions it.
+- Screen: "Suggested hour split by role" card on the project summary. "Use this for planning" records the team's choice; it changes nothing else. The accepted split is what step 9 can value with the market rates.
+- The first real AI call needs an `ANTHROPIC_API_KEY` and an enabled fast model in the AI catalogue; until then the rule answers.

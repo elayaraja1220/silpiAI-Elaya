@@ -1080,6 +1080,39 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: 20,
+    name: "Hour split suggestions: how a quotation's hours might be shared between roles, kept apart from the price",
+    up(db) {
+      db.exec(`
+        -- A suggestion only. It never changes a quotation, and nothing that prices reads it. The split itself cannot be edited afterwards; only its status moves
+        -- (suggested -> accepted or dismissed). source says whether an AI or the built-in rule produced it; ai_note says why the rule was used instead.
+        CREATE TABLE quotation_hour_estimates (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          lead_id       TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+          quotation_id  TEXT NOT NULL,
+          total_hours   REAL NOT NULL CHECK (total_hours > 0),
+          split         TEXT NOT NULL,
+          source        TEXT NOT NULL CHECK (source IN ('rule', 'ai')),
+          model         TEXT NOT NULL DEFAULT '',
+          reason        TEXT NOT NULL DEFAULT '',
+          ai_note       TEXT NOT NULL DEFAULT '',
+          input_tokens  INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          status        TEXT NOT NULL DEFAULT 'suggested' CHECK (status IN ('suggested', 'accepted', 'dismissed')),
+          created_by    TEXT NOT NULL DEFAULT '',
+          created_at    TEXT NOT NULL,
+          decided_by    TEXT NOT NULL DEFAULT '',
+          decided_at    TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX quotation_hour_estimates_lead ON quotation_hour_estimates(lead_id, id);
+        CREATE TRIGGER quotation_hour_estimates_no_edit BEFORE UPDATE ON quotation_hour_estimates
+          WHEN NEW.lead_id != OLD.lead_id OR NEW.quotation_id != OLD.quotation_id OR NEW.total_hours != OLD.total_hours OR NEW.split != OLD.split OR NEW.source != OLD.source
+            OR NEW.model != OLD.model OR NEW.reason != OLD.reason OR NEW.created_by != OLD.created_by OR NEW.created_at != OLD.created_at
+          BEGIN SELECT RAISE(ABORT, 'a suggested split cannot be edited: ask for a new suggestion'); END;
+      `);
+    },
+  },
 ];
 
 function assertValid(list: readonly Migration[]): void {
