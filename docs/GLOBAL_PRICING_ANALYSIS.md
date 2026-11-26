@@ -92,3 +92,12 @@ Written before any change, as the brief asked. No code was changed for this docu
 - `verifyApproval` recomputes the fingerprint, so tampering that bypassed the database would show as "not intact".
 - A project with an approved quotation can no longer be deleted (mark it lost instead).
 - Screen: "Versions and approvals" card on the project summary; read-only API `GET /api/business/leads/:id/approvals`.
+
+## Step 7: administrator screens, permissions and history
+
+- Already in place from earlier steps: countries, roles and levels (switch on/off, add a role), market rates with sources and history, benchmark per mode, multipliers, overhead, margin, risk allowance, staleness limit, CSV import, tax rules and exchange rates (in the "Tax & currency" tab), administrator accounts with admin and viewer roles.
+- New: every change to settings, a rate switch or a list switch must say why (5+ characters, enforced by the route, kept in the audit log with the person). Adding a rate or role needs no reason: the mandatory source is the justification.
+- New: "Who changed what" on the Global pricing tab (`GET /api/admin/pricing/history`): pricing events from the audit log, newest first, with who, when and why.
+- New: rates download as CSV (`GET /api/admin/pricing/rates/export`, optionally for one country) in the layout the import reads; a cell that starts like a spreadsheet formula is prefixed so it opens as text.
+- Permissions: a viewer can look, read the history and download the CSV; every change is refused (403) on the server, and the screen greys the forms and says so.
+- Not built on purpose: adding a country that is not in the fixed list of 38 (quotation parsing validates against that list), editing an existing rate (history is kept), a second audit table (the existing append-only one is used with a `pricing.` prefix).

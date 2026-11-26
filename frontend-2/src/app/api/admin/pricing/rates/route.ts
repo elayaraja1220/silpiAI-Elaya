@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { adminActor, requireAdmin } from "@/lib/admin-auth";
 import { ValidationError } from "@/lib/business/validate";
 import { apiHandle } from "@/server/http";
-import { addRate, setRateEnabled, type RateInput } from "@/server/pricing-data";
+import { addRate, requireReason, setRateEnabled, type RateInput } from "@/server/pricing-data";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,14 +15,14 @@ export async function POST(request: NextRequest) {
   return apiHandle("PRICING RATE ADD", async () => ({ rate: addRate((await request.json()) as RateInput, adminActor(request)) }));
 }
 
-/** PUT /api/admin/pricing/rates - { id, enabled }: switches one rate on or off. Its figures cannot be changed. Admin only. */
+/** PUT /api/admin/pricing/rates - { id, enabled, reason }: switches one rate on or off. Its figures cannot be changed. Admin only. */
 export async function PUT(request: NextRequest) {
   const denied = requireAdmin(request);
   if (denied) return denied;
   return apiHandle("PRICING RATE SWITCH", async () => {
-    const b = (await request.json()) as { id?: unknown; enabled?: unknown };
+    const b = (await request.json()) as { id?: unknown; enabled?: unknown; reason?: unknown };
     if (typeof b.id !== "number" || typeof b.enabled !== "boolean") throw new ValidationError("id and enabled are required.");
-    setRateEnabled(b.id, b.enabled, adminActor(request));
+    setRateEnabled(b.id, b.enabled, adminActor(request), requireReason(b.reason));
     return { id: b.id, enabled: b.enabled };
   });
 }

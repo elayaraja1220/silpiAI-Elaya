@@ -76,7 +76,7 @@ export function AiAdmin() {
       )}
       {tab === "Payments" && <PaymentsAdmin onNote={flash} onError={fail} />}
       {tab === "Tax & currency" && <TaxAdmin onNote={flash} onError={fail} />}
-      {tab === "Global pricing" && <PricingAdmin onNote={flash} onError={fail} />}
+      {tab === "Global pricing" && <PricingAdmin onNote={flash} onError={fail} readOnly={who?.role === "viewer"} />}
       {tab === "AI" && (
         <>
           <Notice tone="amber">The starting prices and the credit conversion below are proposed values, not verified. Check each price against the provider&apos;s own price page before real customers use them.</Notice>

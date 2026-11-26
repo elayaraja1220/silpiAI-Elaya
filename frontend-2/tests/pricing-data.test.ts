@@ -202,11 +202,15 @@ describe("6. the HTTP doors", () => {
     const add = await rates.POST(req("/api/admin/pricing/rates", { method: "POST", headers: admin, body: gbp({ levelId: "senior", median: 8000, max: 11_000, min: 6000 }) }));
     assert.equal(add.status, 200, await add.clone().text());
     assert.equal((await rates.POST(req("/api/admin/pricing/rates", { method: "POST", headers: admin, body: gbp({ source: "" }) }))).status, 400);
-    assert.equal((await config.PUT(req("/api/admin/pricing/config", { method: "PUT", headers: admin, body: { riskAllowanceBp: 500 } }))).status, 200);
-    assert.equal((await config.PUT(req("/api/admin/pricing/config", { method: "PUT", headers: admin, body: { riskAllowanceBp: 9999 } }))).status, 400);
-    assert.equal((await reference.PUT(req("/api/admin/pricing/reference", { method: "PUT", headers: admin, body: { kind: "country", id: "NP", active: true } }))).status, 200);
+    assert.equal((await config.PUT(req("/api/admin/pricing/config", { method: "PUT", headers: admin, body: { riskAllowanceBp: 500, reason: "Agreed with the finance lead" } }))).status, 200);
+    assert.equal((await config.PUT(req("/api/admin/pricing/config", { method: "PUT", headers: admin, body: { riskAllowanceBp: 600 } }))).status, 400, "a change with no reason is refused");
+    assert.equal((await config.PUT(req("/api/admin/pricing/config", { method: "PUT", headers: admin, body: { riskAllowanceBp: 600, reason: "ok" } }))).status, 400, "a reason of two letters is not a reason");
+    assert.equal((await config.PUT(req("/api/admin/pricing/config", { method: "PUT", headers: admin, body: { riskAllowanceBp: 9999, reason: "Testing the limit" } }))).status, 400);
+    assert.equal((await reference.PUT(req("/api/admin/pricing/reference", { method: "PUT", headers: admin, body: { kind: "country", id: "NP", active: true, reason: "Opening Nepal" } }))).status, 200);
+    assert.equal((await reference.PUT(req("/api/admin/pricing/reference", { method: "PUT", headers: admin, body: { kind: "country", id: "NP", active: false } }))).status, 400, "switching with no reason is refused");
     assert.equal((await importer.POST(req("/api/admin/pricing/rates/import", { method: "POST", headers: admin, body: { csv: "x" } }))).status, 400);
     const changed = a.listAudit({ action: "pricing.config_changed" })[0]!;
+    assert.equal(changed.detail.reason, "Agreed with the finance lead", "the reason is kept with the change");
     assert.ok((changed.detail.before as { riskAllowanceBp: number }).riskAllowanceBp === 0 && (changed.detail.after as { riskAllowanceBp: number }).riskAllowanceBp === 500, "the before and after are recorded");
 
     // a viewer account
@@ -219,5 +223,80 @@ describe("6. the HTTP doors", () => {
     assert.equal((await rates.POST(req("/api/admin/pricing/rates", { method: "POST", cookie, body: gbp({ levelId: "junior" }) }))).status, 403, "but not add a rate");
     assert.equal((await config.PUT(req("/api/admin/pricing/config", { method: "PUT", cookie, body: { riskAllowanceBp: 100 } }))).status, 403, "or change the settings");
     assert.equal((await importer.POST(req("/api/admin/pricing/rates/import", { method: "POST", cookie, body: { csv: "x" } }))).status, 403);
+  });
+});
+
+describe("7. reasons, history and export for the administrator", () => {
+  it("switching a rate off needs a reason, and the history shows who, when and why, newest first", async () => {
+    const { d } = await mods();
+    const rates = await import("@/app/api/admin/pricing/rates/route");
+    const history = await import("@/app/api/admin/pricing/history/route");
+    const row = d.addRate(gbp({ levelId: "expert", median: 12_000, max: 16_000, min: 9000 }) as never, "researcher@test");
+    assert.equal((await rates.PUT(req("/api/admin/pricing/rates", { method: "PUT", headers: admin, body: { id: row.id, enabled: false } }))).status, 400, "no reason, no change");
+    assert.equal(d.listRates({ country: "GB" }).find((r) => r.id === row.id)!.enabled, true, "and nothing changed");
+    assert.equal((await rates.PUT(req("/api/admin/pricing/rates", { method: "PUT", headers: admin, body: { id: row.id, enabled: false, reason: "Survey withdrawn by the publisher" } }))).status, 200);
+    assert.equal((await history.GET(req("/api/admin/pricing/history"))).status, 401, "the history needs the sign-in");
+    const body = await (await history.GET(req("/api/admin/pricing/history", { headers: admin }))).json();
+    const top = body.history[0];
+    assert.deepEqual([top.action, top.actor, top.reason, top.entity], ["pricing.rate_switched", "admin", "Survey withdrawn by the publisher", `market_rate ${row.id}`]);
+    assert.ok(body.history.every((h: { action: string }) => h.action.startsWith("pricing.")), "only pricing changes are in it");
+    assert.ok(body.history.some((h: { action: string; actor: string }) => h.action === "pricing.rate_added" && h.actor === "researcher@test"));
+    const ids = body.history.map((h: { id: number }) => h.id);
+    assert.deepEqual(ids, [...ids].sort((a: number, b: number) => b - a), "newest first");
+  });
+  it("exports the rates as a spreadsheet file in the layout the import reads, safe to open in a spreadsheet", async () => {
+    const { d } = await mods();
+    const exp = await import("@/app/api/admin/pricing/rates/export/route");
+    d.addRate(gbp({ source: "=HYPERLINK(\"http://evil.example\") survey 2026", levelId: "junior", min: 1000, median: 2000, max: 3000, effectiveDate: "2026-02-01" }) as never, "t");
+    assert.equal((await exp.GET(req("/api/admin/pricing/rates/export"))).status, 401);
+    const res = await exp.GET(req("/api/admin/pricing/rates/export?country=GB", { headers: admin }));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /text\/csv/);
+    assert.match(res.headers.get("content-disposition") ?? "", /attachment; filename="silpi-market-rates.csv"/);
+    const csv = await res.text();
+    const lines = csv.trim().split("\r\n");
+    assert.equal(lines[0], "country,role,level,kind,min,median,max,source,source_url,effective_date,entered_by,entered_at,enabled,illustrative");
+    assert.ok(lines.slice(1).every((l) => l.startsWith("GB,")), "only the country asked for");
+    assert.ok(csv.includes("GB,full-stack,mid,freelancer,40.00,55.00,80.00"), "amounts are in pounds, not pence");
+    assert.ok(csv.includes(`"'=HYPERLINK(""http://evil.example"") survey 2026"`) || csv.includes("'=HYPERLINK"), "a source that starts like a formula is neutralised");
+    assert.ok(!lines.some((l) => /,=HYPERLINK/.test(l)), "no cell starts with an equals sign");
+    const all = await (await exp.GET(req("/api/admin/pricing/rates/export", { headers: admin }))).text();
+    assert.ok(all.includes("IN,any,junior,employee,288.46,288.46,288.46"), "India's illustrative rows are marked as such");
+    assert.match(all, /IN,any,junior,employee.*,yes\r\n/);
+  });
+  it("a viewer can download the export and read the history, but still cannot change anything", async () => {
+    const accounts = await import("@/server/admin-accounts");
+    const session = await import("@/app/api/admin/session/route");
+    const exp = await import("@/app/api/admin/pricing/rates/export/route");
+    const history = await import("@/app/api/admin/pricing/history/route");
+    const rates = await import("@/app/api/admin/pricing/rates/route");
+    await accounts.createAdminAccount({ email: "viewer2@pricing.example", name: "Viewer Two", password: "a-correct-horse-battery", role: "viewer" });
+    const login = await session.POST(req("/api/admin/session", { method: "POST", body: { email: "viewer2@pricing.example", password: "a-correct-horse-battery" } }));
+    const cookie = `silpi_admin=${/silpi_admin=([^;]+)/.exec(login.headers.get("set-cookie") ?? "")![1]}`;
+    assert.equal((await exp.GET(req("/api/admin/pricing/rates/export", { cookie }))).status, 200);
+    assert.equal((await history.GET(req("/api/admin/pricing/history", { cookie }))).status, 200);
+    assert.equal((await rates.PUT(req("/api/admin/pricing/rates", { method: "PUT", cookie, body: { id: 1, enabled: false, reason: "trying anyway" } }))).status, 403);
+  });
+  it("an exported file can be loaded back by the import", async () => {
+    const { d } = await mods();
+    const csv = d.exportRates({ country: "GB" });
+    const before = d.listRates({ country: "GB" }).length;
+    const r = d.importRates(csv.replace(/'=HYPERLINK/g, "HYPERLINK"), "t");
+    assert.equal(r.added, before);
+    assert.equal(d.listRates({ country: "GB" }).length, before * 2);
+  });
+});
+
+describe("8. no exported cell can run as a formula", () => {
+  it("a source starting with =, +, - or @ is prefixed so a spreadsheet shows it as text", async () => {
+    const { d } = await mods();
+    const levels = ["junior", "mid", "senior", "expert"];
+    ["=1+1 survey 2026", "+44 survey 2026", "-1 survey 2026", "@sum survey 2026"].forEach((source, i) => d.addRate(gbp({ source, levelId: levels[i], effectiveDate: "2026-03-01", kind: "agency" }) as never, "t"));
+    const rows = d.exportRates({ country: "GB" }).trim().split("\r\n").filter((l) => /survey 2026/.test(l) && /,agency,/.test(l));
+    assert.equal(rows.length, 4);
+    for (const l of rows) {
+      const source = l.split(",")[7]!;
+      assert.match(source, /^'[=+@-]/, source);
+    }
   });
 });

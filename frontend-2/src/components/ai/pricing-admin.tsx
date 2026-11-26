@@ -18,26 +18,39 @@ const money = (minor: number, currency: string) => (minor / 10 ** minorDigits(cu
 const sel = "rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500";
 
 /** Global pricing: which benchmark powers each quotation mode, the multipliers, every market rate with its source, and the lists. */
-export function PricingAdmin({ onNote, onError }: { onNote: (m: string) => void; onError: (e: unknown) => void }) {
+export function PricingAdmin({ onNote, onError, readOnly = false }: { onNote: (m: string) => void; onError: (e: unknown) => void; readOnly?: boolean }) {
+  const [reason, setReason] = useState("");
+  const [rev, setRev] = useState(0);
   const [data, setData] = useState<{ reference: Ref; config: PricingConfig; rates: MarketRate[] } | null>(null);
   const [country, setCountry] = useState("");
   const load = useCallback(() => { api<{ reference: Ref; config: PricingConfig; rates: MarketRate[] }>(`/api/admin/pricing${country ? `?country=${country}` : ""}`).then(setData).catch(onError); }, [country, onError]);
   useEffect(load, [load]);
   if (!data) return <Card className="flex items-center gap-2 text-sm text-slate-500"><Loader2 size={15} className="animate-spin" /> Loading...</Card>;
-  const done = (m: string) => { onNote(m); load(); };
+  const done = (m: string) => { onNote(m); setRev((n) => n + 1); load(); };
+  const why = reason.trim().length >= 5 ? reason.trim() : "";
   return (
     <div className="space-y-5">
+      {readOnly && <Notice tone="amber">You are signed in as a viewer: you can look at everything and download the rates, but not change anything.</Notice>}
+      <Card className="space-y-2">
+        <label className="block text-xs font-medium text-slate-700">Why are you making the next change? <span className="font-normal text-slate-500">(required for settings and switches; kept in the history with your name)</span>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="For example: new ONS survey published" className={inputClass + " mt-1 block"} aria-label="Reason for the change" disabled={readOnly} />
+        </label>
+        <p className="text-[11px] text-slate-500">Tax rules and exchange rates are in the &quot;Tax &amp; currency&quot; tab. Prices for clients abroad are in Business &amp; pricing.</p>
+      </Card>
+      <fieldset disabled={readOnly} className="space-y-5 border-0 p-0 disabled:opacity-60">
       <Notice tone="amber">No market rate is built in. Every figure below was entered by a person with its source. Where a country, role and level has no figure, quotations fall back to a price typed by hand. India&apos;s three starting wages are an illustrative assumption, not a market rate.</Notice>
-      <Settings config={data.config} onDone={done} onError={onError} />
-      <Rates data={data} country={country} setCountry={setCountry} onDone={done} onError={onError} />
+      <Settings config={data.config} onDone={done} onError={onError} reason={why} />
+      <Rates data={data} country={country} setCountry={setCountry} onDone={done} onError={onError} reason={why} />
       <AddRate reference={data.reference} onDone={done} onError={onError} />
       <Import onDone={done} onError={onError} />
-      <Lists reference={data.reference} onDone={done} onError={onError} />
+      <Lists reference={data.reference} onDone={done} onError={onError} reason={why} />
+      </fieldset>
+      <History rev={rev} onError={onError} />
     </div>
   );
 }
 
-function Settings({ config, onDone, onError }: { config: PricingConfig; onDone: (m: string) => void; onError: (e: unknown) => void }) {
+function Settings({ config, onDone, onError, reason }: { config: PricingConfig; onDone: (m: string) => void; onError: (e: unknown) => void; reason: string }) {
   const [c, setC] = useState(config);
   useEffect(() => setC(config), [config]);
   const pct = (bp: number) => String(bp / 100);
@@ -73,12 +86,13 @@ function Settings({ config, onDone, onError }: { config: PricingConfig; onDone: 
         <label className="text-xs text-slate-600">Paid hours in a year<input value={String(c.hoursPerYear)} onChange={(e) => setC({ ...c, hoursPerYear: Number(e.target.value.replace(/\D/g, "")) })} className={inputClass + " mt-1 block !w-28"} aria-label="Paid hours per year" /></label>
       </div>
       {atCost.length > 0 && <Notice tone="red">The employee wage is selected for {atCost.join(" and ")} quotations with a multiplier of 1.00 and no overhead or margin: clients would be charged what the wage costs you, and you would earn nothing above it.</Notice>}
-      <Button onClick={() => api("/api/admin/pricing/config", { method: "PUT", body: c }).then(() => onDone("Pricing settings saved.")).catch(onError)}>Save settings</Button>
+      <Button disabled={!reason} onClick={() => api("/api/admin/pricing/config", { method: "PUT", body: { ...c, reason } }).then(() => onDone("Pricing settings saved.")).catch(onError)}>Save settings</Button>
+      {!reason && <p className="text-[11px] text-slate-500">Write the reason at the top of this tab to save.</p>}
     </Card>
   );
 }
 
-function Rates({ data, country, setCountry, onDone, onError }: { data: { reference: Ref; config: PricingConfig; rates: MarketRate[] }; country: string; setCountry: (c: string) => void; onDone: (m: string) => void; onError: (e: unknown) => void }) {
+function Rates({ data, country, setCountry, onDone, onError, reason }: { data: { reference: Ref; config: PricingConfig; rates: MarketRate[] }; country: string; setCountry: (c: string) => void; onDone: (m: string) => void; onError: (e: unknown) => void; reason: string }) {
   const roles = useMemo(() => new Map(data.reference.roles.map((r) => [r.id, r.label])), [data]);
   const levels = useMemo(() => new Map(data.reference.levels.map((l) => [l.id, l.label])), [data]);
   const now = todayIso();
@@ -90,6 +104,7 @@ function Rates({ data, country, setCountry, onDone, onError }: { data: { referen
           <h2 className="text-sm font-semibold text-slate-900">Market rates, with their sources</h2>
           <p className="mt-1 text-xs leading-5 text-slate-600">Newest first. A figure is never edited: add a new one with a later start date and the old one stays here as history. Amounts are per hour, in the country&apos;s currency.</p>
         </div>
+        <a href={"/api/admin/pricing/rates/export" + (country ? "?country=" + country : "")} className="text-xs text-indigo-700 underline" download>Download as a spreadsheet (CSV)</a>
         <label className="text-xs text-slate-600">Country<select value={country} onChange={(e) => setCountry(e.target.value)} className={sel + " mt-1 block"} aria-label="Filter by country"><option value="">All</option>{data.reference.countries.map((c) => <option key={c.code} value={c.code}>{flagOf(c.code)} {c.name}</option>)}</select></label>
       </div>
       {data.rates.length === 0 ? <p className="text-sm text-slate-500">No rates yet.</p> : (
@@ -105,7 +120,7 @@ function Rates({ data, country, setCountry, onDone, onError }: { data: { referen
                   <td className="py-2 pr-3 text-right tabular-nums">{r.currency} {money(r.minMinor, r.currency)} / <b>{money(r.medianMinor, r.currency)}</b> / {money(r.maxMinor, r.currency)}</td>
                   <td className="py-2 pr-3 tabular-nums">{r.effectiveDate}{age(r.effectiveDate) > data.config.staleAfterDays && <span className="ml-1"><Pill tone="amber">out of date</Pill></span>}</td>
                   <td className="max-w-xs py-2 pr-3 text-slate-600">{r.source}{r.sourceUrl && <> · <a href={r.sourceUrl} target="_blank" rel="noreferrer noopener" className="text-indigo-700 underline">link</a></>}{r.illustrative && <span className="ml-1"><Pill tone="amber">illustrative</Pill></span>}<span className="block text-[10px] text-slate-400">entered by {r.enteredBy || "?"}</span></td>
-                  <td className="py-2"><Button variant="ghost" className="px-2 py-1 text-[11px]" onClick={() => api("/api/admin/pricing/rates", { method: "PUT", body: { id: r.id, enabled: !r.enabled } }).then(() => onDone(r.enabled ? "Rate switched off." : "Rate switched on.")).catch(onError)}>{r.enabled ? "Switch off" : "Switch on"}</Button></td>
+                  <td className="py-2"><Button variant="ghost" className="px-2 py-1 text-[11px]" disabled={!reason} onClick={() => api("/api/admin/pricing/rates", { method: "PUT", body: { id: r.id, enabled: !r.enabled, reason } }).then(() => onDone(r.enabled ? "Rate switched off." : "Rate switched on.")).catch(onError)}>{r.enabled ? "Switch off" : "Switch on"}</Button></td>
                 </tr>
               ))}
             </tbody>
@@ -162,11 +177,11 @@ function Import({ onDone, onError }: { onDone: (m: string) => void; onError: (e:
   );
 }
 
-function Lists({ reference, onDone, onError }: { reference: Ref; onDone: (m: string) => void; onError: (e: unknown) => void }) {
+function Lists({ reference, onDone, onError, reason }: { reference: Ref; onDone: (m: string) => void; onError: (e: unknown) => void; reason: string }) {
   const [role, setRole] = useState({ id: "", label: "" });
-  const flip = (kind: string, id: string, active: boolean) => api("/api/admin/pricing/reference", { method: "PUT", body: { kind, id, active } }).then(() => onDone(active ? "Switched on." : "Switched off for new quotations.")).catch(onError);
+  const flip = (kind: string, id: string, active: boolean) => api("/api/admin/pricing/reference", { method: "PUT", body: { kind, id, active, reason } }).then(() => onDone(active ? "Switched on." : "Switched off for new quotations.")).catch(onError);
   const chip = (kind: string, id: string, label: string, active: boolean) => (
-    <button key={id} type="button" onClick={() => void flip(kind, id, !active)} aria-pressed={active} title={active ? "Click to switch off for new quotations" : "Click to switch on"} className={"rounded-full border px-2.5 py-1 text-[11px] " + (active ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-400 line-through")}>{label}</button>
+    <button key={id} type="button" disabled={!reason} onClick={() => void flip(kind, id, !active)} aria-pressed={active} title={active ? "Click to switch off for new quotations" : "Click to switch on"} className={"rounded-full border px-2.5 py-1 text-[11px] " + (active ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 text-slate-400 line-through")}>{label}</button>
   );
   return (
     <Card className="space-y-3">
@@ -182,6 +197,30 @@ function Lists({ reference, onDone, onError }: { reference: Ref; onDone: (m: str
         <label className="text-xs text-slate-600">Name<input value={role.label} onChange={(e) => setRole({ ...role, label: e.target.value })} placeholder="Data Engineer" className={inputClass + " mt-1 block !w-48"} aria-label="New role name" /></label>
         <Button variant="ghost" disabled={role.id.length < 2 || role.label.length < 2} onClick={() => api("/api/admin/pricing/reference", { method: "POST", body: role }).then(() => { setRole({ id: "", label: "" }); onDone("Role added."); }).catch(onError)}>Add role</Button>
       </div>
+    </Card>
+  );
+}
+
+type Entry = { id: number; at: string; actor: string; action: string; entity: string; reason: string };
+const ACTIONS: Record<string, string> = { "pricing.rate_added": "Rate added", "pricing.rates_imported": "Rates loaded from CSV", "pricing.rate_switched": "Rate switched", "pricing.config_changed": "Settings changed", "pricing.reference_switched": "List item switched", "pricing.role_added": "Role added" };
+
+/** Who changed what in the pricing, when and why (read only, newest first). */
+function History({ rev, onError }: { rev: number; onError: (e: unknown) => void }) {
+  const [rows, setRows] = useState<Entry[] | null>(null);
+  useEffect(() => { api<{ history: Entry[] }>("/api/admin/pricing/history?limit=50").then((r) => setRows(r.history)).catch(onError); }, [rev, onError]);
+  return (
+    <Card className="space-y-3">
+      <h2 className="text-sm font-semibold text-slate-900">Who changed what</h2>
+      {!rows ? <p className="text-sm text-slate-500">Loading...</p> : rows.length === 0 ? <p className="text-sm text-slate-500">No pricing change has been made yet.</p> : (
+        <ol className="space-y-1.5 text-xs" data-testid="pricing-history">
+          {rows.map((h) => (
+            <li key={h.id} className="rounded-lg border border-slate-100 px-3 py-1.5">
+              <span className="font-medium text-slate-800">{ACTIONS[h.action] ?? h.action}</span> <span className="text-slate-500">{h.entity}</span>
+              <span className="block text-slate-500">{new Date(h.at).toLocaleString("en-IN")} · {h.actor}{h.reason && <> · &quot;{h.reason}&quot;</>}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </Card>
   );
 }

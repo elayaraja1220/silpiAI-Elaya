@@ -4,7 +4,7 @@ import { ANY_ROLE, BENCHMARK_KINDS, DEFAULT_PRICING_CONFIG, rateProblems, resolv
 import { quoteMoney } from "@/lib/business/pricing";
 import type { Client, FixedBasis, MarketSnapshot, RateCard, Requirement } from "@/lib/business/types";
 import { ValidationError } from "@/lib/business/validate";
-import { recordAuditIn } from "@/server/audit";
+import { listAudit, recordAuditIn } from "@/server/audit";
 
 /**
  * Global pricing data: the reference lists, the market rates (every figure with its source) and the pricing settings. Server only.
@@ -36,12 +36,12 @@ export function listReference(opts: { includeInactive?: boolean } = {}): Referen
 const TABLES = { country: "pricing_countries", currency: "pricing_currencies", role: "pricing_roles", level: "pricing_levels" } as const;
 const KEY = { country: "code", currency: "code", role: "id", level: "id" } as const;
 /** Switches a country, currency, role or level on or off for new quotations. Nothing is deleted: rates already entered stay. */
-export function setActive(kind: keyof typeof TABLES, id: string, active: boolean, by: string): void {
+export function setActive(kind: keyof typeof TABLES, id: string, active: boolean, by: string, reason = ""): void {
   if (kind === "role" && id === ANY_ROLE) throw bad('The "any role" entry is needed for fallbacks and cannot be switched off.');
   transaction((db) => {
     const r = db.prepare(`UPDATE ${TABLES[kind]} SET active = ? WHERE ${KEY[kind]} = ?`).run(active ? 1 : 0, id);
     if (r.changes === 0) throw bad(`That ${kind} does not exist.`);
-    recordAuditIn(db, { actor: by, action: "pricing.reference_switched", entityType: kind, entityId: id, detail: { active } });
+    recordAuditIn(db, { actor: by, action: "pricing.reference_switched", entityType: kind, entityId: id, detail: { active, ...(reason ? { reason } : {}) } });
   });
 }
 export function addRole(input: { id: unknown; label: unknown }, by: string): void {
@@ -79,12 +79,12 @@ export function normalise(input: Partial<PricingConfig>): PricingConfig {
   if (!Number.isSafeInteger(hours) || hours < 1000 || hours > 3000) throw bad("Paid hours in a year must be 1,000 to 3,000.");
   return { benchmark: { hourly: kind(input.benchmark?.hourly ?? d.benchmark.hourly, "The hourly benchmark"), fixed: kind(input.benchmark?.fixed ?? d.benchmark.fixed, "The fixed-price benchmark") }, billing, riskAllowanceBp: bp(input.riskAllowanceBp ?? d.riskAllowanceBp, "The risk allowance", 5000), staleAfterDays: days, hoursPerYear: hours };
 }
-export function savePricingConfig(input: Partial<PricingConfig>, by: string): PricingConfig {
+export function savePricingConfig(input: Partial<PricingConfig>, by: string, reason = ""): PricingConfig {
   const next = normalise({ ...getPricingConfig(), ...input, benchmark: { ...getPricingConfig().benchmark, ...(input.benchmark ?? {}) }, billing: { ...getPricingConfig().billing, ...(input.billing ?? {}) } });
   transaction((db) => {
     const before = getPricingConfig();
     db.prepare("INSERT INTO pricing_configurations (key, value, updated_at, updated_by) VALUES ('global', ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by").run(JSON.stringify(next), new Date().toISOString(), by);
-    recordAuditIn(db, { actor: by, action: "pricing.config_changed", entityType: "pricing_configuration", entityId: "global", detail: { before, after: next } });
+    recordAuditIn(db, { actor: by, action: "pricing.config_changed", entityType: "pricing_configuration", entityId: "global", detail: { before, after: next, ...(reason ? { reason } : {}) } });
   });
   return next;
 }
@@ -129,12 +129,40 @@ function insertRate(db: ReturnType<typeof getDb>, input: RateInput, by: string):
 }
 
 /** Switches one benchmark row on or off (an off row is ignored when pricing). Its figures cannot be changed. */
-export function setRateEnabled(id: number, enabled: boolean, by: string): void {
+export function setRateEnabled(id: number, enabled: boolean, by: string, reason = ""): void {
   transaction((db) => {
     const r = db.prepare("UPDATE country_market_rates SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
     if (r.changes === 0) throw bad("That rate does not exist.");
-    recordAuditIn(db, { actor: by, action: "pricing.rate_switched", entityType: "market_rate", entityId: id, detail: { enabled } });
+    recordAuditIn(db, { actor: by, action: "pricing.rate_switched", entityType: "market_rate", entityId: id, detail: { enabled, ...(reason ? { reason } : {}) } });
   });
+}
+
+/** Every change to a price setting says why, so the history can be read later. Used by the administrator routes. */
+export function requireReason(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (text.length < 5) throw bad("Say why you are making this change (a few words): it is kept in the history.");
+  return text.slice(0, 300);
+}
+
+const csvText = (v: string) => {
+  const safe = /^[=+@\t\r-]/.test(v) ? `'${v}` : v; // a spreadsheet must never run a cell as a formula
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+};
+
+/** The rates as CSV in the same layout the import reads (amounts in the main unit of the currency), so they can be reviewed in a spreadsheet. */
+export function exportRates(opts: { country?: string } = {}): string {
+  const head = "country,role,level,kind,min,median,max,source,source_url,effective_date,entered_by,entered_at,enabled,illustrative";
+  const lines = listRates({ country: opts.country, limit: 5000 }).map((r) => {
+    const d = minorDigits(r.currency);
+    const amount = (minor: number) => (minor / 10 ** d).toFixed(d);
+    return [r.country, r.roleId, r.levelId, r.kind, amount(r.minMinor), amount(r.medianMinor), amount(r.maxMinor), csvText(r.source), csvText(r.sourceUrl), r.effectiveDate, csvText(r.enteredBy), r.enteredAt, r.enabled ? "yes" : "no", r.illustrative ? "yes" : "no"].join(",");
+  });
+  return [head, ...lines].join("\r\n") + "\r\n";
+}
+
+/** The pricing changes written to the audit log, newest first. */
+export function pricingHistory(limit = 100): { id: number; at: string; actor: string; action: string; entity: string; reason: string; detail: Record<string, unknown> }[] {
+  return listAudit({ action: "pricing.", limit }).map((e) => ({ id: e.id, at: e.at, actor: e.actor, action: e.action, entity: `${e.entityType} ${e.entityId}`.trim(), reason: typeof e.detail.reason === "string" ? e.detail.reason : "", detail: e.detail }));
 }
 
 /** "45.5" in pounds is 4550 pence: exact, from the text, in the currency's own number of decimals. */
