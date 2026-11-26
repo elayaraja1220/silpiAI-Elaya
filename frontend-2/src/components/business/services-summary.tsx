@@ -4,7 +4,7 @@ import { useMoney } from "./money-context";
 import { CHOICE_LABELS } from "@/lib/business/services";
 import type { SeparateServices, ServiceEstimate } from "@/lib/business/types";
 
-export const SEPARATE_NOTICE = "Domain and hosting charges are not included in website development pricing. Buy them separately from a provider such as Hostinger or GoDaddy.";
+export const SEPARATE_NOTICE = "Domain and hosting charges are not included in website development pricing. Buy them separately from a domain and hosting provider of your choice.";
 
 /**
  * B. Domain and C. Hosting: separately billed services, visually distinct

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { SHOW_HOURLY_ENGAGEMENTS } from "@/lib/feature-flags";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Printer, RefreshCw, RotateCcw, Trash2, XCircle } from "lucide-react";
 
@@ -122,6 +123,8 @@ export function NewRequirementPage() {
   const [billing, setBilling] = useState<BillingMode>("fixed");
   const cancel = () => router.push("/clients");
   const created = (lead: Lead) => router.push(`/clients/${lead.id}`);
+  // The hourly choice is switched off for now (src/lib/feature-flags.ts): the form opens straight on the fixed-price form.
+  if (!SHOW_HOURLY_ENGAGEMENTS) return <RequirementWizard onCancel={cancel} onCreated={created} />;
   // Both stay mounted so a half-filled fixed-price form is not lost when you look at the other one.
   return (
     <div className="space-y-5">

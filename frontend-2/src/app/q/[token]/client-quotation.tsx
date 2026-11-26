@@ -134,7 +134,7 @@ export function ClientQuotation({ token }: { token: string }) {
                   >
                     Pay with UPI app
                   </a>
-                  <p className="mt-2 text-[11px] text-slate-400">The button works on a phone with GPay, PhonePe or Paytm. On a computer, pay to the UPI ID above from your phone.</p>
+                  <p className="mt-2 text-[11px] text-slate-400">The button works on a phone with any UPI app. On a computer, pay to the UPI ID above from your phone.</p>
                 </div>
               )}
               {view.payment.bankDetails && (

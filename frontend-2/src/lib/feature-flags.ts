@@ -9,3 +9,11 @@
  * public quotation link is a separate widget and is not affected. All chat code, routes and saved conversations are kept.
  */
 export const SHOW_TEAM_LIVE_CHAT = false;
+
+/**
+ * The "Hourly basis: consultant / freelancer" choice on the studio's quotation form (/clients/quote), and its hourly engagement form
+ * (src/components/business/hourly-engagement-form.tsx). Hidden for now: the studio quotes fixed prices. While it is false the form opens
+ * straight on the fixed-price form. Hourly quotations already made still open and work as before, and all hourly code and data are kept.
+ * Clients never see the hourly choice, whatever this says.
+ */
+export const SHOW_HOURLY_ENGAGEMENTS = false;

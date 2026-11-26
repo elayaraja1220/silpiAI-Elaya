@@ -229,7 +229,7 @@ async function main() {
   await step("a visitor who asks for a quotation is sent to sign in, creates an account, and lands on the choice page", async () => {
     await run("fetch('/api/auth/logout', { method: 'POST' })");
     await go(`${BASE}/clients/new`);
-    await waitFor("the sign-in page", async () => (await run("location.pathname + location.search")) === "/sign-in?next=%2Fclients%2Fnew", 60000);
+    await waitFor("the sign-in page", async () => (await run("location.pathname + location.search")) === "/sign-in", 60000); // the destination is kept, but the address bar shows a plain /sign-in
     await mustClick("Create account", "[role=tab]");
     await mustFill("input[autocomplete=name]", "Priya Client");
     await mustFill("input[type=email]", "priya@e2e.test");
@@ -294,6 +294,38 @@ async function main() {
       await waitText("Sign in to SILPI AI", 60000);
       assert(await fitsWidth(), "/sign-in is wider than a phone screen");
     } finally { await desktop(); }
+  });
+
+  await step("the front page: an idea typed by a visitor waits in the fixed-price form after they sign up", async () => {
+    await run("fetch('/api/auth/logout', { method: 'POST' })");
+    await go(`${BASE}/ai`);
+    await waitText("Get a fixed-price quotation", 60000);
+    // The page is still starting up when its text appears; type until the box keeps the words.
+    await waitFor("the idea box to keep the text", async () => { await run("(() => { const el = document.getElementById('landing-brief'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(el, 'A website for my bakery with an order form'); el.dispatchEvent(new Event('input', { bubbles: true })); })()"); await sleep(300); return run("document.getElementById('landing-brief').value === 'A website for my bakery with an order form'"); }, 30000);
+    await mustClick("Get a fixed-price quotation", "button");
+    await waitFor("the sign-in page, coming back to the fixed-price form", async () => (await run("location.pathname + location.search")) === "/sign-in", 60000);
+    await mustClick("Create account", "[role=tab]");
+    await mustFill("input[autocomplete=name]", "Bala Baker");
+    await mustFill("input[type=email]", "bala@e2e.test");
+    await mustFill("input[type=password]", "e2e-long-phrase-9x");
+    await run("document.querySelector('input[type=checkbox]').click()");
+    await submit();
+    await waitText("We kept what you wrote on the front page", 60000);
+    await waitFor("the notes to hold the idea", () => run("[...document.querySelectorAll('textarea')].some(x => x.value === 'A website for my bakery with an order form')"), 30000);
+  });
+
+  await step("the front page: an idea typed by a visitor waits in the AI builder after they sign in", async () => {
+    await run("fetch('/api/auth/logout', { method: 'POST' })");
+    await go(`${BASE}/ai`);
+    await waitText("Build it with AI", 60000);
+    await waitFor("the idea box to keep the text", async () => { await run("(() => { const el = document.getElementById('landing-brief'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(el, 'A todo list app'); el.dispatchEvent(new Event('input', { bubbles: true })); })()"); await sleep(300); return run("document.getElementById('landing-brief').value === 'A todo list app'"); }, 30000);
+    await run("(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim().startsWith('Build it with AI')); b.click(); })()");
+    await waitFor("the sign-in page, coming back to the builder", async () => (await run("location.pathname + location.search")) === "/sign-in", 60000);
+    await mustFill("input[type=email]", "bala@e2e.test");
+    await mustFill("input[type=password]", "e2e-long-phrase-9x");
+    await submit();
+    await waitFor("the builder", async () => (await run("location.pathname")) === "/ai/builder", 60000);
+    await waitFor("the brief to hold the idea", () => run("[...document.querySelectorAll('textarea')].some(x => x.value === 'A todo list app')"), 60000);
   });
 
   await step("the studio sends a non-administrator to the administrator sign-in, and opens for an administrator without recurring income on the Overview", async () => {

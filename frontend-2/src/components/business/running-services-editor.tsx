@@ -112,7 +112,7 @@ function Body({ leadId }: { leadId: string }) {
               <div className="grid gap-3 rounded-lg border border-amber-400/15 bg-amber-500/[.03] p-3 sm:grid-cols-2 lg:grid-cols-4">
                 <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200/80 sm:col-span-2 lg:col-span-4"><Lock size={10} /> Internal: never shown to the client</p>
                 <label className={label}>Provider
-                  <input aria-label={`Provider ${s.id}`} value={s.provider} onChange={(e) => update(s.id, { provider: e.target.value })} className={field} maxLength={120} placeholder="e.g. Hostinger" />
+                  <input aria-label={`Provider ${s.id}`} value={s.provider} onChange={(e) => update(s.id, { provider: e.target.value })} className={field} maxLength={120} placeholder="Provider name" />
                 </label>
                 <label className={label}>Provider actual cost (₹)
                   <input aria-label={`Provider cost ${s.id}`} type="number" min={0} value={s.providerCost ?? ""} onChange={(e) => update(s.id, { providerCost: num(e.target.value) })} className={field} placeholder="Unknown" />

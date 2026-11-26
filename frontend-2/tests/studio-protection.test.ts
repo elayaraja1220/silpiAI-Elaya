@@ -150,6 +150,6 @@ describe("6. no public page links to an administrator area", () => {
   it("the sign-in page exists, is not indexed, and returns only to this site", () => {
     const page = read("src/app/admin/sign-in/page.tsx");
     assert.match(page, /index: false/);
-    assert.match(read("src/components/ai/admin-sign-in-screen.tsx"), /safeNext\(/);
+    assert.match(read("src/components/ai/admin-sign-in-screen.tsx"), /readEntry\(params, "silpi:admin-next", "\/"\)/);
   });
 });

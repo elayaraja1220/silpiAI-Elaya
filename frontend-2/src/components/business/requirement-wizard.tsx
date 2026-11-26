@@ -203,7 +203,7 @@ export type ClientRequest = { leadId: string; token: string; quotationNumber: st
  * the cost, profit and running-cost panel, the market-rate basis, the technology recommendations (the client chooses technology on their quotation page) and the
  * cost of reading their document. The server prices the quotation either way.
  */
-export function RequirementWizard({ onCreated, onCancel, mode = "studio", defaults, onClientCreated }: { onCreated: (lead: Lead) => void; onCancel: () => void; mode?: "studio" | "client"; defaults?: Partial<Client>; onClientCreated?: (r: ClientRequest) => void }) {
+export function RequirementWizard({ onCreated, onCancel, mode = "studio", defaults, onClientCreated, initialBrief = "" }: { onCreated: (lead: Lead) => void; onCancel: () => void; mode?: "studio" | "client"; defaults?: Partial<Client>; onClientCreated?: (r: ClientRequest) => void; initialBrief?: string }) {
   const isClient = mode === "client";
   const apiBase = isClient ? "/api/workspace/fixed-price" : "/api/business";
   const [rates, setRates] = useState<RateCard | null>(null);
@@ -212,7 +212,8 @@ export function RequirementWizard({ onCreated, onCancel, mode = "studio", defaul
   const [existing, setExisting] = useState<string[]>([]);
   const [step, setStep] = useState(0);
   const [client, setClient] = useState<Client>(() => ({ ...emptyClient, ...(defaults ?? {}) }));
-  const [req, setReq] = useState<Requirement>(emptyRequirement);
+  // What the client typed on the front page, if anything: it is the summary until a document is analysed, and the notes the analysis starts from.
+  const [req, setReq] = useState<Requirement>(() => (initialBrief.trim() ? { ...emptyRequirement, summary: initialBrief.trim() } : emptyRequirement));
   const [tier, setTier] = useState<Tier | null>(null);
   const [pageDraft, setPageDraft] = useState("");
   const [pageNote, setPageNote] = useState("");
@@ -496,7 +497,7 @@ export function RequirementWizard({ onCreated, onCancel, mode = "studio", defaul
 
         <Card className="space-y-5">
           {step === 0 && analysis && budgetBlock}
-          {step === 0 && !analysis && <DocumentAnalyzer endpoint={`${apiBase}/analyze`} onDraft={applyAnalysis}>{budgetBlock}</DocumentAnalyzer>}
+          {step === 0 && !analysis && <DocumentAnalyzer endpoint={`${apiBase}/analyze`} initialNotes={initialBrief} onDraft={applyAnalysis}>{budgetBlock}</DocumentAnalyzer>}
           {analysis && (step === 0 || step === STEPS.length - 1) && <AnalysisNotes clientMode={isClient} analysis={analysis} insights={req.insights} onClear={() => setAnalysis(null)} />}
 
           {/* 1. Requirement: what the client wants and the one budget question */}
@@ -1006,7 +1007,7 @@ export function RequirementWizard({ onCreated, onCancel, mode = "studio", defaul
               <div className="space-y-1 rounded-xl border border-dashed border-white/10 px-3 py-2.5 text-xs text-slate-400">
                 <div className="flex justify-between gap-3"><span>Domain name</span><span className="text-slate-500">Not included</span></div>
                 <div className="flex justify-between gap-3"><span>Hosting</span><span className="text-slate-500">Not included</span></div>
-                <p className="pt-1 text-[11px] text-slate-500">Buy separately, for example from Hostinger or GoDaddy.</p>
+                <p className="pt-1 text-[11px] text-slate-500">Bought separately from a domain and hosting provider of the client's choice.</p>
               </div>
               {estimate.deferred && <p className="text-[11px] text-amber-200/80">Phase 2 (not priced): {estimate.deferred.modules.join(", ")}</p>}
             </div>
@@ -1017,7 +1018,7 @@ export function RequirementWizard({ onCreated, onCancel, mode = "studio", defaul
               <div className="space-y-0.5 pt-2 text-xs">
                 <div className="flex justify-between gap-3"><span>Domain name</span><span>Not included</span></div>
                 <div className="flex justify-between gap-3"><span>Hosting</span><span>Not included</span></div>
-                <p className="pt-1 text-[11px] text-slate-500">Buy separately, for example from Hostinger or GoDaddy.</p>
+                <p className="pt-1 text-[11px] text-slate-500">Bought separately from a domain and hosting provider of the client's choice.</p>
               </div>
               <p className="pt-2 text-xs">The estimate appears after the document is analysed or the requirement is filled in.</p>
             </div>

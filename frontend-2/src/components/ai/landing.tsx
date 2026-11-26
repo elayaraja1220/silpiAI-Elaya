@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AI_IDEA_KEY, FIXED_IDEA_KEY, keepIdea } from "@/lib/pending-idea";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, ChevronDown, Coins, FileCode2, ListChecks, MessageSquare, ShieldCheck, Undo2 } from "lucide-react";
@@ -17,7 +18,6 @@ import { FlowMock, LimitMock, MeterMock, PlanMock, PrivacyMock, TierMock, ChatMo
  * administrator's plans, never typed here.
  */
 
-const BRIEF_KEY = "silpi:brief";
 const EXAMPLES = ["A one-page website for my bakery", "A portfolio site for a photographer", "A booking page for a yoga studio"];
 
 type Plan = { id: string; name: string; description: string; monthlyPricePaise: number | null; annualPricePaise: number | null; monthlyPriceUsdCents: number | null; annualPriceUsdCents: number | null; monthlyPriceGbpPence: number | null; annualPriceGbpPence: number | null; monthlyCreditUnits: number; maxActiveProjects: number | null; isCustom: boolean; family: string | null };
@@ -71,10 +71,14 @@ export function Landing() {
   const membersOf = (h: Plan) => (h.family ? (plans ?? []).filter((p) => p.family === h.family).sort((a, b) => a.monthlyCreditUnits - b.monthlyCreditUnits) : [h]);
   const chosen = (h: Plan) => membersOf(h).find((m) => m.id === sizes[h.id]) ?? h;
 
-  /** Keep what was typed and carry it through sign-in, so the first thing the person wrote is waiting in the builder. */
+  /** Keep what was typed and carry it through sign-in, so the first thing the person wrote is waiting in the path they chose. No AI runs before sign-in. */
   const start = (text = brief) => {
-    try { if (text.trim()) sessionStorage.setItem(BRIEF_KEY, text.trim()); } catch { /* private mode: they simply retype it */ }
-    router.push("/ai/sign-in");
+    keepIdea(AI_IDEA_KEY, text);
+    router.push("/ai/builder");
+  };
+  const quote = (text = brief) => {
+    keepIdea(FIXED_IDEA_KEY, text);
+    router.push("/clients/new/fixed-price");
   };
 
   return (
@@ -123,11 +127,13 @@ export function Landing() {
           <form onSubmit={(e) => { e.preventDefault(); start(); }} className="silpi-float mx-auto mt-10 max-w-2xl rounded-3xl border border-slate-200 bg-white p-3 text-left shadow-[0_20px_60px_-15px_rgba(79,70,229,0.35)]" aria-label="Start a project">
             <label htmlFor="landing-brief" className="sr-only">What should SILPI AI build?</label>
             <textarea id="landing-brief" value={brief} onChange={(e) => setBrief(e.target.value)} rows={3} maxLength={4000} placeholder="Describe what you want to build, for example a one-page website for my bakery..." className="w-full resize-none rounded-2xl bg-transparent px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none" />
-            <div className="flex flex-wrap items-center justify-between gap-2 px-1 pt-1">
-              <span className="text-xs text-slate-400">Free Demo mode included</span>
-              <button type="submit" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">Start building <ArrowRight size={15} /></button>
+            <div className="flex flex-wrap items-center justify-end gap-2 px-1 pt-1" data-testid="idea-actions">
+              <button type="button" onClick={() => quote()} className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-medium text-slate-900 transition hover:border-indigo-400 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">Get a fixed-price quotation</button>
+              <button type="submit" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2">Build it with AI <ArrowRight size={15} /></button>
             </div>
           </form>
+          <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-500" data-testid="idea-explain">We build it for you at a fixed price, or you build it yourself with our AI. You sign in first; nothing is charged until you choose to.</p>
+
           <div className="mt-5 flex flex-wrap justify-center gap-2">
             {EXAMPLES.map((x) => <button key={x} onClick={() => { setBrief(x); document.getElementById("landing-brief")?.focus(); }} className="rounded-full border border-slate-200 bg-white/80 px-3 py-1.5 text-xs text-slate-600 backdrop-blur transition hover:border-indigo-300 hover:text-indigo-700">{x}</button>)}
           </div>

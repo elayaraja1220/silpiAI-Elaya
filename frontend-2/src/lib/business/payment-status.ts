@@ -17,7 +17,7 @@ export function paymentStatus(quotation: Quotation | undefined, payments: Paymen
   };
 }
 
-/** UPI deep link: opens GPay / PhonePe / Paytm on a phone with the amount filled in. */
+/** UPI deep link: opens any UPI app on a phone with the amount filled in. */
 export function upiLink(upiId: string, payee: string, amount: number, note: string): string {
   const params = new URLSearchParams({ pa: upiId, pn: payee.slice(0, 50), am: amount.toFixed(2), cu: "INR", tn: note.slice(0, 50) });
   return `upi://pay?${params.toString()}`;

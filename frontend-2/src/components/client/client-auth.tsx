@@ -7,9 +7,10 @@ import { CheckCircle2, Command, Facebook, Loader2, Mail } from "lucide-react";
 
 import { CLIENT_HOME } from "@/lib/client-auth";
 import { isOAuthError, OAUTH_ERRORS } from "@/lib/oauth-providers";
-import { safeNext } from "@/lib/safe-next";
+import { cleanAddress, forgetEntry, readEntry } from "@/lib/clean-address";
 
 type Mode = "signin" | "signup" | "forgot";
+const NEXT_KEY = "silpi:sign-in-next";
 type Me = { user: { name: string; email: string } };
 
 async function post(url: string, body: object): Promise<{ message?: string }> {
@@ -55,8 +56,11 @@ function Social({ next }: { next: string }) {
 
 function Inner() {
   const params = useSearchParams();
-  const next = safeNext(params.get("next"), CLIENT_HOME);
-  const [mode, setMode] = useState<Mode>(params.get("mode") === "signup" ? "signup" : "signin");
+  // Read once: where to go afterwards (only a path on this site), which tab to open and any sign-in error. Then the address bar shows a plain /sign-in.
+  const [entry] = useState(() => readEntry(params, NEXT_KEY, CLIENT_HOME));
+  const next = entry.next;
+  useEffect(() => cleanAddress(), []);
+  const [mode, setMode] = useState<Mode>(entry.mode === "signup" ? "signup" : "signin");
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -66,11 +70,11 @@ function Inner() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   // A failed social sign-in comes back with a short code; only known codes are shown, and what is shown is our own wording.
-  const code = params.get("error");
+  const code = entry.error;
   const [socialError, setSocialError] = useState(isOAuthError(code) ? OAUTH_ERRORS[code] : "");
 
   useEffect(() => { fetch("/api/auth/me", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((b) => setMe(b?.success ? (b as Me) : null)).catch(() => setMe(null)); }, []);
-  const go = () => window.location.assign(next);
+  const go = () => { forgetEntry(NEXT_KEY); window.location.assign(next); };
   const switchTo = (m: Mode) => { setMode(m); setError(""); setInfo(""); setSocialError(""); };
 
   const submit = async (e: FormEvent) => {

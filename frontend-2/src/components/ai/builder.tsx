@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AI_IDEA_KEY, takeIdea } from "@/lib/pending-idea";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Hammer, Loader2 } from "lucide-react";
@@ -32,7 +33,7 @@ export function BuilderHome() {
 
   // A project idea typed on the front page before signing in is waiting here.
   useEffect(() => {
-    try { const saved = sessionStorage.getItem("silpi:brief"); if (saved) { setBrief(saved); sessionStorage.removeItem("silpi:brief"); } } catch { /* ignore */ }
+    { const saved = takeIdea(AI_IDEA_KEY); if (saved) setBrief(saved); }
   }, []);
   useEffect(() => { api<{ jobs: JobSummary[] }>("/api/workspace/jobs").then((r) => setJobs(r.jobs)).catch(() => setJobs([])); }, []);
 

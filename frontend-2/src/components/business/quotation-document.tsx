@@ -44,7 +44,7 @@ export function QuoteTotals({ quote }: { quote: Quote }) {
       {!quote.hourly && <div className="mt-2 space-y-0.5 border-t border-current/10 pt-2 text-xs opacity-75">
         <div className="flex justify-between gap-3"><span>Domain name</span><span>Not included</span></div>
         <div className="flex justify-between gap-3"><span>Hosting</span><span>Not included</span></div>
-        <p className="pt-1 text-[11px] opacity-80">Buy separately, for example from Hostinger or GoDaddy.</p>
+        <p className="pt-1 text-[11px] opacity-80">Bought separately from a domain and hosting provider of your choice.</p>
       </div>}
     </div>
   );
@@ -273,7 +273,7 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
           {running && running.services.length > 0 ? (
             <li>Domain, hosting and the other running services are not part of the development total. See &ldquo;Running services&rdquo; above for who provides and pays for each one.</li>
           ) : (
-            <li>Domain registration and hosting are not part of this quotation. The client buys them directly from a provider (for example Hostinger or GoDaddy) in the client&apos;s own name, at the provider&apos;s rates; both renew yearly. We help connect the domain and deploy the website.</li>
+            <li>Domain registration and hosting are not part of this quotation. The client buys them directly from a domain and hosting provider of their choice in the client&apos;s own name, at the provider&apos;s rates; both renew yearly. We help connect the domain and deploy the website.</li>
           )}
         </ul>
         )}

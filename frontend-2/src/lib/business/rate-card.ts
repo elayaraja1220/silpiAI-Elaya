@@ -151,9 +151,9 @@ export const DEFAULT_RATE_CARD: RateCard = {
   },
   // Sample plans: replace provider and prices with what you resell.
   hosting: {
-    static: { label: "Free static hosting", provider: "Cloudflare Pages / Netlify", serverType: "Static CDN", storage: "Up to 500 builds/month", bandwidth: "Generous free tier", setup: 0, price: 0, renew: 0 },
-    shared: { label: "Shared hosting", provider: "Hostinger / similar", serverType: "Shared Linux (cPanel)", storage: "50 GB SSD", bandwidth: "Unmetered", setup: 0, price: 3999, renew: 4999 },
-    vps: { label: "VPS hosting", provider: "DigitalOcean / similar", serverType: "Virtual private server, 2 vCPU", storage: "80 GB SSD", bandwidth: "4 TB/month", setup: 1500, price: 14999, renew: 14999 },
+    static: { label: "Free static hosting", provider: "Static site hosting", serverType: "Static CDN", storage: "Up to 500 builds/month", bandwidth: "Generous free tier", setup: 0, price: 0, renew: 0 },
+    shared: { label: "Shared hosting", provider: "Shared hosting provider", serverType: "Shared Linux (cPanel)", storage: "50 GB SSD", bandwidth: "Unmetered", setup: 0, price: 3999, renew: 4999 },
+    vps: { label: "VPS hosting", provider: "Cloud server provider", serverType: "Virtual private server, 2 vCPU", storage: "80 GB SSD", bandwidth: "4 TB/month", setup: 1500, price: 14999, renew: 14999 },
     cloud: { label: "Managed cloud hosting", provider: "AWS Lightsail / similar", serverType: "Managed cloud, auto backups", storage: "160 GB SSD", bandwidth: "5 TB/month", setup: 2500, price: 24999, renew: 24999 },
   },
   // What one developer can reliably deliver. Each package includes everything in the one below it.

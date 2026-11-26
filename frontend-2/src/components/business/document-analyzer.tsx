@@ -27,9 +27,9 @@ export type AnalysisOutcome = {
  * "Start from a document": upload the client's requirement files, the AI
  * reads them once and fills the form. The team then checks every field.
  */
-export function DocumentAnalyzer({ onDraft, children, endpoint = "/api/business/analyze" }: { onDraft: (outcome: AnalysisOutcome) => void; children?: React.ReactNode; endpoint?: string }) {
+export function DocumentAnalyzer({ onDraft, children, endpoint = "/api/business/analyze", initialNotes = "" }: { onDraft: (outcome: AnalysisOutcome) => void; children?: React.ReactNode; endpoint?: string; initialNotes?: string }) {
   const [files, setFiles] = useState<File[]>([]);
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(initialNotes);
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

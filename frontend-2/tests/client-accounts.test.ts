@@ -359,7 +359,8 @@ describe("7. the screens", () => {
     const s = read("src/components/client/client-auth.tsx");
     for (const text of ["Sign in", "Create account", "Forgot password?", "Continue with Google", "Continue with Facebook", "Terms of Service", "Privacy Policy"]) assert.ok(s.includes(text), text);
     assert.match(s, /disabled/);
-    assert.match(s, /safeNext\(params\.get\("next"\), CLIENT_HOME\)/, "the intended destination is kept, and only a path on this site is accepted");
+    assert.match(s, /readEntry\(params, NEXT_KEY, CLIENT_HOME\)/, "the intended destination is kept, and only a path on this site is accepted");
+    assert.match(s, /useEffect\(\(\) => cleanAddress\(\), \[\]\)/, "and the address bar is cleaned");
   });
   it("the reset page is not indexed and does not leak its link in a referrer; the terms and privacy pages exist and say plainly that the text is still to be written", () => {
     assert.match(read("src/app/reset-password/page.tsx"), /no-referrer/);
@@ -372,5 +373,25 @@ describe("7. the screens", () => {
     const s = read("src/app/login/page.tsx");
     assert.match(s, /redirect\(/);
     assert.match(s, /safeNext\(/);
+  });
+});
+
+describe("8. a plain address on the sign-in page", () => {
+  it("reads the destination once, keeps it in this tab for a reload, accepts only a path on this site, and forgets it after use", async () => {
+    const store = new Map<string, string>();
+    (globalThis as { sessionStorage?: unknown }).sessionStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) };
+    try {
+      const { readEntry, forgetEntry } = await import("@/lib/clean-address");
+      const first = readEntry(new URLSearchParams("next=%2Fai%2Fbuilder&mode=signup&error=denied"), "k", "/clients/new");
+      assert.deepEqual(first, { next: "/ai/builder", mode: "signup", error: "denied" });
+      assert.deepEqual(readEntry(new URLSearchParams(""), "k", "/clients/new"), { next: "/ai/builder", mode: null, error: null }, "a reload of the plain address still knows where to go");
+      assert.equal(readEntry(new URLSearchParams("next=https%3A%2F%2Fevil.example"), "k", "/clients/new").next, "/clients/new", "never another site");
+      store.set("k", "//evil.example");
+      assert.equal(readEntry(new URLSearchParams(""), "k", "/clients/new").next, "/clients/new", "not even from what was kept");
+      forgetEntry("k");
+      assert.equal(readEntry(new URLSearchParams(""), "k", "/clients/new").next, "/clients/new");
+      (globalThis as { sessionStorage?: unknown }).sessionStorage = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); }, removeItem: () => { throw new Error("denied"); } };
+      assert.equal(readEntry(new URLSearchParams("next=%2Fdashboard"), "k", "/clients/new").next, "/dashboard", "works without storage too");
+    } finally { delete (globalThis as { sessionStorage?: unknown }).sessionStorage; }
   });
 });

@@ -123,3 +123,71 @@ describe("5. getting there from the front page", () => {
     assert.match(p, /ClientFixedPrice/);
   });
 });
+
+describe("6. the hourly choice is switched off in the studio, not removed", () => {
+  it("the switch is off, the studio form opens straight on the fixed-price form, and the hourly code is still there", async () => {
+    const flags = await import("@/lib/feature-flags");
+    assert.equal(flags.SHOW_HOURLY_ENGAGEMENTS, false);
+    const c = read("src/components/studio/clients.tsx");
+    assert.match(c, /if \(!SHOW_HOURLY_ENGAGEMENTS\) return <RequirementWizard onCancel=\{cancel\} onCreated=\{created\} \/>;/);
+    assert.match(c, /<HourlyEngagementForm/, "the hourly form is kept for when the switch is turned on");
+    assert.ok(existsSync(path.join(process.cwd(), "src/components/business/hourly-engagement-form.tsx")));
+  });
+});
+
+describe("7. one idea box on the front page, two ways forward", () => {
+  it("keeps the idea in this tab only, gives it back once, and survives a browser that refuses storage", async () => {
+    const store = new Map<string, string>();
+    const fake = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) };
+    (globalThis as { sessionStorage?: unknown }).sessionStorage = fake;
+    try {
+      const p = await import("@/lib/pending-idea");
+      p.keepIdea(p.FIXED_IDEA_KEY, "  A website for my bakery  ");
+      assert.equal(store.get("silpi:fixed-brief"), "A website for my bakery");
+      p.keepIdea(p.FIXED_IDEA_KEY, "   ");
+      assert.equal(store.get("silpi:fixed-brief"), "A website for my bakery", "an empty box keeps nothing");
+      p.keepIdea(p.AI_IDEA_KEY, "x".repeat(5000));
+      assert.equal(store.get("silpi:brief")!.length, 4000);
+      assert.equal(p.takeIdea(p.FIXED_IDEA_KEY), "A website for my bakery");
+      assert.equal(p.takeIdea(p.FIXED_IDEA_KEY), "", "read once, then forgotten");
+      (globalThis as { sessionStorage?: unknown }).sessionStorage = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); }, removeItem: () => { throw new Error("denied"); } };
+      assert.doesNotThrow(() => p.keepIdea(p.AI_IDEA_KEY, "y"));
+      assert.equal(p.takeIdea(p.AI_IDEA_KEY), "");
+    } finally { delete (globalThis as { sessionStorage?: unknown }).sessionStorage; }
+  });
+  it("the front page offers both: a fixed-price quotation and building with AI, each keeping the idea for its own path, with no AI before sign-in", () => {
+    const l = read("src/components/ai/landing.tsx");
+    assert.ok(l.includes(">Get a fixed-price quotation</button>") && l.includes("Build it with AI"));
+    assert.match(l, /keepIdea\(FIXED_IDEA_KEY, text\);\s*router\.push\("\/clients\/new\/fixed-price"\);/);
+    assert.match(l, /keepIdea\(AI_IDEA_KEY, text\);\s*router\.push\("\/ai\/builder"\);/);
+    assert.ok(!/\/api\/workspace\/ai|\/api\/workspace\/jobs/.test(l), "the front page calls no AI");
+  });
+  it("each path picks the idea up: the fixed-price form as its summary and analysis notes, the builder as its brief", () => {
+    assert.match(read("src/components/client/client-fixed-price.tsx"), /takeIdea\(FIXED_IDEA_KEY\)/);
+    assert.match(read("src/components/client/client-fixed-price.tsx"), /initialBrief=\{idea\}/);
+    const w = read("src/components/business/requirement-wizard.tsx");
+    assert.match(w, /initialBrief\.trim\(\) \? \{ \.\.\.emptyRequirement, summary: initialBrief\.trim\(\) \}/);
+    assert.match(w, /initialNotes=\{initialBrief\}/);
+    assert.match(read("src/components/business/document-analyzer.tsx"), /useState\(initialNotes\)/);
+    assert.match(read("src/components/ai/builder.tsx"), /takeIdea\(AI_IDEA_KEY\)/);
+  });
+});
+
+describe("8. no other company is named as a reference in what people read", () => {
+  it("no screen, quotation text or default price list names another hosting, domain, payment-app or website-building company", async () => {
+    const { readdirSync, statSync } = await import("node:fs");
+    const found: string[] = [];
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        const p = path.join(d, n);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(n)) {
+          const m = /hostinger|godaddy|namecheap|bigrock|bluehost|hostgator|siteground|netlify|digitalocean|\bgpay\b|phonepe|paytm|bolt\.new|lovable|replit|webflow|squarespace|\bwix\b/i.exec(readFileSync(p, "utf8"));
+          if (m) found.push(`${path.relative(process.cwd(), p)}: ${m[0]}`);
+        }
+      }
+    };
+    for (const d of ["src/components", "src/app", "src/lib"]) walk(path.join(process.cwd(), d));
+    assert.deepEqual(found, []);
+  });
+});
