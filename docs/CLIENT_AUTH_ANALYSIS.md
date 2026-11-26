@@ -159,3 +159,36 @@ Restart the server after changing `.env.local`.
 - **Account doors** (`/api/account`, `/api/account/password`, `/api/account/sign-out-everywhere`, `/api/account/identities/[provider]`): a signed-in person only, same-site only; the user is always taken from the session.
 - **Navigation:** the client header has Dashboard, My Projects, AI Workspace, Billing, Profile, a New project button and Updates, and nothing of the studio (a test checks every link). The AI workspace header gained Dashboard, and a visitor who opens a page inside it is sent to the one sign-in page and back (its old separate sign-in form, which linked to the administrator console, was removed).
 - **Names:** the studio's screens moved from `components/pages/` to `components/studio/`, its frame from `layout/app-shell.tsx` (`AppShell`) to `layout/studio-shell.tsx` (`StudioShell`), the administrator console from `ai/admin.tsx` (`AiAdmin`) to `ai/admin-dashboard.tsx` (`AdminDashboard`). The client's code is in `components/client/` and imports nothing of the studio's (tested). No address changed. The route folder `src/app/(app)` was NOT renamed to `(studio)`: Windows refused because the running dev server holds the folder. It can be renamed with the dev server stopped; the address of every page stays the same either way.
+
+## Step 7: final verification and report
+
+**Results on the finished work:** TypeScript check clean; 1328 of 1328 automated tests pass (about 150 new across steps 1 to 6); production build compiles; the browser test (`npm run e2e`, its own server and its own headless Chrome) passes 17 of 17 steps, six of them new for this work:
+
+1. a visitor asks for a quotation, is sent to sign in, creates an account and lands on the choice page, which shows nothing of the studio;
+2. Fixed Price: the client fills the real form in the browser (pages, package, details), sees none of the studio's figures, and gets a quotation on their own quotation page;
+3. the dashboard, My Projects and the project page show the request and the next step;
+4. Start with SILPI AI: with no plan the plans come first, and choosing Free opens the AI workspace;
+5. on a phone-sized screen (390 px) the choice page, dashboard, projects, profile, updates and sign-in fit with no sideways scrolling;
+6. the studio sends a non-administrator to the administrator sign-in, and for an administrator the Overview has no recurring income while its own page does.
+
+The existing browser steps were updated for the one sign-in page; one of them read the payment list before it had loaded and now waits for it.
+
+**Checklist from the brief.**
+
+| Item | Status |
+|---|---|
+| Existing routes and fixed-price workflow | Kept; studio form moved to `/clients/quote`; tests and the browser test pass |
+| Google / Facebook | Built and tested against a stand-in for both; a real round trip needs your credentials |
+| E-mail sign-up, login, forgot password | Built, tested, checked on a real server; real e-mail needs SMTP settings |
+| Authentication redirect, `/clients/new`, Fixed Price and SaaS selection | Built, tested, driven in a browser |
+| Admin and client route protection, recurring income, client data isolation | Built, tested, checked on a real server and in a browser |
+| Subscription navigation, payment workflow | SaaS plans then workspace; fixed-price approval and payment details through the existing quotation page |
+| Responsive UI | Phone-width check in the browser test for the client pages and sign-in; the studio's own screens were not re-checked |
+| TypeScript, tests, production build | Pass |
+| ESLint | **Not run: ESLint is not installed in this project** (`next lint` has nothing to run). Installing and configuring it is a separate decision |
+
+**Database migrations added:** 21 (terms acceptance, password reset tokens), 22 (linked sign-in identities, one-time sign-in state), 23 (development model choices). All additive; existing data is untouched.
+
+**Environment variables (names only, listed in `.env.example`; values go in `.env.local`):** `SILPI_PUBLIC_URL`, `SILPI_SMTP_HOST`, `SILPI_SMTP_PORT`, `SILPI_SMTP_USER`, `SILPI_SMTP_PASSWORD`, `SILPI_SMTP_FROM`, `SILPI_GOOGLE_CLIENT_ID`, `SILPI_GOOGLE_CLIENT_SECRET`, `SILPI_FACEBOOK_APP_ID`, `SILPI_FACEBOOK_APP_SECRET`. `SILPI_ADMIN_TOKEN` is required as before.
+
+**Still to do by the studio:** create the Google and Facebook apps (section above), set SMTP, write the Terms of Service and Privacy Policy text, replace the administrator token that was once committed, and (optionally) rename `src/app/(app)` to `(studio)` with the dev server stopped.

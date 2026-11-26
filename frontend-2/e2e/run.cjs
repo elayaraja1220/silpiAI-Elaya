@@ -81,6 +81,10 @@ const fill = (selector, value) => run(`(() => { const el = document.querySelecto
 const clickText = (text, scope = "button, a, [role=tab]") => run(`(() => { const el = [...document.querySelectorAll(${JSON.stringify(scope)})].find((b) => b.textContent.trim() === ${JSON.stringify(text)} && !b.disabled); if (!el) return false; el.click(); return true; })()`);
 async function mustFill(selector, value) { await waitFor(`the field ${selector}`, () => run(`!!document.querySelector(${JSON.stringify(selector)})`)); await fill(selector, value); }
 async function mustClick(text, scope) { await waitFor(`the button "${text}"`, () => clickText(text, scope)); }
+const submit = () => waitFor("the form's submit button", () => run("(() => { const b = document.querySelector('form button[type=submit]'); if (!b || b.disabled) return false; b.click(); return true; })()"));
+const fitsWidth = () => run("document.documentElement.scrollWidth <= window.innerWidth + 1");
+const phone = () => send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+const desktop = () => send("Emulation.clearDeviceMetricsOverride");
 async function shot(name) { const s = await send("Page.captureScreenshot", { format: "png" }); const f = path.join(os.tmpdir(), `silpi-e2e-${name}.png`); fs.writeFileSync(f, Buffer.from(s.data, "base64")); return f; }
 
 async function step(name, fn) {
@@ -113,7 +117,7 @@ async function main() {
   await send("Runtime.enable");
 
   // Warm the pages once so the first real step is not spent compiling them.
-  for (const p of ["/ai/billing", "/ai/admin", "/api/workspace/billing", "/api/admin/ai", "/api/admin/finance", "/api/admin/audit", "/api/admin/payments", "/api/admin/admins", "/api/admin/fx", "/api/admin/tax", "/api/admin/seller", "/api/admin/readiness", "/api/admin/credit-packages", "/api/admin/webhook-events", "/api/workspace/wallet", "/api/workspace/billing/topup", "/api/workspace/billing/profile", "/api/admin/session"]) await fetch(BASE + p, { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } }).catch(() => undefined);
+  for (const p of ["/ai/billing", "/ai/admin", "/api/workspace/billing", "/api/admin/ai", "/api/admin/finance", "/api/admin/audit", "/api/admin/payments", "/api/admin/admins", "/api/admin/fx", "/api/admin/tax", "/api/admin/seller", "/api/admin/readiness", "/api/admin/credit-packages", "/api/admin/webhook-events", "/api/workspace/wallet", "/api/workspace/billing/topup", "/api/workspace/billing/profile", "/api/admin/session", "/sign-in", "/clients/new", "/dashboard", "/my-projects", "/profile", "/notifications", "/admin/sign-in"]) await fetch(BASE + p, { headers: { authorization: `Bearer ${ADMIN_TOKEN}` } }).catch(() => undefined);
 
   const admin = { authorization: `Bearer ${ADMIN_TOKEN}` };
   let orderNumber = "";
@@ -129,9 +133,10 @@ async function main() {
 
   await step("a customer signs in through the form and sees their plan and credits", async () => {
     await go(`${BASE}/ai/billing?currency=USD`);
+    await waitFor("the sign-in page", async () => (await run("location.pathname")) === "/sign-in", 60000);
     await mustFill("input[type=email]", "customer@e2e.test");
     await mustFill("input[type=password]", PASS);
-    await mustClick("Sign in", "button");
+    await submit();
     await waitText("Your credits", 60000);
     await waitText("Available now");
     const t = await bodyText();
@@ -200,7 +205,8 @@ async function main() {
     const t = await bodyText();
     assert(/Bought\s*\n?\s*100\b/.test(t.replace(/\n+/g, "\n")), "100 bought credits");
     assert(/Credits bought/.test(t) && /\+100/.test(t), "the purchase should appear in the credit history");
-    assert(/succeeded/.test(t) && /credits/.test(t), "and the payment");
+    // The payment list loads after the balance, so wait for it rather than reading the page at one instant.
+    await waitFor("the payment in the history", async () => { const now = await bodyText(); return /succeeded/.test(now) && /credits/.test(now); });
   });
 
   await step("a read-only viewer can look but is refused when they try to change something", async () => {
@@ -218,6 +224,93 @@ async function main() {
     await mustFill("input[aria-label='Payment reference']", "UPI-E2E-0002");
     await mustClick("Record", "button");
     await waitText("look at everything but not change anything");
+  });
+
+  await step("a visitor who asks for a quotation is sent to sign in, creates an account, and lands on the choice page", async () => {
+    await run("fetch('/api/auth/logout', { method: 'POST' })");
+    await go(`${BASE}/clients/new`);
+    await waitFor("the sign-in page", async () => (await run("location.pathname + location.search")) === "/sign-in?next=%2Fclients%2Fnew", 60000);
+    await mustClick("Create account", "[role=tab]");
+    await mustFill("input[autocomplete=name]", "Priya Client");
+    await mustFill("input[type=email]", "priya@e2e.test");
+    await mustFill("input[type=password]", "e2e-long-phrase-9x");
+    await run("document.querySelector('input[type=checkbox]').click()");
+    await submit();
+    await waitText("What would you like to build with SILPI AI?", 60000);
+    const t = await bodyText();
+    assert(t.includes("Choose Fixed Price") && t.includes("Start with SILPI AI"), "both choices should show");
+    assert(!/Admin|Recurring income|Business & pricing/.test(t), "nothing of the studio in the client's page");
+  });
+
+  await step("Fixed Price: the client fills the form, sees no studio figures, and gets a quotation", async () => {
+    await mustClick("Choose Fixed Price", "a");
+    await waitText("Your requirement", 60000);
+    await mustClick("Next", "button");
+    for (const page of ["Home", "About", "Services"]) await mustClick(page, "button");
+    await mustClick("See packages", "button");
+    await waitFor("the package step", async () => /Finalise .* package/.test(await bodyText()), 30000);
+    await run("[...document.querySelectorAll('button')].find(b => /^Finalise .* package/.test(b.textContent.trim())).click()");
+    await waitText("Your details");
+    await mustFill("input[placeholder='+91 98765 43210']", "+91 98765 43210");
+    await mustClick("Next", "button");
+    await waitText("Get my quotation");
+    const review = await bodyText();
+    assert(!/Costs, profitability|internal view|Analysis cost|market rate/i.test(review), "the studio's own figures must not show to a client");
+    await mustClick("Get my quotation", "button");
+    await waitFor("the quotation page", async () => (await run("location.pathname")).startsWith("/q/"), 60000);
+    await waitFor("the quotation number", async () => /SQ-\d{4}-\d{4}/.test(await bodyText()), 60000);
+  });
+
+  await step("the dashboard, My Projects and the project page show the request and what to do next", async () => {
+    await go(`${BASE}/dashboard`);
+    await waitText("Needs your attention", 60000);
+    await go(`${BASE}/my-projects`);
+    await waitText("Quotation ready", 60000);
+    await run("document.querySelector('a[href^=\"/my-projects/\"]').click()");
+    await waitText("Review and approve", 60000);
+    const t = await bodyText();
+    assert(!/profit|margin|internal|work log/i.test(t), "no internal words on the client's project page");
+  });
+
+  await step("Start with SILPI AI: no plan yet, so the plans come first; choosing Free opens the AI workspace", async () => {
+    await go(`${BASE}/clients/new/saas`);
+    await waitFor("the plans page", async () => (await run("location.pathname")) === "/ai/billing", 60000);
+    await waitText("Change plan", 60000);
+    await run("(() => { const row = [...document.querySelectorAll('li')].find(li => /^Free/.test(li.textContent.trim())); const b = row && [...row.querySelectorAll('button')].find(x => x.textContent.trim() === 'Choose'); if (b) b.click(); return !!b; })()");
+    await waitFor("the AI workspace", async () => (await run("location.pathname")) === "/ai/builder", 60000);
+  });
+
+  await step("on a phone the client's pages fit the screen (no sideways scrolling)", async () => {
+    await phone();
+    try {
+      for (const p of ["/clients/new", "/dashboard", "/my-projects", "/profile", "/notifications"]) {
+        await go(`${BASE}${p}`);
+        await waitFor(`${p} to load`, async () => (await bodyText()).length > 80, 60000);
+        await sleep(400);
+        assert(await fitsWidth(), `${p} is wider than a phone screen`);
+      }
+      await run("fetch('/api/auth/logout', { method: 'POST' })");
+      await go(`${BASE}/sign-in`);
+      await waitText("Sign in to SILPI AI", 60000);
+      assert(await fitsWidth(), "/sign-in is wider than a phone screen");
+    } finally { await desktop(); }
+  });
+
+  await step("the studio sends a non-administrator to the administrator sign-in, and opens for an administrator without recurring income on the Overview", async () => {
+    // The read-only viewer from the step before is still signed in in this browser: sign out first, so this is a visitor with no administrator session.
+    await run("fetch('/api/admin/session', { method: 'DELETE' })");
+    await go(`${BASE}/`);
+    await waitFor("the administrator sign-in", async () => (await run("location.pathname")) === "/admin/sign-in", 60000);
+    // A page compiled for the first time can still be starting up when the fields appear, and its start-up empties them: fill until the form keeps the values.
+    await waitFor("the sign-in form to keep what was typed", async () => { await fill("input[aria-label='Administrator email']", "e2e-admin@example.test"); await fill("input[aria-label='Administrator password']", PASS + "xx"); await sleep(500); return run("(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Sign in'); return !!b && !b.disabled; })()"); }, 60000);
+    await mustClick("Sign in", "button");
+    await waitFor("the studio", async () => (await run("location.pathname")) === "/", 60000);
+    await waitFor("the Recurring income link in the studio sidebar", () => run("!!document.querySelector('a[href=\"/recurring-income\"]')"), 60000);
+    const cardHere = "[...document.querySelectorAll('main h3')].some(h => h.textContent.trim() === 'Recurring income')";
+    await sleep(1500);
+    assert(!(await run(cardHere)), "the recurring income card is not on the Overview");
+    await go(`${BASE}/recurring-income`);
+    await waitFor("the recurring income card on its own page", () => run(cardHere), 60000);
   });
 
   await step("a wrong password is refused with the same message as an unknown account", async () => {
