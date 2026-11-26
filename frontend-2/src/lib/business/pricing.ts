@@ -23,11 +23,12 @@ const halfHours = (n: number) => Math.round(n * 2) / 2;
  * The currency a quotation is in: the client's own when they are Outside India and the rate card has a price for it, otherwise rupees.
  * Pure, so the screen, the server and the documents always agree.
  */
-export function quoteMoney(client: Pick<Client, "state" | "currency">, rates: RateCard): Money {
+export function quoteMoney(client: Pick<Client, "state" | "currency">, rates: RateCard, mode: "fixed" | "hourly" = "fixed"): Money {
   const code = client.currency;
   if (client.state !== "Outside India" || !code || code === "INR") return INR_MONEY;
   const p = rates.countryPricing?.[code];
-  return p && p.hourlyRate > 0 && p.inrPerUnit > 0 ? { code, unit: p.inrPerUnit } : INR_MONEY;
+  // A fixed price needs an hourly price in that currency; an hourly engagement brings its own rate and only needs the rupee value of one unit.
+  return p && p.inrPerUnit > 0 && (mode === "hourly" || p.hourlyRate > 0) ? { code, unit: p.inrPerUnit } : INR_MONEY;
 }
 
 export function needsBackend(req: Requirement, rates: RateCard): boolean {

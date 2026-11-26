@@ -118,10 +118,10 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
           <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-slate-400">Hourly engagement terms</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-4">
             {[
-              ["Rate", `${fmt(quotation.hourly.rate)} / hour`, "before GST"],
+              ["Rate", `${fmt(quotation.hourly.rate)} / hour`, quotation.gst.mode === "export" ? "no GST (export)" : "before GST"],
               ["Estimated hours", `${quotation.hourly.expectedHours} h`, `${quotation.hourly.minHours} to ${quotation.hourly.capHours} h`],
-              ["Estimated total", fmt(quotation.hourly.expectedTotal), "incl. GST"],
-              ["Not to exceed", fmt(quotation.hourly.capTotal), `${quotation.hourly.capHours} h, incl. GST`],
+              ["Estimated total", fmt(quotation.hourly.expectedTotal), quotation.gst.mode === "export" ? "no GST (export)" : "incl. GST"],
+              ["Not to exceed", fmt(quotation.hourly.capTotal), `${quotation.hourly.capHours} h${quotation.gst.mode === "export" ? "" : ", incl. GST"}`],
             ].map(([label, value, note]) => (
               <div key={label} className="rounded-xl border border-slate-200 p-3">
                 <p className="text-[11px] uppercase tracking-wider text-slate-400">{label}</p>
@@ -131,6 +131,7 @@ export function QuotationDocument({ quotation, requirement: requested, running, 
             ))}
           </div>
           <ul className="mt-4 list-disc space-y-1 pl-4 text-xs text-slate-600">
+            {quotation.hourly.marketNote && <li data-testid="market-note">{quotation.hourly.marketNote}</li>}
             <li>Work is done by {quotation.hourly.role.toLowerCase()} from our team and billed for the hours actually worked, {BILLING_CYCLE_LABELS[quotation.hourly.cycle]}.</li>
             <li>The estimate can change by {quotation.hourly.rangePct}% either way. We will not bill beyond {quotation.hourly.capHours} hours without your written approval.</li>
             <li>You can ask for the log of hours worked at any time.</li>

@@ -1,3 +1,6 @@
+import { CURRENCIES } from "./currency";
+import { COUNTRIES, minorDigits } from "./countries";
+import { DEFAULT_PRICING_CONFIG, hourlyFromAnnual } from "./market-rates";
 import type { DatabaseSync } from "node:sqlite";
 
 /**
@@ -909,6 +912,96 @@ export const MIGRATIONS: Migration[] = [
           last_login_at TEXT
         );
       `);
+    },
+  },
+  {
+    id: 18,
+    name: "Global pricing: countries, currencies, roles, levels, market rates with sources, pricing settings",
+    up(db) {
+      db.exec(`
+        CREATE TABLE pricing_currencies (
+          code         TEXT PRIMARY KEY,
+          name         TEXT NOT NULL,
+          symbol       TEXT NOT NULL,
+          minor_digits INTEGER NOT NULL CHECK (minor_digits BETWEEN 0 AND 3),
+          active       INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+        );
+        CREATE TABLE pricing_countries (
+          code       TEXT PRIMARY KEY CHECK (length(code) = 2),
+          name       TEXT NOT NULL,
+          currency   TEXT NOT NULL REFERENCES pricing_currencies(code),
+          active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+          sort_order INTEGER NOT NULL DEFAULT 100
+        );
+        CREATE TABLE pricing_roles (
+          id         TEXT PRIMARY KEY,
+          label      TEXT NOT NULL,
+          sort_order INTEGER NOT NULL DEFAULT 100,
+          active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+        );
+        CREATE TABLE pricing_levels (
+          id         TEXT PRIMARY KEY,
+          label      TEXT NOT NULL,
+          sort_order INTEGER NOT NULL DEFAULT 100,
+          active     INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+        );
+
+        -- One row per figure ever entered. A figure is never edited: a new row with a later start date replaces it, and the old one stays as history.
+        -- Only 'enabled' can be switched. Every row carries where it came from and who entered it.
+        CREATE TABLE country_market_rates (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          country        TEXT NOT NULL REFERENCES pricing_countries(code),
+          role_id        TEXT NOT NULL REFERENCES pricing_roles(id),
+          level_id       TEXT NOT NULL REFERENCES pricing_levels(id),
+          kind           TEXT NOT NULL CHECK (kind IN ('employee', 'freelancer', 'agency')),
+          currency       TEXT NOT NULL REFERENCES pricing_currencies(code),
+          min_minor      INTEGER NOT NULL CHECK (min_minor > 0),
+          median_minor   INTEGER NOT NULL CHECK (median_minor >= min_minor),
+          max_minor      INTEGER NOT NULL CHECK (max_minor >= median_minor),
+          source         TEXT NOT NULL CHECK (length(source) >= 8),
+          source_url     TEXT NOT NULL DEFAULT '',
+          effective_date TEXT NOT NULL,
+          entered_by     TEXT NOT NULL DEFAULT '',
+          entered_at     TEXT NOT NULL,
+          enabled        INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+          illustrative   INTEGER NOT NULL DEFAULT 0 CHECK (illustrative IN (0, 1)),
+          note           TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX country_market_rates_lookup ON country_market_rates(country, role_id, level_id, kind, effective_date);
+        CREATE TRIGGER country_market_rates_no_edit BEFORE UPDATE ON country_market_rates
+          WHEN NEW.country != OLD.country OR NEW.role_id != OLD.role_id OR NEW.level_id != OLD.level_id OR NEW.kind != OLD.kind OR NEW.currency != OLD.currency
+            OR NEW.min_minor != OLD.min_minor OR NEW.median_minor != OLD.median_minor OR NEW.max_minor != OLD.max_minor OR NEW.source != OLD.source
+            OR NEW.source_url != OLD.source_url OR NEW.effective_date != OLD.effective_date OR NEW.entered_by != OLD.entered_by OR NEW.entered_at != OLD.entered_at
+            OR NEW.illustrative != OLD.illustrative
+          BEGIN SELECT RAISE(ABORT, 'a market rate cannot be edited: add a new one with a later start date'); END;
+        CREATE TRIGGER country_market_rates_no_delete BEFORE DELETE ON country_market_rates BEGIN SELECT RAISE(ABORT, 'market rates are kept as history'); END;
+
+        CREATE TABLE pricing_configurations (
+          key        TEXT PRIMARY KEY,
+          value      TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          updated_by TEXT NOT NULL DEFAULT ''
+        );
+      `);
+      const at = new Date().toISOString();
+      const cur = db.prepare("INSERT INTO pricing_currencies (code, name, symbol, minor_digits) VALUES (?, ?, ?, ?)");
+      for (const c of CURRENCIES) cur.run(c.code, c.name, c.symbol, minorDigits(c.code));
+      const country = db.prepare("INSERT INTO pricing_countries (code, name, currency, sort_order) VALUES (?, ?, ?, ?)");
+      COUNTRIES.forEach((c, i) => country.run(c.code, c.name, c.currency, i + 1));
+      const role = db.prepare("INSERT INTO pricing_roles (id, label, sort_order) VALUES (?, ?, ?)");
+      [["any", "Any software role"], ["frontend", "Frontend Developer"], ["backend", "Backend Developer"], ["full-stack", "Full Stack Developer"], ["react-next", "React / Next.js Developer"], ["nodejs", "Node.js Developer"], ["php-laravel", "PHP / Laravel Developer"], ["python", "Python Developer"], ["mobile", "Mobile Developer"], ["ui-ux", "UI/UX Designer"], ["qa", "QA Engineer"], ["devops", "DevOps Engineer"], ["ai-engineer", "AI Engineer"], ["architect", "Software Architect"], ["project-manager", "Project Manager"]].forEach(([id, label], i) => role.run(id!, label!, i));
+      const level = db.prepare("INSERT INTO pricing_levels (id, label, sort_order) VALUES (?, ?, ?)");
+      [["junior", "Junior"], ["mid", "Mid-level"], ["senior", "Senior"], ["expert", "Expert"]].forEach(([id, label], i) => level.run(id!, label!, i));
+      // The ONLY figures supplied with the pricing brief: illustrative yearly salaries for India, as employee wages. They are an assumption, not a market
+      // rate, and are labelled so everywhere they are used. No other rate is loaded: the rest must be entered with a source.
+      const rate = db.prepare(
+        "INSERT INTO country_market_rates (country, role_id, level_id, kind, currency, min_minor, median_minor, max_minor, source, source_url, effective_date, entered_by, entered_at, enabled, illustrative, note) VALUES ('IN', 'any', ?, 'employee', 'INR', ?, ?, ?, ?, '', ?, 'system', ?, 1, 1, ?)",
+      );
+      for (const [levelId, annualRupees] of [["junior", 600_000], ["mid", 1_500_000], ["senior", 3_000_000]] as const) {
+        const hourly = hourlyFromAnnual(annualRupees * 100, 2080);
+        rate.run(levelId, hourly, hourly, hourly, "Illustrative assumption from the SILPI AI pricing brief (yearly salary / 2,080 hours). Not a market rate.", at.slice(0, 10), at, `Yearly salary assumed: Rs ${annualRupees.toLocaleString("en-IN")}`);
+      }
+      db.prepare("INSERT INTO pricing_configurations (key, value, updated_at, updated_by) VALUES ('global', ?, ?, 'system')").run(JSON.stringify(DEFAULT_PRICING_CONFIG), at);
     },
   },
 ];

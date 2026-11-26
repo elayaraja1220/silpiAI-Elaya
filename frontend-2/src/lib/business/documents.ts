@@ -75,6 +75,7 @@ function outline(q: Quotation, fallback: Requirement, running?: PublicRunningSer
       ],
     });
     blocks.push({ kind: "bullets", items: [
+      ...(hourly.marketNote ? [hourly.marketNote] : []),
       `Billed for the hours actually worked, ${BILLING_CYCLE_LABELS[hourly.cycle]}.`,
       `We will not bill beyond ${hourly.capHours} hours without your written approval.`,
       "The log of hours worked is available to you at any time.",

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, HelpCircle, Loader2, Plus, ShieldCheck, Sparkles, Star, X } from "lucide-react";
 
 import { currencyOf } from "@/lib/business/currency";
+import { COUNTRIES, currencyOfCountry, flagOf } from "@/lib/business/countries";
 import { formatMoney, INR_MONEY, isForeign, symbolOf } from "@/lib/business/money";
 import { buildQuote, needsBackend, quoteMoney, sectionsOf, stylingFits } from "@/lib/business/pricing";
 import { checkBudget } from "@/lib/business/budget";
@@ -769,10 +770,18 @@ export function RequirementWizard({ onCreated, onCancel }: { onCreated: (lead: L
                   <Field label="Email *"><Input type="email" value={client.email} onChange={(e) => setC("email", e.target.value)} placeholder="client@example.com" /></Field>
                   <Field label="Phone *"><Input value={client.phone} onChange={(e) => setC("phone", e.target.value)} placeholder="+91 98765 43210" /></Field>
                   <Field label="State *" hint="Decides CGST + SGST (same state) or IGST (other state).">
-                    <Select value={client.state} onChange={(e) => setClient((c) => ({ ...c, state: e.target.value, ...(e.target.value === "Outside India" ? {} : { currency: undefined }) }))}>
+                    <Select value={client.state} onChange={(e) => setClient((c) => ({ ...c, state: e.target.value, ...(e.target.value === "Outside India" ? {} : { currency: undefined, country: undefined }) }))}>
                       {INDIAN_STATES.map((s) => <option key={s}>{s}</option>)}
                     </Select>
                   </Field>
+                  {client.state === "Outside India" && (
+                    <Field label="Client country" hint="Only countries whose currency you have set a price for are listed.">
+                      <Select value={client.country ?? ""} onChange={(e) => setClient((c) => ({ ...c, country: e.target.value || undefined, currency: e.target.value ? currencyOfCountry(e.target.value) ?? c.currency : c.currency }))}>
+                        <option value="">Not chosen</option>
+                        {COUNTRIES.filter((k) => k.code !== "IN" && rates?.countryPricing?.[k.currency]).map((k) => <option key={k.code} value={k.code}>{flagOf(k.code)} {k.name} ({k.currency})</option>)}
+                      </Select>
+                    </Field>
+                  )}
                   {client.state === "Outside India" && (
                     <Field label="Quote in" hint={Object.keys(rates?.countryPricing ?? {}).length ? "The price is hours x your hourly price for that currency. No Indian GST on a client abroad." : "No prices are set for other currencies yet: add them in Business & pricing."}>
                       <Select value={client.currency ?? "INR"} onChange={(e) => setC("currency", e.target.value === "INR" ? undefined : e.target.value)}>

@@ -17,6 +17,7 @@ import {
   type Requirement,
 } from "./types";
 import { parseItems } from "./clarifications";
+import { countryOf, currencyOfCountry } from "./countries";
 import { CURRENCIES } from "./currency";
 import { HANDOVER_LABEL, INDIAN_STATES } from "./rate-card";
 import { autoComplexity, billablePages, splitPages } from "./scope";
@@ -54,8 +55,17 @@ export function parseClient(input: unknown): Client {
     state: str(c.state, 60),
     address: str(c.address, 400),
   };
+  // The client's country. A client outside India is quoted for their country, in its currency unless another is chosen.
+  const countryCode = str(c.country, 2).toUpperCase();
+  if (countryCode) {
+    const country = countryOf(countryCode);
+    if (!country) throw new ValidationError(`${countryCode} is not a country we can quote for.`);
+    if (country.code === "IN" && client.state === "Outside India") throw new ValidationError("A client in India needs an Indian state (it decides the GST).");
+    if (country.code !== "IN" && client.state !== "Outside India") throw new ValidationError("A client outside India has the state \"Outside India\".");
+    client.country = country.code;
+  }
   // The currency a client abroad is quoted in. Meaningless for a client in India (always rupees), so it is dropped there.
-  const currency = str(c.currency, 3).toUpperCase();
+  const currency = str(c.currency, 3).toUpperCase() || (client.country && client.country !== "IN" ? currencyOfCountry(client.country) ?? "" : "");
   if (currency && currency !== "INR") {
     if (!CURRENCIES.some((x) => x.code === currency)) throw new ValidationError(`${currency} is not a currency we can quote in.`);
     if (client.state === "Outside India") client.currency = currency;
@@ -159,6 +169,22 @@ export function parseRequirement(input: unknown, rates: RateCard): Requirement {
     if (!Number.isFinite(hours) || hours < 1 || hours > 5000) throw new ValidationError("Enter the estimated hours (1 to 5000).");
     req.billing = "hourly";
     req.hourly = { role: str(h.role, 80) || "Specialist", rate, estimatedHours: hours, rangePct: int(h.rangePct, 0, 100, 20), cycle: oneOf(h.cycle, BILLING_CYCLES, "monthly") };
+    // The price in the quotation's own currency (up to two decimals), and what the market rate was looked up for. The market figure itself is never taken from the
+    // browser: the server looks it up and writes it (see enrichHourly in pricing-data.ts).
+    const native = Number(h.rateNative);
+    if (h.rateNative !== undefined && h.rateNative !== null && h.rateNative !== "") {
+      if (!Number.isFinite(native) || native <= 0 || native > 1_000_000) throw new ValidationError("The hourly price must be more than zero.");
+      req.hourly.rateNative = Math.round(native * 100) / 100;
+    }
+    const code = str(h.country, 2).toUpperCase();
+    if (code && !countryOf(code)) throw new ValidationError(`${code} is not a country we can quote for.`);
+    if (code) req.hourly.country = code;
+    for (const [key, pattern, label] of [["roleId", /^[a-z0-9-]{2,41}$/, "role"], ["levelId", /^[a-z0-9-]{2,20}$/, "experience level"]] as const) {
+      const v = str(h[key], 41).toLowerCase();
+      if (v && !pattern.test(v)) throw new ValidationError(`That ${label} is not valid.`);
+      if (v) req.hourly[key] = v;
+    }
+    if (h.override === true) req.hourly.override = true;
     req.scope = "full";
     if (!req.title) throw new ValidationError("Project title is required.");
     if (req.summary.length < 20) throw new ValidationError("Describe the work in at least a sentence or two.");
@@ -197,7 +223,8 @@ export function parseCountryPricing(input: unknown): NonNullable<RateCard["count
     const p = obj(v);
     const hourly = Number(p.hourlyRate);
     const unit = Number(p.inrPerUnit);
-    if (!Number.isFinite(hourly) || hourly <= 0 || hourly > 1_000_000) throw new ValidationError(`The hourly price for ${code} must be more than 0.`);
+    // 0 means "no fixed-price rate for this currency": it can still be used for an hourly engagement, which brings its own price.
+    if (!Number.isFinite(hourly) || hourly < 0 || hourly > 1_000_000) throw new ValidationError(`The hourly price for ${code} must be 0 or more.`);
     if (!Number.isFinite(unit) || unit < 0.0001 || unit > 2000) throw new ValidationError(`Say how many rupees one ${code} is worth (between 0.0001 and 2,000).`);
     const asOf = typeof p.rateAsOf === "string" && !Number.isNaN(Date.parse(p.rateAsOf)) ? new Date(p.rateAsOf).toISOString() : undefined;
     out[code] = { hourlyRate: Math.round(hourly * 100) / 100, inrPerUnit: Math.round(unit * 1e6) / 1e6, auto: p.auto !== false, ...(asOf && p.auto !== false ? { rateAsOf: asOf } : {}) };

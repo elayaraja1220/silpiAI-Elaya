@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { getDb, transaction } from "./db";
 import { buildQuote } from "./pricing";
 import { getLiveInrPerUnit, type LiveRates } from "./live-rates";
+import { enrichHourly } from "@/server/pricing-data";
 import { formatMoney, moneyOf } from "./money";
 import { applyClientTech, describeTech, parseTechSelection, type TechSelection } from "./client-tech";
 import { buildHourlyQuote, isHourly } from "./hourly";
@@ -280,8 +281,10 @@ function issueHourlyQuotation(lead: Pick<Lead, "id" | "stage" | "client" | "requ
 }
 
 /** Saves the requirement and issues its first quotation in one step. */
-export function createLead(client: Client, requirement: Requirement, tier?: Tier): Lead {
+export function createLead(client: Client, requirementIn: Requirement, tier?: Tier): Lead {
   const id = randomUUID();
+  // An hourly engagement's market rate is looked up and written here, on the server (see enrichHourly).
+  const requirement = enrichHourly(requirementIn, client, getRateCard());
   transaction((db) => {
     const at = now();
     db.prepare("INSERT INTO leads (id, stage, client, requirement, created_at, updated_at) VALUES (?, 'requirement', ?, ?, ?, ?)").run(

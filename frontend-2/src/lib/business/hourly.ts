@@ -1,4 +1,5 @@
-import { gstFor } from "./pricing";
+import { isForeign } from "./money";
+import { gstFor, quoteMoney } from "./pricing";
 import type { Client, HourlyEngagement, HourlyTerms, LineItem, Quote, RateCard, Requirement } from "./types";
 
 /**
@@ -25,42 +26,75 @@ export function hourlyBounds(h: Pick<HourlyEngagement, "estimatedHours" | "range
 }
 
 /** Total incl. GST for a number of hours (the same GST rules as the fixed price). */
-export function hourlyTotal(hours: number, rate: number, client: Pick<Client, "state">, rates: RateCard): number {
-  const taxable = round2(hours * rate);
-  return Math.round(taxable + gstFor(client, rates, taxable).total);
+export function hourlyTotal(hours: number, rate: number, client: Pick<Client, "state" | "currency">, rates: RateCard): number {
+  const { snap, whole } = hourlyRounding(client, rates);
+  const taxable = snap(hours * rate);
+  return whole(taxable + gstFor(client, rates, taxable).total);
 }
 
-export function hourlyTerms(h: HourlyEngagement, client: Pick<Client, "state">, rates: RateCard): HourlyTerms {
-  const b = hourlyBounds(h);
+/** Amounts are held in rupees; for a client abroad each is snapped to a whole cent of THEIR currency, and a total to a whole unit, so what they see adds up. */
+function hourlyRounding(client: Pick<Client, "state" | "currency">, rates: RateCard) {
+  const money = quoteMoney(client, rates, "hourly");
+  const foreign = isForeign(money);
   return {
+    money,
+    foreign,
+    snap: (inr: number) => (foreign ? (Math.round((inr / money.unit) * 100) / 100) * money.unit : round2(inr)),
+    whole: (inr: number) => (foreign ? Math.round(inr / money.unit) * money.unit : Math.round(inr)),
+  };
+}
+
+/** The price of an hour as held in rupees: the quotation-currency price times the rupee value of one unit, or the rupee rate itself. */
+export function hourlyRateInr(h: Pick<HourlyEngagement, "rate" | "rateNative">, client: Pick<Client, "state" | "currency">, rates: RateCard): number {
+  const { money, foreign } = hourlyRounding(client, rates);
+  return foreign && h.rateNative && h.rateNative > 0 ? h.rateNative * money.unit : h.rate;
+}
+
+/** Where the price came from, in words, when it was taken from a market rate. */
+export function marketNote(h: HourlyEngagement): string | undefined {
+  const m = h.market;
+  if (!m) return undefined;
+  const kind = { employee: "employee wage", freelancer: "freelancer billing rate", agency: "agency billing rate" }[m.kind];
+  const where = [h.country, h.roleId, h.levelId].filter(Boolean).join(" / ");
+  return `Market benchmark: ${kind} for ${where}, from ${m.effectiveDate} (${m.source})${m.illustrative ? ". An illustrative assumption, not a measured market rate" : ""}${h.override ? ". The price was set by hand and differs from the benchmark" : ""}.`;
+}
+
+export function hourlyTerms(h: HourlyEngagement, client: Pick<Client, "state" | "currency">, rates: RateCard): HourlyTerms {
+  const b = hourlyBounds(h);
+  const rate = hourlyRateInr(h, client, rates);
+  const note = marketNote(h);
+  return {
+    ...(note ? { marketNote: note } : {}),
     role: h.role,
-    rate: h.rate,
+    rate,
     cycle: h.cycle,
     rangePct: h.rangePct,
     minHours: b.min,
     expectedHours: b.expected,
     capHours: b.cap,
-    minTotal: hourlyTotal(b.min, h.rate, client, rates),
-    expectedTotal: hourlyTotal(b.expected, h.rate, client, rates),
-    capTotal: hourlyTotal(b.cap, h.rate, client, rates),
+    minTotal: hourlyTotal(b.min, rate, client, rates),
+    expectedTotal: hourlyTotal(b.expected, rate, client, rates),
+    capTotal: hourlyTotal(b.cap, rate, client, rates),
   };
 }
 
 /** The quotation for an hourly engagement. The grand total is the ESTIMATE; the bill is the hours actually worked, up to the cap. */
-export function buildHourlyQuote(req: Requirement, client: Pick<Client, "state">, rates: RateCard): Quote {
+export function buildHourlyQuote(req: Requirement, client: Pick<Client, "state" | "currency">, rates: RateCard): Quote {
   const h = req.hourly;
   if (!h || h.rate <= 0 || h.estimatedHours <= 0) throw new Error("An hourly engagement needs a rate and an estimate of the hours.");
   const terms = hourlyTerms(h, client, rates);
+  const { snap, whole, money, foreign } = hourlyRounding(client, rates);
   const hours = terms.expectedHours;
-  const amount = round2(hours * h.rate);
+  const amount = snap(hours * terms.rate);
   const items: LineItem[] = [
-    { category: "development", description: `${h.role || "Specialist"}: hourly engagement (estimate)`, detail: `Billed for the hours actually worked, not more than ${terms.capHours} hours without your approval.`, qty: hours, unit: "hour", rate: h.rate, amount },
+    { category: "development", description: `${h.role || "Specialist"}: hourly engagement (estimate)`, detail: `Billed for the hours actually worked, not more than ${terms.capHours} hours without your approval.`, qty: hours, unit: "hour", rate: terms.rate, amount },
   ];
   const gst = gstFor(client, rates, amount);
-  const exact = round2(amount + gst.total);
-  const grandTotal = Math.round(exact);
-  const advance = Math.round((grandTotal * rates.advancePercent) / 100);
+  const exact = snap(amount + gst.total);
+  const grandTotal = whole(exact);
+  const advance = whole((grandTotal * rates.advancePercent) / 100);
   return {
+    ...(foreign ? { currency: money.code, inrPerUnit: money.unit } : {}),
     hourly: terms,
     items,
     totalHours: hours,
@@ -68,7 +102,7 @@ export function buildHourlyQuote(req: Requirement, client: Pick<Client, "state">
     discount: 0,
     taxable: amount,
     gst,
-    roundOff: round2(grandTotal - exact),
+    roundOff: snap(grandTotal - exact),
     grandTotal,
     schedule: [
       { label: "Advance - before work starts, adjusted in the final bill", percent: rates.advancePercent, amount: advance },

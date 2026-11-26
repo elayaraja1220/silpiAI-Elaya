@@ -106,6 +106,8 @@ export type Client = {
    * Absent or "INR": rupees, with GST as before. Nothing else about the client changes.
    */
   currency?: string;
+  /** Two-letter country code. A client outside India is quoted for their country; the currency follows from it unless one is chosen. */
+  country?: string;
 };
 
 /**
@@ -165,6 +167,35 @@ export type HourlyEngagement = {
   /** The estimate can be this percent lower or higher; the higher end is the cap. */
   rangePct: number;
   cycle: BillingCycle;
+  /**
+   * The price of one hour in the QUOTATION'S currency (for example 55.00 pounds), when that is not rupees. `rate` is then the rupee equivalent held in the books.
+   * Absent for a quotation in rupees.
+   */
+  rateNative?: number;
+  /** The country, developer role and experience level the market rate was looked up for. */
+  country?: string;
+  roleId?: string;
+  levelId?: string;
+  /** The market rate this price was taken from, copied as it was when the quotation was made, so what was agreed can always be shown. Filled in by the server. */
+  market?: MarketSnapshot;
+  /** True when the team typed a different price from the market rate on purpose. */
+  override?: boolean;
+};
+
+/** The official market figure behind an hourly price, as it was when the quotation was made. Amounts are in the smallest unit of `currency`. */
+export type MarketSnapshot = {
+  rateId: number;
+  kind: "employee" | "freelancer" | "agency";
+  currency: string;
+  minMinor: number;
+  medianMinor: number;
+  maxMinor: number;
+  billedMinor: number;
+  source: string;
+  effectiveDate: string;
+  illustrative: boolean;
+  stale: boolean;
+  billsAtCost: boolean;
 };
 
 export type Requirement = {
@@ -369,6 +400,8 @@ export type HourlyTerms = {
   minTotal: number;
   expectedTotal: number;
   capTotal: number;
+  /** Where the price came from, in words, when it was taken from a market rate. */
+  marketNote?: string;
 };
 
 export type Quote = {
