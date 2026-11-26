@@ -331,12 +331,14 @@ async function main() {
   await step("the studio sends a non-administrator to the administrator sign-in, and opens for an administrator without recurring income on the Overview", async () => {
     // The read-only viewer from the step before is still signed in in this browser: sign out first, so this is a visitor with no administrator session.
     await run("fetch('/api/admin/session', { method: 'DELETE' })");
-    await go(`${BASE}/`);
+    await go(`${BASE}/clients`);
     await waitFor("the administrator sign-in", async () => (await run("location.pathname")) === "/admin/sign-in", 60000);
     // A page compiled for the first time can still be starting up when the fields appear, and its start-up empties them: fill until the form keeps the values.
     await waitFor("the sign-in form to keep what was typed", async () => { await fill("input[aria-label='Administrator email']", "e2e-admin@example.test"); await fill("input[aria-label='Administrator password']", PASS + "xx"); await sleep(500); return run("(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Sign in'); return !!b && !b.disabled; })()"); }, 60000);
     await mustClick("Sign in", "button");
-    await waitFor("the studio", async () => (await run("location.pathname")) === "/", 60000);
+    await waitFor("the studio", async () => (await run("location.pathname")) === "/clients", 60000);
+    await go(`${BASE}/`);
+    await waitFor("the Overview", async () => (await run("location.pathname")) === "/", 60000);
     await waitFor("the Recurring income link in the studio sidebar", () => run("!!document.querySelector('a[href=\"/recurring-income\"]')"), 60000);
     const cardHere = "[...document.querySelectorAll('main h3')].some(h => h.textContent.trim() === 'Recurring income')";
     await sleep(1500);

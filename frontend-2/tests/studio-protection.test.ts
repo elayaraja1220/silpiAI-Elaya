@@ -39,7 +39,7 @@ describe("1. where a sign-in returns to", () => {
 describe("2. the studio pages", () => {
   it("send anyone who is not signed in as an administrator to the sign-in page, remembering where they were going, on localhost too", async () => {
     const { mw } = await mods();
-    for (const p of ["/", "/clients", "/clients/quote", "/clients/abc123", "/projects", "/existing", "/activity", "/pricing", "/plans", "/settings", "/recurring-income"]) {
+    for (const p of ["/clients", "/clients/quote", "/clients/abc123", "/projects", "/existing", "/activity", "/pricing", "/plans", "/settings", "/recurring-income"]) {
       const res = mw.middleware(req(p));
       assert.equal(res.status, 307, p);
       const to = new URL(res.headers.get("location")!);
@@ -48,6 +48,19 @@ describe("2. the studio pages", () => {
     }
     const query = mw.middleware(req("/clients/abc?tab=costs"));
     assert.equal(new URL(query.headers.get("location")!).searchParams.get("next"), "/clients/abc?tab=costs");
+  });
+  it("the site's own address opens on the client sign-in page, a signed-in client's dashboard, or the studio for an administrator", async () => {
+    const { mw, auth } = await mods();
+    const plain = mw.middleware(req("/?x=1"));
+    assert.equal(plain.status, 307);
+    assert.equal(new URL(plain.headers.get("location")!).pathname + new URL(plain.headers.get("location")!).search, "/sign-in", "a plain /sign-in, nothing after the ?");
+    const acc = await import("@/server/client-accounts");
+    const ses = await import("@/server/sessions");
+    const { user } = await acc.signUp({ name: "Root Visitor", email: "root@studio.example", password: "a-correct-horse-battery", acceptTerms: true });
+    const client = mw.middleware(req("/", { cookie: `${ses.SESSION_COOKIE}=${ses.createSession(user.id).token}` }));
+    assert.equal(new URL(client.headers.get("location")!).pathname, "/dashboard");
+    assert.ok(passes(mw.middleware(req("/", { cookie: `${auth.ADMIN_COOKIE}=${auth.createSession().value}` }))), "an administrator sees the studio's Overview");
+    assert.equal(new URL(mw.middleware(req("/clients")).headers.get("location")!).pathname, "/admin/sign-in", "every other studio page still asks for the administrator");
   });
   it("are not opened by a host, a forwarding header or a proxy header: the old rule that opened localhost is gone", async () => {
     const { mw } = await mods();
