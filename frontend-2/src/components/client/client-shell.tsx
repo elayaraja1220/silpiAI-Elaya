@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { Bell, Command, CreditCard, FolderKanban, Home, LogIn, Menu, Plus, Sparkles, UserRound, X, type LucideIcon } from "lucide-react";
+import { Bell, ChevronRight, Command, CreditCard, FolderKanban, Home, LogIn, Menu, Plus, Sparkles, UserRound, X, type LucideIcon } from "lucide-react";
 
 import { ProfileMenu } from "@/components/client/profile-menu";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,9 @@ const SIDEBAR_PROJECTS = 8;
 /** The dot beside a project in the sidebar: violet while its quotation waits, green once it is approved and beyond, grey for a request or a closed one. */
 const dotOf = (stage: string) => (stage === "quoted" ? "bg-violet-400" : stage === "requirement" || stage === "lost" ? "bg-slate-500" : "bg-emerald-400");
 
-export function ClientShell({ children, frame }: { children: ReactNode; frame: ClientFrameData | null }) {
+export type Crumb = { label: string; href?: string };
+
+export function ClientShell({ children, frame, crumbs }: { children: ReactNode; frame: ClientFrameData | null; /** Where this page is, shown at the left of the top bar (the last one is the page itself). */ crumbs?: Crumb[] }) {
   const [open, setOpen] = useState(false);
   const path = usePathname();
   useEffect(() => setOpen(false), [path]);
@@ -56,6 +58,16 @@ export function ClientShell({ children, frame }: { children: ReactNode; frame: C
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#a89bff] to-[#6c5ce7] text-[#11131b]"><Command size={16} /></span>
               <span className="text-sm font-semibold tracking-[.12em]">SILPI<span className="text-violet-300"> AI</span></span>
             </Link>
+            {crumbs && crumbs.length > 0 && (
+              <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-2 text-sm sm:flex" data-testid="breadcrumb">
+                {crumbs.map((c, i) => (
+                  <span key={i} className="flex min-w-0 items-center gap-2">
+                    {i > 0 && <ChevronRight size={14} className="shrink-0 text-slate-600" />}
+                    {c.href && i < crumbs.length - 1 ? <Link href={c.href} className="truncate text-slate-400 hover:text-slate-200">{c.label}</Link> : <span aria-current={i === crumbs.length - 1 ? "page" : undefined} className="truncate font-medium text-slate-100">{c.label}</span>}
+                  </span>
+                ))}
+              </nav>
+            )}
             <div className="ml-auto flex items-center gap-2">
               <Link href="/clients/new" className="inline-flex items-center gap-1.5 rounded-lg bg-violet-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-violet-400"><Plus size={14} /> <span className="hidden sm:inline">New project</span></Link>
               <Link href="/notifications" aria-label="Updates" className="rounded-lg border border-white/10 p-2 text-slate-300 hover:bg-white/[.05]"><Bell size={17} /></Link>
@@ -70,7 +82,7 @@ export function ClientShell({ children, frame }: { children: ReactNode; frame: C
 
 function Sidebar({ frame, path }: { frame: ClientFrameData | null; path: string }) {
   const projects = frame?.projects ?? [];
-  const on = (href: string) => path === href || (href !== "/client/dashboard" && path.startsWith(`${href}/`));
+  const on = (href: string) => (href === "/my-projects" && path.startsWith("/q/")) || path === href || (href !== "/client/dashboard" && path.startsWith(`${href}/`));
   return (
     <div className="flex h-full flex-col">
       <Link href="/client/dashboard" className="flex h-16 shrink-0 items-center gap-3 border-b border-white/[.07] px-5" aria-label="SILPI AI">

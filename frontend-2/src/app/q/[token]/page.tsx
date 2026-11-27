@@ -18,7 +18,7 @@ export default async function QuotationLinkPage({ params }: { params: Promise<{ 
   const { token } = await params;
   const frame = await clientFrame();
   return (
-    <ClientShell frame={frame}>
+    <ClientShell frame={frame} crumbs={[{ label: "My Projects", href: "/my-projects" }, { label: "Project Details" }]}>
       <ClientQuotation token={token} signedInName={frame?.user.name ?? ""} />
     </ClientShell>
   );

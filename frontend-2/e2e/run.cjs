@@ -301,6 +301,14 @@ async function main() {
     await mustClick("Review and approve", "a");
     await waitText("Approve & confirm project", 60000);
     await shot("quotation-page");
+    // The full quotation is not on this page: it has its own page, reached by "Show quotation". The top offers PDF only.
+    assert(!(await bodyText()).includes("BILL TO"), "the quotation document is not at the bottom of this page");
+    assert(/quotation sq-[0-9]{4}-[0-9]{4}/i.test(await run("document.querySelector('[data-testid=quotation-number]').innerText")), "the quotation number stands out at the top");
+    assert(await run("document.querySelector('[data-testid=show-quotation]') !== null && document.querySelector('[data-testid=show-quotation-card]') === null"), "Show quotation is at the top, and there is no Your full quotation card at the bottom");
+    assert(await run("(() => { const c = document.querySelector('[data-testid=breadcrumb]'); return !!c && c.innerText.includes('My Projects') && c.innerText.includes('Project Details'); })()"), "the breadcrumb says where this is: My Projects, Project Details");
+    assert(await run("document.querySelector('nav[aria-label=Main] a[aria-current=page]').textContent.trim() === 'My Projects'"), "My Projects is lit in the sidebar");
+    assert(await run("document.querySelector('[data-testid=quotation-pdf]').getAttribute('href').includes('format=pdf')"), "PDF at the top");
+    assert(!(await run("[...document.querySelectorAll('a, button')].some(b => b.textContent.trim() === 'Word')")), "no Word button");
     const t = await bodyText();
     assert(t.includes("My Projects") && t.includes("Priya Client"), "the client's frame shows on the quotation page");
     assert(!(await run("[...document.querySelectorAll('aside button')].some(b => b.textContent.trim() === 'Sign out')")), "Sign out is not a separate button in the sidebar: it is in the account menu");
@@ -320,6 +328,8 @@ async function main() {
     await waitFor("the approval", async () => /Approved.*Thank you/.test(await bodyText()), 60000);
     // After approval the client sends their files in the same layout as the studio's tab: a menu, the item, a status box.
     await waitFor("the files section", () => run("!!document.querySelector('[data-testid=client-files]')"), 60000);
+    assert(await run("document.querySelector('[data-testid=approved-card]') !== null && document.querySelector('[data-testid=pay-card]') !== null"), "the approved card and the pay-the-advance card are shown after approval");
+    assert((await run("document.querySelectorAll('[data-testid=client-files] > div').length")) === 2, "the files summary is a card of its own, above the files panel");
     const files = await run("document.querySelector('[data-testid=client-files]').innerText");
     assert(/BRAND/i.test(files) && /PAGES: DESIGN AND CONTENT/i.test(files) && files.includes("Brand identity") && files.includes("Status"), "the files menu shows the groups and the status box");
     assert(!/Mark as received/i.test(files), "checking files stays with the studio");
@@ -329,6 +339,31 @@ async function main() {
     assert(await fitsWidth(), "the wider files section does not make the page scroll sideways");
     assert(await run("(() => { const s = document.querySelector('[data-testid=client-files]').getBoundingClientRect(); const side = document.querySelector('aside[aria-label=\"Client menu\"]').getBoundingClientRect(); return side.width === 0 || s.left >= side.right; })()"), "the files section does not run under the sidebar");
     await shot("client-files");
+  });
+
+  await step("Show quotation opens the full quotation on its own page, with PDF, Print, and WhatsApp and e-mail to the client's number and address", async () => {
+    await ready("[data-testid=show-quotation]");
+    await run("document.querySelector('[data-testid=show-quotation]').click()");
+    await waitFor("the quotation page", async () => (await run("location.pathname")).endsWith("/quotation"), 60000);
+    await waitText("BILL TO", 60000);
+    const text = await bodyText();
+    assert(text.includes("PROPOSALS TO CHOOSE FROM") || text.includes("Proposals to choose from") || text.includes("DEVELOPMENT PAYMENT SCHEDULE") || /Grand total/i.test(text), "the full quotation is shown");
+    assert(/quotation sq-[0-9]{4}-[0-9]{4}/i.test(await run("document.querySelector('[data-testid=quotation-number]').innerText")), "the quotation number stands out at the top");
+    assert(await run("document.querySelector('[data-testid=quotation-pdf]').getAttribute('href').includes('format=pdf')"), "PDF at the top");
+    assert(!(await run("[...document.querySelectorAll('a, button')].some(b => b.textContent.trim() === 'Word')")), "no Word button");
+    assert(await run("document.querySelector('[data-testid=quotation-print]') !== null"), "Print");
+    // The share links go to the number and the address on the quotation, with the message written and the link to this quotation in it.
+    const wa = await run("document.querySelector('[data-testid=share-whatsapp]').getAttribute('href')");
+    assert(wa.startsWith("https://wa.me/919876543210?text="), "WhatsApp opens the client's number: " + wa.slice(0, 60));
+    const waText = decodeURIComponent(wa.split("?text=")[1]);
+    assert(/SQ-[0-9]{4}-[0-9]{4}/.test(waText) && waText.includes("/q/"), "the WhatsApp message names the quotation and carries its link");
+    const mail = await run("document.querySelector('[data-testid=share-email]').getAttribute('href')");
+    assert(mail.startsWith("mailto:priya@e2e.test?subject="), "the e-mail opens to the client's address: " + mail.slice(0, 60));
+    assert(decodeURIComponent(mail.split("&body=")[1]).includes("/q/"), "the e-mail carries the link");
+    assert(await fitsWidth(), "the quotation page fits the screen");
+    await shot("quotation-document");
+    await mustClick("Back to your quotation", "a");
+    await waitFor("back on the first quotation page", async () => !(await run("location.pathname")).endsWith("/quotation"), 60000);
   });
 
   await step("Start with SILPI AI: no plan yet, so the plans come first; choosing Free opens the AI workspace", async () => {

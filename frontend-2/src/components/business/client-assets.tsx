@@ -86,8 +86,10 @@ export function ClientAssets({ token }: { token: string }) {
   const pager = { hasPrev: index > 0, hasNext: index < entries.length - 1, onPrev: () => setSelected(entries[index - 1].key), onNext: () => setSelected(entries[index + 1].key) };
 
   return (
-    <section id="send-files" className="overflow-hidden rounded-2xl border border-white/[.08] bg-white/[.03]" data-testid="client-files">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/[.07] bg-black/20 px-5 py-4">
+    <section id="send-files" className="space-y-4" data-testid="client-files">
+     {/* The summary is a card of its own, above the panel with the files. */}
+     <div className="overflow-hidden rounded-2xl border border-white/[.08] bg-gradient-to-br from-[#171b2e] to-[#10131f]">
+      <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300"><FolderInput size={18} /></span>
           <div>
@@ -105,6 +107,8 @@ export function ClientAssets({ token }: { token: string }) {
         </dl>
       </div>
       <div className="h-1 bg-white/[.06]"><div className="h-full bg-gradient-to-r from-violet-500 to-emerald-400 transition-all" style={{ width: `${progress.percent}%` }} /></div>
+     </div>
+     <div className="overflow-hidden rounded-2xl border border-white/[.08] bg-white/[.03]">
       {error && <p className="m-4 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">{error}</p>}
 
       <div className="grid lg:grid-cols-[240px_1fr]">
@@ -155,6 +159,7 @@ export function ClientAssets({ token }: { token: string }) {
           <ItemEditor key={`${current.assets[0].id}-${current.assets[0].updatedAt}`} asset={current.assets[0]} actions={actions} pager={pager} />
         )}
       </div>
+     </div>
     </section>
   );
 }

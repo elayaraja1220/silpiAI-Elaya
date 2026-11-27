@@ -62,3 +62,17 @@ export function Wave({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/** Soft glowing curves behind the top of a page's header. Decorative. */
+export function Swoosh({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 380 150" className={className} aria-hidden fill="none">
+      <defs>
+        <linearGradient id="sw-a" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stopColor="#8b5cf6" stopOpacity="0" /><stop offset=".55" stopColor="#a78bfa" stopOpacity=".7" /><stop offset="1" stopColor="#c4b5fd" stopOpacity=".15" /></linearGradient>
+      </defs>
+      <path d="M0 130 C 80 120, 130 40, 230 52 S 340 20, 380 4" stroke="url(#sw-a)" strokeWidth="2" />
+      <path d="M20 146 C 100 136, 150 66, 240 74 S 340 50, 380 30" stroke="url(#sw-a)" strokeWidth="1.2" opacity=".7" />
+      <path d="M50 150 C 130 144, 180 92, 260 96 S 350 80, 380 64" stroke="url(#sw-a)" strokeWidth="1" opacity=".45" />
+    </svg>
+  );
+}

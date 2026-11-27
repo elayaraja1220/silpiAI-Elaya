@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, FileDown, Loader2, MessageSquare, MonitorPlay } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Check, ExternalLink, FileDown, FileText, Loader2, MessageSquare, MonitorPlay, Wallet } from "lucide-react";
 
 import { ClientChatWidget } from "@/components/business/client-chat-widget";
 import { ClientAssets } from "@/components/business/client-assets";
-import { QuotationDocument } from "@/components/business/quotation-document";
+import { Swoosh } from "@/components/client/dashboard-art";
 import type { TechPreview, TechSelection } from "@/lib/business/client-tech";
 import type { ClientView, OpenPoint } from "@/lib/business/client-view";
 import { upiLink } from "@/lib/business/payment-status";
@@ -132,60 +133,86 @@ export function ClientQuotation({ token, signedInName = "" }: { token: string; s
 
   return (
     <MoneyProvider quote={q}>
-      <div className="mx-auto max-w-4xl space-y-6">
-        <header className="no-print flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[.2em] text-violet-300">Fixed price · Quotation {view.number}</p>
-            <h1 className="mt-1 text-2xl font-semibold text-white">{view.requirement.title}</h1>
-            <p className="text-sm text-slate-400">from {q.business.name}</p>
+      <div className="w-full space-y-6">
+        <header className="no-print relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <Swoosh className="pointer-events-none absolute -top-8 right-0 hidden h-36 w-96 sm:block" />
+          <div className="relative min-w-0">
+            {/* The quotation is easy to tell apart from any other: its number leads the page. */}
+            <p className="text-[11px] font-semibold uppercase tracking-[.2em] text-violet-300" data-testid="quotation-number">Fixed price · <span className="text-violet-100">Quotation {view.number}</span></p>
+            <h1 className="mt-2 text-3xl font-semibold leading-tight text-white">{view.requirement.title}</h1>
+            <p className="mt-1 text-sm text-slate-400">from {q.business.name} · valid until {new Date(q.validUntil).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</p>
           </div>
-          <div className="flex gap-2">
-            <a href={`/api/client/${encodeURIComponent(token)}/document?format=pdf`} className={`flex items-center gap-1.5 ${ghost}`}><FileDown size={15} /> PDF</a>
-            <a href={`/api/client/${encodeURIComponent(token)}/document?format=docx`} className={`flex items-center gap-1.5 ${ghost}`}><FileDown size={15} /> Word</a>
+          <div className="relative flex shrink-0 gap-2 sm:ml-auto">
+            <Link href={`/q/${encodeURIComponent(token)}/quotation`} className="flex items-center gap-1.5 rounded-lg bg-violet-500 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-violet-400" data-testid="show-quotation"><FileText size={15} /> Show quotation</Link>
+            <a href={`/api/client/${encodeURIComponent(token)}/document?format=pdf`} className={`flex items-center gap-1.5 ${ghost}`} data-testid="quotation-pdf"><FileDown size={15} /> PDF</a>
           </div>
         </header>
 
+        <div className="grid items-stretch gap-4 lg:grid-cols-2">
         {approved && (
-          <section className="no-print rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-5">
-            <p className="flex items-center gap-2 font-semibold text-emerald-300"><CheckCircle2 size={18} /> Approved{response?.tier ? `: ${response.tier} proposal` : ""}. Thank you, {response?.name}!</p>
-            {view.payment && view.payment.advanceRemaining <= 0 ? (
-              <p className="mt-1 text-sm text-emerald-100/90">Advance received. Thank you! {view.stage === "advance_paid" ? "Work starts shortly" : "Work is in progress"}; you will see a demo of every page before the balance is due.</p>
-            ) : view.stage === "in_development" ? (
-              <p className="mt-1 text-sm text-emerald-100/90">Work has started. Please pay the advance of {fmt(view.payment?.advanceRemaining ?? 0)} below.</p>
-            ) : (
-              <p className="mt-1 text-sm text-emerald-100/90">Next step: the advance of {fmt(view.payment?.advanceRemaining ?? q.schedule[0]?.amount ?? 0)} starts the work.{q.hourly ? " You can ask for the log of hours worked at any time." : " You will see a demo of every page before the balance is due."}</p>
-            )}
+          <section className={`no-print flex items-start gap-4 rounded-2xl border border-emerald-400/35 ${view.payment && view.payment.advanceRemaining > 0 ? "" : "lg:col-span-2"} bg-gradient-to-r from-emerald-500/15 to-emerald-500/[.03] p-5`} data-testid="approved-card">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-emerald-400/70 text-emerald-300"><Check size={22} /></span>
+            <div className="min-w-0">
+              <p className="text-base font-semibold text-emerald-300">Approved{response?.tier ? `: ${response.tier} proposal` : ""}. Thank you, {response?.name}!</p>
+              {view.payment && view.payment.advanceRemaining <= 0 ? (
+                <p className="mt-1 text-sm text-emerald-100/90">Advance received. Thank you! {view.stage === "advance_paid" ? "Work starts shortly" : "Work is in progress"}; you will see a demo of every page before the balance is due.</p>
+              ) : view.stage === "in_development" ? (
+                <p className="mt-1 text-sm text-emerald-100/90">Work has started. Please pay the advance of {fmt(view.payment?.advanceRemaining ?? 0)} below.</p>
+              ) : (
+                <p className="mt-1 text-sm text-emerald-100/90">Next step: the advance of {fmt(view.payment?.advanceRemaining ?? q.schedule[0]?.amount ?? 0)} starts the work.{q.hourly ? " You can ask for the log of hours worked at any time." : " You will see a demo of every page before the balance is due."}</p>
+              )}
+            </div>
           </section>
         )}
 
         {approved && view.payment && view.payment.advanceRemaining > 0 && (
-          <section className={`no-print ${card}`}>
-            <h2 className="font-semibold text-white">Pay the advance: {fmt(view.payment.advanceRemaining)}</h2>
-            <p className="mt-1 text-sm text-slate-400">Please write <b className="text-slate-200">{view.payment.reference}</b> in the payment note so we can match it. We confirm by message once it reaches our account.</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <section className={`no-print ${card}`} data-testid="pay-card">
+            <div className="flex items-center gap-4">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[.04] text-violet-300"><Wallet size={26} /></span>
+              <div
+                className="min-w-0 flex-1"
+                title={`Please write ${view.payment.reference} in the payment note so we can match it. We confirm by message once it reaches our account.${!view.payment.upiId && !view.payment.bankDetails ? " We will send the payment details to you shortly." : ""}`}
+                data-testid="pay-note"
+              >
+                <h2 className="text-lg font-semibold text-white">Pay the advance: {fmt(view.payment.advanceRemaining)}</h2>
+                <p className="mt-1 line-clamp-2 text-sm text-slate-400">
+                  Please write <b className="text-slate-200">{view.payment.reference}</b> in the payment note so we can match it. We confirm by message once it reaches our account.
+                  {!view.payment.upiId && !view.payment.bankDetails ? " We will send the payment details to you shortly." : ""}
+                </p>
+              </div>
               {view.payment.upiId && (
-                <div className="rounded-xl border border-white/10 p-4">
-                  <p className="text-xs uppercase tracking-wider text-slate-500">UPI</p>
-                  <p className="mt-1 font-mono text-base text-white">{view.payment.upiId}</p>
-                  <a
-                    href={upiLink(view.payment.upiId, view.payment.payee, view.payment.advanceRemaining, view.payment.reference)}
-                    className="mt-3 inline-flex rounded-lg bg-violet-500 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-400"
-                  >
-                    Pay with UPI app
-                  </a>
-                  <p className="mt-2 text-[11px] text-slate-500">The button works on a phone with any UPI app. On a computer, pay to the UPI ID above from your phone.</p>
-                </div>
+                <a
+                  href={upiLink(view.payment.upiId, view.payment.payee, view.payment.advanceRemaining, view.payment.reference)}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-900/40 transition hover:brightness-110"
+                  data-testid="pay-advance"
+                >
+                  Pay advance <ArrowRight size={16} />
+                </a>
               )}
-              {view.payment.bankDetails && (
-                <div className="rounded-xl border border-white/10 p-4">
-                  <p className="text-xs uppercase tracking-wider text-slate-500">Bank transfer</p>
-                  <p className="mt-1 whitespace-pre-line text-sm text-slate-200">{view.payment.bankDetails}</p>
-                </div>
+              {!view.payment.upiId && (
+                <span className="inline-flex shrink-0 cursor-not-allowed items-center gap-2 rounded-xl bg-white/[.06] px-5 py-3 text-sm font-semibold text-slate-500" aria-disabled="true">Pay advance <ArrowRight size={16} /></span>
               )}
-              {!view.payment.upiId && !view.payment.bankDetails && <p className="text-sm text-slate-400">We will send the payment details to you shortly.</p>}
             </div>
+            {(view.payment.upiId || view.payment.bankDetails) && (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {view.payment.upiId && (
+                  <div className="rounded-xl border border-white/10 p-4">
+                    <p className="text-xs uppercase tracking-wider text-slate-500">UPI</p>
+                    <p className="mt-1 font-mono text-base text-white">{view.payment.upiId}</p>
+                    <p className="mt-2 text-[11px] text-slate-500">The Pay advance button works on a phone with any UPI app. On a computer, pay to this UPI ID from your phone.</p>
+                  </div>
+                )}
+                {view.payment.bankDetails && (
+                  <div className="rounded-xl border border-white/10 p-4">
+                    <p className="text-xs uppercase tracking-wider text-slate-500">Bank transfer</p>
+                    <p className="mt-1 whitespace-pre-line text-sm text-slate-200">{view.payment.bankDetails}</p>
+                  </div>
+                )}
+              </div>
+            )}
           </section>
         )}
+        </div>
         {view.demo && (
           <section className="no-print rounded-2xl border border-violet-400/30 bg-violet-500/10 p-5">
             <h2 className="flex items-center gap-2 font-semibold text-violet-200"><MonitorPlay size={18} /> Preview your website</h2>
@@ -197,7 +224,7 @@ export function ClientQuotation({ token, signedInName = "" }: { token: string; s
           </section>
         )}
         {/* The files section uses the full width of the client area (menu, item, status box), wider than the rest of this page. */}
-        {approved && <div className="no-print relative left-1/2 w-[min(72rem,calc(100vw-2rem))] -translate-x-1/2 lg:w-[min(72rem,calc(100vw-20rem))]"><ClientAssets token={token} /></div>}
+        {approved && <div className="no-print"><ClientAssets token={token} /></div>}
         {!approved && view.preliminary && view.open && (
           <p data-testid="preliminary-banner" className="no-print rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
             <b>Preliminary estimate.</b> A few details of your project are still open, so this price may change. {openPoints.length ? "Settle them just below and the quotation can be approved." : "We will confirm them with you; you can ask for changes now."}
@@ -351,13 +378,6 @@ export function ClientQuotation({ token, signedInName = "" }: { token: string; s
           </section>
         )}
 
-        <QuotationDocument
-          quotation={q}
-          requirement={q.requirement!}
-          running={view.running}
-          deferred={view.deferred}
-          techAction={view.open && !q.hourly ? { onChoose: () => setTechOpen(true), chosen: techChoice?.preview.stack ?? null } : undefined}
-        />
         {techOpen && <div className="no-print"><TechnologyChooser endpoint={`/api/client/${encodeURIComponent(token)}/technology`} tier={tier ?? "standard"} value={techChoice?.tech ?? null} onClose={() => setTechOpen(false)} onApply={(t, preview) => { setTechChoice({ tech: t, preview }); setTechOpen(false); }} /></div>}
         <p className="no-print pb-6 text-center text-xs text-slate-500">This page is private to you. Please do not share the link.</p>
         <div className="no-print"><ClientChatWidget token={token} businessName={q.business.name} /></div>

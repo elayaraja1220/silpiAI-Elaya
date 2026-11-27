@@ -12,6 +12,7 @@ import { fromRupees, isForeign, moneyOf, toRupees } from "@/lib/business/money";
 import { useMoney } from "./money-context";
 import type { Proposal } from "@/lib/business/proposals";
 import { paymentStatus } from "@/lib/business/payment-status";
+import { mailtoLink, whatsappLink } from "@/lib/share-quotation";
 import { PAYMENT_MODES, type ComparisonRow, type Lead, type PaymentMode, type Stage } from "@/lib/business/types";
 import { cn } from "@/lib/utils";
 
@@ -122,12 +123,6 @@ export function ProposalsPanel({ lead, editable, onChanged }: { lead: Lead; edit
 }
 
 /** Downloads and the client's private approval link, with their latest answer. */
-/** WhatsApp wants the number with country code and digits only. */
-function whatsappNumber(phone: string): string {
-  const digits = phone.replace(/\D/g, "").replace(/^0+/, "");
-  return digits.length === 10 ? `91${digits}` : digits;
-}
-
 export function SharePanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { lead: Lead; history: History }) => void }) {
   const { fmt } = useMoney();
   const [link, setLink] = useState(lead.shareToken ? `/q/${lead.shareToken}` : "");
@@ -198,7 +193,7 @@ export function SharePanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { l
           </div>
           <div className="grid grid-cols-2 gap-2">
             <a
-              href={`https://wa.me/${whatsappNumber(lead.client.phone)}?text=${encodeURIComponent(text)}`}
+              href={whatsappLink(lead.client.phone, text)}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => logSent("whatsapp")}
@@ -207,7 +202,7 @@ export function SharePanel({ lead, onChanged }: { lead: Lead; onChanged: (r: { l
               <MessageCircle size={15} /> WhatsApp
             </a>
             <a
-              href={`mailto:${lead.client.email}?subject=${encodeURIComponent(`Quotation ${q?.number ?? ""} from ${q?.business.name ?? ""}`)}&body=${encodeURIComponent(text)}`}
+              href={mailtoLink(lead.client.email, `Quotation ${q?.number ?? ""} from ${q?.business.name ?? ""}`, text)}
               onClick={() => logSent("email")}
               className={button}
             >
