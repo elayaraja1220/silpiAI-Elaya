@@ -281,7 +281,7 @@ describe("4. the account doors", () => {
 
 describe("5. the pages and the way around", () => {
   it("every client page needs a client sign-in and sends everyone else to sign in and back", () => {
-    for (const [file, next] of [["dashboard/page.tsx", '"/dashboard"'], ["my-projects/page.tsx", '"/my-projects"'], ["notifications/page.tsx", '"/notifications"'], ["profile/page.tsx", '"/profile"'], ["my-projects/[id]/page.tsx", "`/my-projects/${id}`"]] as const) {
+    for (const [file, next] of [["client/dashboard/page.tsx", '"/client/dashboard"'], ["my-projects/page.tsx", '"/my-projects"'], ["notifications/page.tsx", '"/notifications"'], ["profile/page.tsx", '"/profile"'], ["my-projects/[id]/page.tsx", "`/my-projects/${id}`"]] as const) {
       assert.ok(existsSync(path.join(process.cwd(), "src/app/(client)", file)), file);
       assert.ok(read(`src/app/(client)/${file}`).includes(`requireClient(${next})`), file);
     }
@@ -289,23 +289,23 @@ describe("5. the pages and the way around", () => {
   });
   it("none of these addresses is a studio page, so the administrator guard does not catch them (and a studio page is not shadowed by one)", async () => {
     const mw = await import("@/middleware");
-    for (const p of ["/dashboard", "/my-projects", "/my-projects/abc", "/notifications", "/profile"]) {
+    for (const p of ["/dashboard", "/client/dashboard", "/ai/dashboard", "/my-projects", "/my-projects/abc", "/notifications", "/profile"]) {
       assert.ok(!mw.config.matcher.some((m) => m === p || (m.endsWith("/:path*") && p.startsWith(m.slice(0, -6)))), p);
     }
     for (const studio of ["/projects", "/settings", "/clients", "/recurring-income"]) assert.ok(mw.config.matcher.includes(studio), `${studio} is still the studio's`);
   });
-  it("the client header holds the five places the brief names, a New project button and updates, and nothing of the studio", () => {
+  it("the client sidebar holds the five places the brief names, the top bar a New project button and updates, and nothing of the studio", () => {
     const shell = read("src/components/client/client-shell.tsx");
-    const block = /const NAV = \[([\s\S]*?)\];/.exec(shell)![1]!;
+    const block = /const NAV\b[\s\S]*?\[\] = \[([\s\S]*?)\r?\n\];/.exec(shell)![1]!;
     const items = [...block.matchAll(/href: "([^"]+)", label: "([^"]+)"/g)].map((m) => [m[2], m[1]]);
-    assert.deepEqual(items, [["Dashboard", "/dashboard"], ["My Projects", "/my-projects"], ["AI Workspace", "/ai/builder"], ["Billing", "/ai/billing"], ["Profile", "/profile"]]);
+    assert.deepEqual(items, [["Dashboard", "/client/dashboard"], ["My Projects", "/my-projects"], ["AI Workspace", "/ai/builder"], ["Billing", "/ai/billing"], ["Profile", "/profile"]]);
     assert.match(shell, /href="\/clients\/new"/);
     assert.match(shell, /href="\/notifications"/);
     assert.ok(!/\/ai\/admin|recurring|\/clients\/quote|\/pricing|\/activity|\/settings/i.test(shell));
   });
-  it("the AI workspace leads back to the dashboard and sends a visitor to the one sign-in page and back", () => {
+  it("the AI workspace has its own dashboard link and sends a visitor to the one sign-in page and back", () => {
     const ai = read("src/components/ai/ai-shell.tsx");
-    assert.match(ai, /href: "\/dashboard", label: "Dashboard"/);
+    assert.match(ai, /href: "\/ai\/dashboard", label: "Dashboard"/);
     assert.match(ai, /window\.location\.assign\(`\/sign-in\?next=\$\{encodeURIComponent\(pathname\)\}`\)/);
     assert.ok(!/import \{ SignIn \}/.test(ai));
   });

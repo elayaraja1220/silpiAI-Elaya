@@ -68,7 +68,7 @@ describe("2. the choice page", () => {
     const shell = read("src/components/client/client-shell.tsx");
     const hrefs = [...shell.matchAll(/href(?:=|:\s*)\{?"([^"]+)"/g)].map((m) => m[1]);
     assert.ok(hrefs.length >= 3, hrefs.join(","));
-    for (const h of hrefs) assert.ok(["/clients/new", "/ai/builder", "/ai/billing", "/dashboard", "/my-projects", "/profile", "/notifications"].includes(h!), `unexpected link ${h}`);
+    for (const h of hrefs) assert.ok(["/clients/new", "/ai/builder", "/ai/billing", "/client/dashboard", "/my-projects", "/profile", "/notifications", "/sign-in"].includes(h!), `unexpected link ${h}`);
     assert.ok(!/\/ai\/admin|recurring|\/clients\/quote/i.test(shell));
   });
 });
@@ -132,6 +132,29 @@ describe("6. the hourly choice is switched off in the studio, not removed", () =
     assert.match(c, /if \(!SHOW_HOURLY_ENGAGEMENTS\) return <RequirementWizard onCancel=\{cancel\} onCreated=\{created\} \/>;/);
     assert.match(c, /<HourlyEngagementForm/, "the hourly form is kept for when the switch is turned on");
     assert.ok(existsSync(path.join(process.cwd(), "src/components/business/hourly-engagement-form.tsx")));
+  });
+});
+
+describe("6b. the AI workspace shows Dashboard, hides Billing and the credits chip, without removing them", () => {
+  it("the switches are set, each link or chip only draws when its switch is on, and the pages, the Fixed Price sidebar and the account menu are all still there", async () => {
+    const flags = await import("@/lib/feature-flags");
+    assert.equal(flags.SHOW_AI_DASHBOARD_LINK, true);
+    assert.equal(flags.SHOW_AI_BILLING_LINK, false);
+    assert.equal(flags.SHOW_AI_CREDITS_CHIP, false);
+    const shell = read("src/components/client/client-shell.tsx");
+    const ai = read("src/components/ai/ai-frame.tsx");
+    for (const part of ["{ href: \"/ai/dashboard\", label: \"Dashboard\", icon: LayoutDashboard, show: SHOW_AI_DASHBOARD_LINK", "{ href: \"/ai/billing\", label: \"Billing\", icon: CreditCard, show: SHOW_AI_BILLING_LINK }", "NAV.filter((n) => n.show)"]) assert.ok(ai.includes(part), part);
+    assert.ok(ai.includes('data-theme="light"') && shell.includes('data-theme="dark"'), "the AI workspace is light and the Fixed Price side is dark");
+    assert.ok(shell.includes("{ href: \"/client/dashboard\", label: \"Dashboard\", icon: Home },"), "the Fixed Price sidebar keeps its Dashboard");
+    assert.ok(shell.includes("{ href: \"/ai/billing\", label: \"Billing\", icon: CreditCard },"), "the Fixed Price sidebar keeps its Billing");
+    const aiShell = read("src/components/ai/ai-shell.tsx");
+    assert.ok(aiShell.includes("href=\"/ai/billing\" title=\"Credits available\"") && aiShell.includes("SHOW_AI_CREDITS_CHIP && me"), "the chip is kept and only drawn when its switch is on");
+    const menu = read("src/components/client/profile-menu.tsx");
+    assert.ok(menu.includes('href="/ai/billing"') && menu.includes("Plans and credits") && menu.includes("Billing and invoices"), "with Billing and the chip hidden, plans, credits and invoices are in the account menu");
+    assert.ok(menu.includes('data-testid="sign-out"') && menu.includes("/api/auth/logout"), "Sign out is in the account menu");
+    assert.ok(!ai.includes("/api/auth/logout") && !shell.includes("/api/auth/logout"), "and not a separate button in either sidebar: only the menu signs out");
+    assert.ok(ai.includes('<ProfileMenu app="ai" tone="light"') && shell.includes('<ProfileMenu app="fixed" tone="dark"'), "both applications have the account menu at the bottom of the sidebar");
+    assert.ok(existsSync(path.join(process.cwd(), "src/app/ai/billing/page.tsx")) && existsSync(path.join(process.cwd(), "src/app/(client)/client/dashboard/page.tsx")) && existsSync(path.join(process.cwd(), "src/app/ai/dashboard/page.tsx")), "both dashboards and billing are kept");
   });
 });
 

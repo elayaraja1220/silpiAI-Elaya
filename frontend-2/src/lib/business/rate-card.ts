@@ -47,7 +47,7 @@ export const DEFAULT_RATE_CARD: RateCard = {
     auth: { label: "User login & registration", hours: 16, backend: true, detail: "Sign up, login, forgot password and profile, with secure sessions." },
     "admin-panel": { label: "Admin panel", hours: 30, backend: true, detail: "Private dashboard to add, edit and remove the site's content and records." },
     blog: { label: "Blog / news", hours: 12, backend: true, detail: "Posts with categories, images and SEO fields, edited from the admin." },
-    payments: { label: "Online payments (Razorpay)", hours: 20, backend: true, detail: "UPI, cards and net banking with server-side payment verification." },
+    payments: { label: "Online payments (payment gateway)", hours: 20, backend: true, detail: "UPI, cards and net banking with server-side payment verification." },
     booking: { label: "Booking / appointments", hours: 24, backend: true, detail: "Available slots, booking form, confirmations and admin calendar." },
     search: { label: "Search & filters", hours: 10, backend: true, detail: "Search box with filters and sorting on listings." },
     multilingual: { label: "Multi-language (e.g. Tamil + English)", hours: 14, backend: false, detail: "Language switch with translated pages and menus." },

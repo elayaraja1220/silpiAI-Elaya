@@ -143,9 +143,9 @@ export function suggestStack(req: Requirement, rates: RateCard): StackSuggestion
     }
   }
   if (!backendNeeded && req.modules.includes("contact-form")) {
-    notes.push("Contact form enquiries reach the client by email through a form service (e.g. Web3Forms free plan); no server needed.");
+    notes.push("Contact form enquiries reach the client by email through a form service; no server needed.");
   }
-  if (req.modules.includes("payments")) notes.push("Payments through Razorpay (UPI, cards, net banking).");
+  if (req.modules.includes("payments")) notes.push("Payments through a payment gateway (UPI, cards, net banking).");
   if (req.modules.includes("chat") && (!clientBack.length || clientBack.includes("nodejs"))) notes.push("Live chat uses Socket.IO on the Node server.");
   if (req.modules.includes("multilingual") && (!clientFront.length || clientFront.includes("nextjs"))) notes.push("Translations through next-intl; content can be entered per language.");
   if (req.scope === "module" || req.scope === "version") {

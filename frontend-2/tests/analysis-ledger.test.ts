@@ -386,4 +386,36 @@ describe("decisions on proposals, repricing and the approval gate", () => {
     assert.equal(estimateStatus(current.requirement.insights!.tracker!).level, "validated");
     assert.equal(store.setStage(lead.id, "approved").stage, "approved");
   });
+
+  it("the client settles every open point through their own link and can then approve", async () => {
+    const { store, lead } = await newLead({});
+    const token = store.shareToken(lead.id);
+    const { clientView, openPointsOf } = await import("@/lib/business/client-view");
+    const points = clientView(store.getLead(lead.id)!, store.getRateCard().business)!.openPoints!;
+    const s = estimateStatus(lead.requirement.insights!.tracker!).blockers;
+    assert.equal(points.length, s.criticalQuestions + s.proposals + s.assumptions, "every blocker is offered to the client");
+    // Only the action that fits each kind is accepted.
+    const question = points.find((p) => p.kind === "question")!;
+    const assumption = points.find((p) => p.kind === "assumption")!;
+    assert.throws(() => store.settleAsClient(token, question.id, "agree"), /cannot be settled/);
+    assert.throws(() => store.settleAsClient(token, assumption.id, "include"), /cannot be settled/);
+    assert.throws(() => store.settleAsClient(token, question.id, "answer", " "), /type your answer/);
+    assert.throws(() => store.settleAsClient("not-a-token", question.id, "answer", "Yes"), /not valid/);
+    assert.throws(() => store.respondAsClient(token, { action: "approved", name: "Client", message: "" }), /preliminary estimate/);
+    for (const p of points) {
+      if (p.kind === "question") store.settleAsClient(token, p.id, "answer", "Yes, as described in the brief");
+      else if (p.kind === "assumption") store.settleAsClient(token, p.id, "agree");
+      else store.settleAsClient(token, p.id, p.text.startsWith("Search") ? "include" : "leave-out");
+    }
+    const settled = store.getLead(lead.id)!;
+    assert.deepEqual(openPointsOf(settled), []);
+    assert.ok(settled.requirement.modules.includes("search"), "an included addition joins the scope");
+    assert.equal(settled.requirement.insights!.tracker!.find((i) => i.id === question.id)!.answer, "Yes, as described in the brief");
+    assert.throws(() => store.settleAsClient(token, assumption.id, "agree"), /already settled/);
+    const view = clientView(settled, store.getRateCard().business)!;
+    assert.equal(view.preliminary, undefined);
+    assert.equal(view.openPoints, undefined);
+    assert.equal(store.respondAsClient(token, { action: "approved", name: "Client", message: "", agree: true } as never).stage, "approved");
+    assert.throws(() => store.settleAsClient(token, question.id, "answer", "Late"), /no longer open/);
+  });
 });

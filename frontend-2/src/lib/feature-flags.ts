@@ -17,3 +17,22 @@ export const SHOW_TEAM_LIVE_CHAT = false;
  * Clients never see the hourly choice, whatever this says.
  */
 export const SHOW_HOURLY_ENGAGEMENTS = false;
+
+/**
+ * The "Dashboard" link in the AI workspace's sidebar. Shown: it opens the AI workspace's own dashboard (/ai/dashboard). Set it to false to hide the link again; the page
+ * itself is unchanged either way. The Fixed Price application has its own dashboard (/client/dashboard) and its sidebar always has it.
+ */
+export const SHOW_AI_DASHBOARD_LINK = true;
+
+/**
+ * The "Billing" link in the AI workspace's sidebar (and in the invoice page's header). Hidden for now: plans, credits and invoices are reached from the account menu at the
+ * bottom of the sidebar ("Plans and credits", "Billing and invoices"). The page and everything behind it (plans, credit packs, invoices) are unchanged at /ai/billing, and the
+ * Fixed Price sidebar still has its Billing link.
+ */
+export const SHOW_AI_BILLING_LINK = false;
+
+/**
+ * The credit balance chip in the AI workspace's top bar. Hidden for now: the balance and the plan are in the account menu at the bottom of the sidebar. The chip is kept and
+ * comes back when this is true (it opens the plans and credits page).
+ */
+export const SHOW_AI_CREDITS_CHIP = false;

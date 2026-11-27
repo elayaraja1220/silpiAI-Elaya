@@ -27,7 +27,7 @@ export function middleware(request: NextRequest) {
   if (pathname === "/") {
     const home = request.nextUrl.clone();
     home.search = "";
-    home.pathname = resolveSession(request.cookies.get(SESSION_COOKIE)?.value) ? "/dashboard" : "/sign-in";
+    home.pathname = resolveSession(request.cookies.get(SESSION_COOKIE)?.value) ? "/client/dashboard" : "/sign-in";
     return NextResponse.redirect(home);
   }
   const to = request.nextUrl.clone();

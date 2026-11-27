@@ -389,7 +389,7 @@ export function setTechnology(id: string, tech: TechSelection): Lead {
  * Accepting an item that maps to a feature adds that feature, so the quotation is priced again (a new version; the old one is kept);
  * rejecting it later takes the feature out again.
  */
-export function decideInsight(id: string, itemId: string, decision: InsightDecision): Lead {
+export function decideInsight(id: string, itemId: string, decision: InsightDecision, by = ""): Lead {
   transaction((db) => {
     const lead = getLead(id);
     assertEditable(lead);
@@ -432,7 +432,7 @@ export function decideInsight(id: string, itemId: string, decision: InsightDecis
       insights: { ...insights, tracker, confirmed: tracker.some((i) => i.kind === "requirement") ? confirmedTexts(tracker) : insights.confirmed, questions: lists.questions, assumptions: lists.assumptions },
     };
     db.prepare("UPDATE leads SET requirement = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), id);
-    const label = `Decision: ${{ accept: "accepted", reject: "rejected", clarify: "needs the client's clarification", defer: "left out of the price, to be quoted separately later", reset: "back to pending" }[decision]} - ${item.text.slice(0, 120)}`;
+    const label = `Decision${by ? ` by ${by}` : ""}: ${{ accept: "accepted", reject: "rejected", clarify: "needs the client's clarification", defer: "left out of the price, to be quoted separately later", reset: "back to pending" }[decision]} - ${item.text.slice(0, 120)}`;
     if (modules.length !== lead.requirement.modules.length) {
       // The scope changed, so the price is worked out again from it (a new quotation version; earlier ones stay on record).
       issueQuotation({ ...lead, requirement: next }, lead.quotation?.tier, lead.quotation?.discount ?? 0, label, true);
@@ -441,6 +441,40 @@ export function decideInsight(id: string, itemId: string, decision: InsightDecis
     }
   });
   return getLead(id)!;
+}
+
+export type ClientSettle = "agree" | "include" | "leave-out" | "answer";
+
+/**
+ * The client settles one open point through their own quotation link: answers a critical question, agrees to an assumption, or includes or leaves out a suggested
+ * addition. Only points that are open and only the action that fits each kind are accepted. Including an addition changes the scope, so the price is worked out
+ * again (a new quotation version). Once nothing is open, the quotation can be approved.
+ */
+export function settleAsClient(token: string, itemId: string, action: ClientSettle, answer = ""): Lead {
+  const lead = getLeadByToken(token);
+  if (!lead || !lead.quotation) throw new StageError("This quotation link is not valid.");
+  if (lead.stage !== "quoted") throw new StageError("This quotation is no longer open for changes.");
+  if (new Date(lead.quotation.validUntil).getTime() < Date.now()) throw new StageError("This quotation has expired. Please ask us for a fresh one.");
+  const item = lead.requirement.insights?.tracker?.find((i) => i.id === itemId);
+  if (!item) throw new ValidationError("That point was not found.");
+  if (item.kind === "assumption" && item.status === "pending-approval" && action === "agree") return decideInsight(lead.id, itemId, "accept", "the client");
+  if (item.kind === "discovered" && (item.status === "pending-approval" || item.status === "needs-clarification") && (action === "include" || action === "leave-out")) {
+    return decideInsight(lead.id, itemId, action === "include" ? "accept" : "reject", "the client");
+  }
+  if (item.kind === "question" && item.status === "unanswered" && action === "answer") {
+    const text = answer.replace(/\s+/g, " ").trim();
+    if (text.length < 2 || text.length > 1000) throw new ValidationError("Please type your answer (up to 1000 characters).");
+    transaction((db) => {
+      const insights = lead.requirement.insights!;
+      const tracker = insights.tracker!.map((i) => (i.id === itemId ? { ...i, answer: text, status: "confirmed" as const } : i));
+      const lists = legacyLists(tracker);
+      const next: Requirement = { ...lead.requirement, insights: { ...insights, tracker, questions: lists.questions, assumptions: lists.assumptions } };
+      db.prepare("UPDATE leads SET requirement = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), lead.id);
+      recordStage(lead.id, lead.stage, lead.stage, `The client answered: ${item.text.slice(0, 100)} - ${text.slice(0, 200)}`);
+    });
+    return getLead(lead.id)!;
+  }
+  throw new ValidationError("That point is already settled, or cannot be settled that way.");
 }
 
 /** Every version of the lead's quotation, oldest first: the history of the estimate. */

@@ -9,8 +9,8 @@ import { cn } from "@/lib/utils";
  * components never read the dark tokens, and the section's layout wraps itself in its own light surface.
  */
 
-export const Card = ({ children, className }: { children: ReactNode; className?: string }) => (
-  <div className={cn("rounded-2xl border border-slate-200 bg-white p-5 shadow-sm", className)}>{children}</div>
+export const Card = ({ children, className, "data-testid": testId }: { children: ReactNode; className?: string; "data-testid"?: string }) => (
+  <div className={cn("rounded-2xl border border-slate-200 bg-white p-5 shadow-sm", className)} data-testid={testId}>{children}</div>
 );
 
 export function Stat({ label, value, hint, tone = "default" }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "default" | "good" | "warn" }) {

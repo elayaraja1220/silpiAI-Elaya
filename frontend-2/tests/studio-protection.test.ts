@@ -58,7 +58,7 @@ describe("2. the studio pages", () => {
     const ses = await import("@/server/sessions");
     const { user } = await acc.signUp({ name: "Root Visitor", email: "root@studio.example", password: "a-correct-horse-battery", acceptTerms: true });
     const client = mw.middleware(req("/", { cookie: `${ses.SESSION_COOKIE}=${ses.createSession(user.id).token}` }));
-    assert.equal(new URL(client.headers.get("location")!).pathname, "/dashboard");
+    assert.equal(new URL(client.headers.get("location")!).pathname, "/client/dashboard");
     assert.ok(passes(mw.middleware(req("/", { cookie: `${auth.ADMIN_COOKIE}=${auth.createSession().value}` }))), "an administrator sees the studio's Overview");
     assert.equal(new URL(mw.middleware(req("/clients")).headers.get("location")!).pathname, "/admin/sign-in", "every other studio page still asks for the administrator");
   });
